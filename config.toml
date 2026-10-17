@@ -1,0 +1,13 @@
+# Dark theme so phones in light mode do not mix light widgets with the dark UI
+[theme]
+base = "dark"
+primaryColor = "#E5383B"
+backgroundColor = "#0b111c"
+secondaryBackgroundColor = "#131c2b"
+textColor = "#A4B1CD"
+
+[server]
+maxUploadSize = 50   # MB per file; keeps phones and small servers responsive
+
+[browser]
+gatherUsageStats = false
