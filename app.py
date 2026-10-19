@@ -5889,71 +5889,10 @@ def render_exam_track(settings: Settings) -> None:
 # ---------------------------------------------------------------------------
 # Landing page, sign-in page and admin screen
 # ---------------------------------------------------------------------------
-# Shared by the landing banner and the scroll story. drawCat paints the pixel
-# cat; makeLook gives it eyes that follow the pointer (also the pointer over the
-# rest of the page) and glance around by themselves when nobody is moving one.
-CAT_JS = """var CW = 40, CH = 46;
-var K = '#0b0b10', WH = '#ffffff', GR = '#d3d8e3', RD = '#E5383B';
-function drawCat(ctx, t, vel, lx, ly, rope) {
-    function px(x, y, w, h, c) { ctx.fillStyle = c; ctx.fillRect(Math.round(x), Math.round(y), w, h); }
-    function cloth(x, y) { return (((x >> 1) + (y >> 1)) & 1) ? RD : WH; }
-    ctx.clearRect(0, 0, CW, CH);
-    var flap = Math.round(Math.sin(t * 2.4));
-    var blink = (t % 3.6) > 3.45;
-    var swing = Math.max(-1, Math.min(1, Math.round(vel * 0.05)));
-    var k, tx, ty;
-    if (rope) { px(20, 0, 1, 5, '#a4b1cd'); }
-    for (k = 0; k < 10; k++) {
-        tx = 29 + k * 0.9; ty = 41 - k * 1.15 + Math.sin(t * 4.2 + k * 0.55) * k * 0.3;
-        px(tx - 1, ty - 1, 4, 4, K);
-    }
-    for (k = 0; k < 10; k++) {
-        tx = 29 + k * 0.9; ty = 41 - k * 1.15 + Math.sin(t * 4.2 + k * 0.55) * k * 0.3;
-        px(tx, ty, 2, 2, WH);
-    }
-    var y, hw, x0, x1;
-    for (y = 24; y <= 41; y++) {
-        hw = y < 28 ? 6 : (y < 33 ? 8 : (y < 38 ? 9 : 10));
-        x0 = 20 - hw; x1 = 20 + hw;
-        px(x0 - 1, y, 1, 1, K); px(x1 + 1, y, 1, 1, K);
-        px(x0, y, x1 - x0 + 1, 1, WH);
-    }
-    px(10, 42, 21, 1, K);
-    px(14, 25, 13, 1, GR);
-    px(20, 34, 1, 8, K);
-    px(14, 41 + swing, 6, 1, K); px(21, 41 - swing, 6, 1, K);
-    for (y = 9; y <= 24; y++) {
-        var ins = y <= 10 ? 2 : (y === 11 ? 1 : (y >= 24 ? 1 : 0));
-        x0 = 9 + ins; x1 = 30 - ins;
-        px(x0 - 1, y, 1, 1, K); px(x1 + 1, y, 1, 1, K);
-        px(x0, y, x1 - x0 + 1, 1, WH);
-    }
-    px(10, 25, 20, 1, K);
-    for (y = 9; y <= 30; y++) {
-        var w = 4 + Math.floor((y - 9) / 6), sh = y > 18 ? flap : 0;
-        var lx1 = 11 + sh, lx0 = lx1 - w + 1, rx0 = 28 + sh, rx1 = rx0 + w - 1;
-        px(lx0 - 1, y, 1, 1, K); px(rx1 + 1, y, 1, 1, K);
-        for (x0 = lx0; x0 <= lx1; x0++) { px(x0, y, 1, 1, cloth(x0, y)); }
-        for (x0 = rx0; x0 <= rx1; x0++) { px(x0, y, 1, 1, cloth(x0, y)); }
-        if (y === 30) { px(lx0, y + 1, w, 1, K); px(rx0, y + 1, w, 1, K); }
-    }
-    for (y = 7; y <= 11; y++) {
-        x0 = y === 7 ? 10 : 8; x1 = y === 7 ? 29 : 31;
-        for (var x = x0; x <= x1; x++) { px(x, y, 1, 1, cloth(x, y)); }
-        px(x0 - 1, y, 1, 1, K); px(x1 + 1, y, 1, 1, K);
-    }
-    for (var f = 12; f <= 27; f += 2) { px(f, 12, 1, 1, RD); }
-    px(12, 4, 16, 1, K); px(8, 5, 24, 2, K);
-    px(11, 5, 2, 1, '#3a3a46'); px(26, 5, 2, 1, '#3a3a46');
-    var ox = Math.round((lx || 0) * 2), oy = Math.round((ly || 0) * 1.5);
-    var nx = Math.round(lx || 0), ny = Math.round(ly || 0);
-    var eh = blink ? 1 : 5, ey = (blink ? 16 : 14) + oy;
-    px(14 + ox, ey, 2, eh, K); px(24 + ox, ey, 2, eh, K);
-    px(19 + nx, 19 + ny, 2, 1, K);
-    px(18 + nx, 21 + ny, 1, 1, K); px(19 + nx, 22 + ny, 2, 1, K); px(21 + nx, 21 + ny, 1, 1, K);
-}
-
-function trackPointer(cb) {
+# Shared by the landing banner and the scroll story. makeLook gives a cat eyes
+# that follow the pointer (also the pointer over the rest of the page) and
+# glance around by themselves when nobody is moving one.
+CAT_JS = """function trackPointer(cb) {
     var own = function (e) { cb(e.clientX, e.clientY); };
     document.addEventListener('pointermove', own, { passive: true });
     document.addEventListener('pointerdown', own, { passive: true });
@@ -5991,6 +5930,86 @@ function makeLook(el, getCenter) {
 }
 """
 
+# The cat that walks down the line in the story. It has no shemagh. Its arms
+# and legs swing while it travels (gait follows the distance), and it stands
+# still, blinks and wags its tail when the line is not moving.
+WALKER_JS = """var WW = 40, WHT = 46;
+var K = '#0b0b10', WH = '#ffffff', GR = '#d3d8e3', RD = '#E5383B', PK = '#f4a3a8';
+function drawWalker(ctx, t, gait, mv, lx, ly) {
+    function px(x, y, w, h, c) { ctx.fillStyle = c; ctx.fillRect(Math.round(x), Math.round(y), w, h); }
+    ctx.clearRect(0, 0, WW, WHT);
+    var ph = Math.sin(gait * Math.PI);
+    var s = ph * mv;                                   // walking phase -1..1
+    var B = Math.round(Math.abs(ph) * mv);             // body bobs while walking
+    var blink = (t % 3.6) > 3.45;
+    function pb(x, y, w, h, c) { px(x, y + B, w, h, c); }
+    var k, y, x0, x1;
+
+    for (k = 0; k < 12; k++) {                         // tail (behind everything)
+        var u = k / 11, wg = Math.sin(t * 4 + k * 0.5) * u * 3.2 * (1.25 - mv);
+        px(26 + 8 * Math.sin(u * 1.4) + wg - 1, 36 - 15 * u * u + B - 1, 4, 4, K);
+    }
+    for (k = 0; k < 12; k++) {
+        var v = k / 11, wg2 = Math.sin(t * 4 + k * 0.5) * v * 3.2 * (1.25 - mv);
+        px(26 + 8 * Math.sin(v * 1.4) + wg2, 36 - 15 * v * v + B, 2, 2, WH);
+    }
+
+    function leg(lx0, lift) {                          // legs step one after the other
+        var top = 35 + B, bot = 43 - lift;
+        px(lx0 - 1, top, 5, bot - top + 1, K);
+        px(lx0, top, 3, bot - top, WH);
+        px(lx0 - 1, bot, 6, 1, K);
+    }
+    leg(14, Math.round(Math.max(0, s) * 3));
+    leg(23, Math.round(Math.max(0, -s) * 3));
+
+    for (y = 24; y <= 36; y++) {                       // body
+        var bi = y < 26 ? 1 : 0;
+        pb(13 + bi, y, 1, 1, K); pb(26 - bi, y, 1, 1, K);
+        pb(14 + bi, y, 12 - bi * 2, 1, WH);
+    }
+    pb(15, 36, 10, 1, GR);
+    pb(17, 28, 6, 5, GR);                              // soft belly
+
+    function arm(ax, off) {                            // arms swing opposite the legs
+        pb(ax - 1, 25, 5, 5, K); pb(ax, 25, 3, 5, WH);
+        pb(ax - 1 + off, 30, 5, 6, K); pb(ax + off, 30, 3, 5, WH);
+    }
+    arm(9, Math.round(-s * 2));
+    arm(28, Math.round(s * 2));
+
+    pb(13, 22, 14, 2, RD);                             // little red collar
+    pb(13, 22, 1, 2, K); pb(26, 22, 1, 2, K);
+
+    for (y = 6; y <= 21; y++) {                        // big round head
+        var ins = (y <= 7 || y >= 20) ? 2 : (y === 8 || y === 19 ? 1 : 0);
+        x0 = 7 + ins; x1 = 32 - ins;
+        pb(x0 - 1, y, 1, 1, K); pb(x1 + 1, y, 1, 1, K);
+        pb(x0, y, x1 - x0 + 1, 1, WH);
+    }
+    pb(9, 5, 22, 1, K); pb(9, 22, 4, 1, K); pb(27, 22, 4, 1, K);
+
+    // pointed ears
+    var ew = [1, 2, 4, 5, 7];
+    for (y = 1; y <= 5; y++) {
+        var w = ew[y - 1], e0 = 11 - Math.floor(w / 2), f0 = 28 - Math.floor(w / 2);
+        pb(e0 - 1, y, 1, 1, K); pb(e0, y, w, 1, WH); pb(e0 + w, y, 1, 1, K);
+        pb(f0 - 1, y, 1, 1, K); pb(f0, y, w, 1, WH); pb(f0 + w, y, 1, 1, K);
+    }
+    pb(11, 0, 1, 1, K); pb(28, 0, 1, 1, K);
+    pb(11, 3, 1, 2, PK); pb(28, 3, 1, 2, PK);
+
+    var ox = Math.round((lx || 0) * 2), oy = Math.round((ly || 0) * 1.5);
+    var nx = Math.round(lx || 0), ny = Math.round(ly || 0);
+    var eh = blink ? 1 : 5, ey = (blink ? 12 : 10) + oy;
+    pb(13 + ox, ey, 2, eh, K); pb(25 + ox, ey, 2, eh, K);      // tall eyes like the logo cat
+    pb(19 + nx, 16 + ny, 2, 1, RD);                            // nose
+    pb(18 + nx, 18 + ny, 1, 1, K); pb(19 + nx, 19 + ny, 2, 1, K); pb(21 + nx, 18 + ny, 1, 1, K);
+    pb(3 + nx, 16, 4, 1, GR); pb(4 + nx, 18, 3, 1, GR);        // whiskers
+    pb(33 + nx, 16, 4, 1, GR); pb(33 + nx, 18, 3, 1, GR);
+}
+"""
+
 THREE_URL = "https://cdn.jsdelivr.net/npm/three@0.150.1/build/three.min.js"
 THREE_SRI = "sha384-eWPGgBROV7OvRpuavxpzaTSoHT/gkcVjZ94JzXW7WDFZB9qEb4Q9k+8bfx/c1rTM"
 
@@ -6014,8 +6033,11 @@ SCENE_TEMPLATE = """<!DOCTYPE html>
         height: calc(100% - 4px); overflow: hidden; border-radius: 18px;
         animation: stageIn 0.6s cubic-bezier(.22, 1, .36, 1) both;
         border: 1px solid rgba(229, 56, 59, 0.4);
-        background: radial-gradient(circle at 50% __CAT_TOP__, #7d1020 0%,
-            #3b0d19 26%, #121827 62%, #070b12 100%);
+        background:
+            radial-gradient(circle at 10% 70%, rgba(255, 59, 63, 0.30), transparent 38%),
+            radial-gradient(circle at 92% 30%, rgba(255, 255, 255, 0.09), transparent 34%),
+            radial-gradient(circle at 50% __CAT_TOP__, #8a1223 0%,
+            #3f0e1b 28%, #121827 64%, #070b12 100%);
     }
     canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; z-index: 1; }
     .glow {
@@ -6035,7 +6057,14 @@ SCENE_TEMPLATE = """<!DOCTYPE html>
         display: block; width: 100%; height: 100%;
         will-change: transform;
         image-rendering: pixelated; image-rendering: crisp-edges;
-        filter: drop-shadow(0 0 14px rgba(255, 59, 63, 0.5));
+        -webkit-mask-image: radial-gradient(ellipse at center, #000 52%,
+            transparent 80%);
+        mask-image: radial-gradient(ellipse at center, #000 52%,
+            transparent 80%);
+        filter: drop-shadow(0 0 14px rgba(255, 255, 255, 0.28));
+    }
+    @media (min-width: 900px) {
+        .catbox { width: __CAT_WD__; height: __CAT_HD__; }
     }
     @keyframes pulse { 0%, 100% { opacity: 0.75; transform: translate(-50%, -50%) scale(0.96); }
                        50% { opacity: 1; transform: translate(-50%, -50%) scale(1.06); } }
@@ -6073,7 +6102,7 @@ SCENE_TEMPLATE = """<!DOCTYPE html>
 <div id="stage">
     <div class="glow"></div>
     <canvas id="c"></canvas>
-    <div class="catbox"><canvas id="cat" width="40" height="46" role="img" aria-label="Nashmi, the cat in a red and white shemagh"></canvas></div>
+    <div class="catbox"><canvas id="cat" width="416" height="292" role="img" aria-label="Nashmi, the cat in a red and white shemagh"></canvas></div>
     <div class="copy">__COPY__</div>
 </div>
 <script>
@@ -6085,6 +6114,27 @@ __CAT_JS__
     var box = document.querySelector('.catbox'), cctx = cat.getContext('2d');
     var reduce = window.matchMedia &&
         window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    // taller banner on wide screens (the page resizes the frame around it)
+    var BASE_H = __HEIGHT__, DESK_K = __DESK_K__;
+    function fit() {
+        var fe = null;
+        try { fe = window.frameElement; } catch (err) {}
+        if (!fe) { return; }
+        var hh = window.innerWidth >= 900 ? Math.round(BASE_H * DESK_K) : BASE_H;
+        if (parseInt(fe.style.height, 10) === hh) { return; }
+        fe.style.height = hh + 'px'; fe.setAttribute('height', hh);
+        var bx = fe.parentElement;
+        if (bx) {
+            bx.style.setProperty('height', hh + 'px', 'important');
+            bx.style.setProperty('min-height', '0', 'important');
+            bx.style.setProperty('max-height', hh + 'px', 'important');
+            bx.style.setProperty('flex', '0 0 ' + hh + 'px', 'important');
+        }
+    }
+    window.addEventListener('resize', fit);
+    fit();
+
     var saved = null;
     try { saved = JSON.parse(sessionStorage.getItem('nashmi_scene') || 'null'); } catch (err) {}
     var phase0 = saved && saved.p ? saved.p : 0, start = performance.now();
@@ -6092,15 +6142,35 @@ __CAT_JS__
         var r = box.getBoundingClientRect();
         return { x: r.left + r.width / 2, y: r.top + r.height * 0.45 };
     });
+
+    // the original logo cat; only its eyes, nose and mouth are redrawn so it can look around
+    var img = new Image(), ready = false;
+    img.onload = function () { ready = true; };
+    img.src = 'data:image/png;base64,__CAT__';
+    function drawLogoCat(t, lx, ly) {
+        cctx.imageSmoothingEnabled = false;
+        cctx.drawImage(img, 0, 0);
+        var blink = (t % 3.8) > 3.66;
+        cctx.fillStyle = '#ffffff';
+        cctx.fillRect(167, 88, 14, 32); cctx.fillRect(225, 88, 14, 32);
+        cctx.fillRect(196, 125, 14, 15);
+        var ex = Math.round(lx * 11), ey = Math.round(ly * 7);
+        cctx.fillStyle = '#0a0a0a';
+        var h = blink ? 3 : 27, y = blink ? 102 : 91;
+        cctx.fillRect(169 + ex, y + ey, 10, h); cctx.fillRect(227 + ex, y + ey, 10, h);
+        cctx.drawImage(img, 198, 127, 10, 11,
+                       198 + Math.round(ex * 0.5), 127 + Math.round(ey * 0.5), 10, 11);
+    }
     function paint(now) {
         look.update(now);
-        drawCat(cctx, phase0 + (now - start) / 1000, 0, look.x, look.y, false);
-        cat.style.transform = 'translate(' + (-look.x * 7).toFixed(1) + 'px,' +
-                              (-look.y * 5).toFixed(1) + 'px)';
-        if (!reduce) { requestAnimationFrame(paint); }
+        if (ready) {
+            drawLogoCat(phase0 + (now - start) / 1000, look.x, look.y);
+            cat.style.transform = 'translate(' + (-look.x * 7).toFixed(1) + 'px,' +
+                                  (-look.y * 5).toFixed(1) + 'px)';
+        }
+        if (!reduce || !ready) { requestAnimationFrame(paint); }
     }
     paint(start);
-    if (!reduce) { requestAnimationFrame(paint); }
 })();
 </script>
 <script src="__THREE_URL__" integrity="__THREE_SRI__" crossorigin="anonymous"></script>
@@ -6193,6 +6263,7 @@ __CAT_JS__
         camera.aspect = w / h;
         baseZ = w / h < 0.9 ? 10.5 : (w / h < 1.6 ? 8.6 : 7.2);
         camera.position.set(0, 0, baseZ);
+        net.scale.set(Math.max(1, Math.min(2.1, (w / h) * 0.7)), 1, 1);   // wider cloud on wide screens
         camera.updateProjectionMatrix();
     }
     resize();
@@ -6268,27 +6339,33 @@ SCENE_COPY = {
         '<p>Create your account in one tap with Google.</p>'
     ),
 }
-# height, scene offset, scene scale, cat pixel scale, cat vertical position
+# height, scene offset, scene scale, cat width (phone / wide screen), cat
+# vertical position, extra height factor on wide screens
 SCENE_SIZES = {
-    "landing": (470, 0.9, 1.0, 4, "37%"),
-    "login": (290, 0.6, 0.66, 3, "36%"),
-    "signup": (290, 0.6, 0.66, 3, "36%"),
+    "landing": (470, 0.9, 1.0, (230, 320), "37%", 1.2),
+    "login": (290, 0.6, 0.66, (150, 150), "36%", 1.0),
+    "signup": (290, 0.6, 0.66, (150, 150), "36%", 1.0),
 }
 
 
 def render_scene(kind: str) -> None:
     """Show the animated 3D banner for the landing or sign-in page."""
-    height, offset, scale, cat_scale, cat_top = SCENE_SIZES[kind]
+    height, offset, scale, (cat_w, cat_wd), cat_top, desk_k = SCENE_SIZES[kind]
     markup = (
         SCENE_TEMPLATE.replace("__COPY__", SCENE_COPY[kind])
         .replace("__THREE_URL__", THREE_URL)
         .replace("__THREE_SRI__", THREE_SRI)
         .replace("__OFFSET_Y__", str(offset))
         .replace("__GSCALE__", str(scale))
-        .replace("__CAT_W__", f"{40 * cat_scale}px")
-        .replace("__CAT_H__", f"{46 * cat_scale}px")
+        .replace("__CAT_W__", f"{cat_w}px")
+        .replace("__CAT_H__", f"{round(cat_w * 292 / 416)}px")
+        .replace("__CAT_WD__", f"{cat_wd}px")
+        .replace("__CAT_HD__", f"{round(cat_wd * 292 / 416)}px")
         .replace("__CAT_TOP__", cat_top)
+        .replace("__HEIGHT__", str(height))
+        .replace("__DESK_K__", str(desk_k))
         .replace("__CAT_JS__", CAT_JS)
+        .replace("__CAT__", CAT_B64)
     )
     embed_html(markup, height)
 
@@ -6402,6 +6479,45 @@ LANDING_CSS = """
 .st-key-login_card [data-testid="stCaptionContainer"] {
     color: var(--text); text-align: center;
 }
+
+/* Landing and sign-in pages: no Streamlit chrome, wider page, livelier colour */
+header[data-testid="stHeader"], [data-testid="stToolbar"],
+[data-testid="stDecoration"] { display: none !important; }
+.block-container { max-width: 1180px !important; padding-top: 0 !important; }
+.stApp {
+    background:
+        radial-gradient(900px 520px at 12% 0%, rgba(229, 56, 59, 0.26), transparent 62%),
+        radial-gradient(820px 520px at 92% 18%, rgba(255, 255, 255, 0.08), transparent 62%),
+        radial-gradient(1000px 640px at 50% 100%, rgba(229, 56, 59, 0.18), transparent 62%),
+        linear-gradient(var(--grid-line) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
+        var(--bg) !important;
+    background-size: auto, auto, auto, 40px 40px, 40px 40px, auto !important;
+    background-attachment: fixed !important;
+}
+/* the bar sits inside a wrapper that is only as tall as the bar, so the wrapper sticks */
+div:has(> .st-key-topbar) { position: sticky; top: 0; z-index: 60; }
+.st-key-topbar {
+    margin: 0 -1.25rem 1rem;
+    width: calc(100% + 2.5rem) !important; max-width: none !important;
+    padding: 0.55rem 1.25rem; border-bottom: 1px solid var(--line);
+    background: rgba(11, 17, 28, 0.78);
+    -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+}
+.st-key-topbar [data-testid="stHorizontalBlock"] {
+    flex-direction: row !important; flex-wrap: nowrap !important;
+    gap: 0.5rem !important; align-items: center !important;
+}
+.st-key-topbar [data-testid="stColumn"] {
+    min-width: 0 !important; width: auto !important; flex: 0 0 auto !important;
+}
+.st-key-topbar [data-testid="stColumn"]:first-child { flex: 1 1 auto !important; }
+.st-key-topbar button { min-height: 40px; padding: 0 1.1rem; }
+.tb-brand {
+    color: var(--white); font: 800 1.2rem var(--sans);
+    letter-spacing: 0.01em; white-space: nowrap;
+}
+.tb-brand span { color: var(--accent); font-family: var(--mono); }
 """
 
 # The scroll story on the landing page: a cat slides down a line as the
@@ -6430,8 +6546,8 @@ STORY_CARDS = (
      "Bring your own API key (Gemini, Groq, OpenAI or Claude). Your chats "
      "and saved keys are encrypted."),
     ("MAKER", "Built by Hassan Aldajah",
-     "A fourth-year Cybersecurity student at the University of Jordan, "
-     "building tools for SOC analysts and CTF players."),
+     "A fourth-year student at the University of Jordan with a deep "
+     "interest in the SOC field and in cybersecurity."),
 )
 STORY_HEIGHT = 2100  # first guess; the page shrinks it to fit its content
 
@@ -6449,7 +6565,13 @@ STORY_TEMPLATE = """<!DOCTYPE html>
         font-family: Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
         -webkit-text-size-adjust: 100%;
     }
-    #wrap { position: relative; padding: 30px 12px 50px; min-height: 300px; overflow: hidden; }
+    #wrap {
+        position: relative; padding: 30px 12px 50px; min-height: 300px; overflow: hidden;
+        background:
+            radial-gradient(520px 380px at 88% 6%, rgba(229, 56, 59, 0.20), transparent 70%),
+            radial-gradient(560px 420px at 6% 42%, rgba(229, 56, 59, 0.16), transparent 70%),
+            radial-gradient(520px 380px at 92% 78%, rgba(255, 255, 255, 0.07), transparent 70%);
+    }
     #sky {
         position: absolute; left: 0; top: 0; width: 100%; overflow: hidden;
         pointer-events: none;
@@ -6498,19 +6620,19 @@ STORY_TEMPLATE = """<!DOCTYPE html>
     #cat {
         position: absolute; left: 0; top: 0; z-index: 3;
         width: 120px; height: 138px;
-        transform: translate(-50%, 0); transform-origin: 50% 0;
+        transform: translate(-50%, -56%); transform-origin: 50% 60%;
         image-rendering: pixelated; image-rendering: crisp-edges;
         pointer-events: none;
         filter: drop-shadow(0 0 12px rgba(255, 59, 63, 0.45));
     }
     @media (max-width: 699px) {
-        :root { --tx: 24px; }
-        .row { padding-left: 58px; }
+        :root { --tx: 46px; }
+        .row { padding-left: 92px; }
         #cat { width: 80px; height: 92px; }
     }
     @media (min-width: 700px) {
         :root { --tx: 50%; }
-        .row .card { width: calc(50% - 50px); }
+        .row .card { width: calc(50% - 82px); }
         .row:nth-child(even) .card { margin-left: auto; }
         #wrap { padding-left: 24px; padding-right: 24px; }
     }
@@ -6524,7 +6646,7 @@ STORY_TEMPLATE = """<!DOCTYPE html>
     <div id="sky"><canvas id="far"></canvas><canvas id="near"></canvas></div>
     <div id="track"></div><div id="fill"></div>
     <div id="rows">__CARDS__</div>
-    <canvas id="cat" width="40" height="46" role="img" aria-label="Nashmi the cat sliding down the line"></canvas>
+    <canvas id="cat" width="40" height="46" role="img" aria-label="Nashmi the cat walking down the line"></canvas>
 </div>
 <script>
 __CAT_JS__
@@ -6548,21 +6670,21 @@ __CAT_JS__
         var r = cat.getBoundingClientRect();
         return { x: r.left + r.width / 2, y: r.top + r.height * 0.4 };
     });
+    var gait = 0, mv = 0;
 
-    var TOKENS = ['T1059', 'T1566', 'T1021', 'CVE-2021-44228', '0x4E41534D49',
-        'nashmi{shemagh_cat}', 'SOC>', 'IOC', 'SHA256', 'nc -lvnp 4444', 'TCP/443',
-        'XOR 0x5A', 'base64 -d', 'SELECT * FROM logs', 'ssh -p 22', '10.0.0.0/8',
-        'YARA', 'flag{...}', 'Event ID 4625', 'PCAP'];
-    function drawTokens(c, seed, count, size, alpha) {
+    function rng(seed) {
+        var s = seed;
+        return function () { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
+    }
+    function drawDust(c, seed, count, minS, maxS, alpha) {
         var g = c.getContext('2d'), r = rng(seed);
         g.clearRect(0, 0, c.width, c.height);
-        g.font = '600 ' + size + 'px ui-monospace, Consolas, monospace';
-        g.textBaseline = 'top';
         for (var i = 0; i < count; i++) {
-            var tk = TOKENS[Math.floor(r() * TOKENS.length)];
-            g.fillStyle = r() < 0.55 ? 'rgba(229,56,59,' + alpha + ')'
-                : 'rgba(255,255,255,' + (alpha * 0.7).toFixed(2) + ')';
-            g.fillText(tk, r() * Math.max(10, c.width - 140), r() * c.height);
+            var sz = Math.round(minS + r() * (maxS - minS));
+            var dx = Math.floor(r() * c.width / 4) * 4, dy = Math.floor(r() * c.height / 4) * 4;
+            g.fillStyle = r() < 0.6 ? 'rgba(229,56,59,' + alpha + ')'
+                : 'rgba(255,255,255,' + (alpha * 0.8).toFixed(2) + ')';
+            g.fillRect(dx, dy, sz, sz);
         }
     }
 
@@ -6584,8 +6706,8 @@ __CAT_JS__
         skyH = Math.min(vh, H);
         sky.style.height = skyH + 'px';
         far.width = near.width = W + 80; far.height = near.height = skyH + 240;
-        drawTokens(far, 7, 30, 11, 0.2);
-        drawTokens(near, 19, 18, 14, 0.3);
+        drawDust(far, 7, 70, 2, 3, 0.30);
+        drawDust(near, 19, 34, 4, 6, 0.22);
         if (fe && Math.abs((parseInt(fe.style.height, 10) || 0) - H) > 2) {
             fe.style.height = H + 'px'; fe.setAttribute('height', H);
             if (fe.parentElement) {   // Streamlit's wrapper keeps the old height otherwise
@@ -6610,11 +6732,14 @@ __CAT_JS__
         var d = tgt - cy;
         cy += d * 0.14;
         if (Math.abs(d) < 0.05) { cy = tgt; }
-        var rot = Math.max(-14, Math.min(14, d * 0.1)) + Math.sin(now / 650) * 2.2;
+        var moved = Math.abs(d * 0.14);
+        mv += ((moved > 0.25 ? 1 : 0) - mv) * 0.2;      // 1 while the line is moving
+        gait += moved / 6;                              // one stride every ~6 px travelled
+        var rot = Math.max(-6, Math.min(6, d * 0.04));
         cat.style.top = cy + 'px';
         look.update(now);
-        drawCat(cctx, now / 1000, d, look.x, look.y, true);
-        cat.style.transform = 'translate(-50%, 0) rotate(' + rot.toFixed(2) + 'deg)';
+        drawWalker(cctx, now / 1000, gait, mv, look.x, look.y);
+        cat.style.transform = 'translate(-50%, -56%) rotate(' + rot.toFixed(2) + 'deg)';
         fill.style.height = Math.max(0, cy - y0) + 'px';
         var best = 0, bd = 1e9;
         for (var i = 0; i < rows.length; i++) {
@@ -6656,7 +6781,7 @@ def render_story() -> None:
         for tag, title, text in STORY_CARDS
     )
     markup = (STORY_TEMPLATE.replace("__CARDS__", cards)
-              .replace("__CAT_JS__", CAT_JS))
+              .replace("__CAT_JS__", CAT_JS + WALKER_JS))
     embed_html(markup, STORY_HEIGHT)
 
 PRIVACY_NOTE = (
@@ -6748,11 +6873,29 @@ def render_landing_buttons(suffix: str) -> None:
                       icon=":material/arrow_forward:", width="stretch")
 
 
+def render_topbar() -> None:
+    """Sticky bar with the brand and the sign-in buttons."""
+    with st.container(key="topbar"):
+        brand, first, second = st.columns(
+            [6, 2, 2], vertical_alignment="center", gap="small")
+        # the page style travels with the brand so no empty element sits above the bar
+        brand.markdown(f'<style>{LANDING_CSS}</style>'
+                       '<div class="tb-brand"><span>&gt;_</span> Nashmi</div>',
+                       unsafe_allow_html=True)
+        if accounts_enabled():
+            first.button("Sign in", key="landing_signin", on_click=go_gate,
+                         args=("login",), width="stretch")
+            second.button("Sign up", key="landing_signup", type="primary",
+                          on_click=go_gate, args=("signup",), width="stretch")
+        else:
+            second.button("Start", key="landing_guest", type="primary",
+                          on_click=go_gate, args=("app",), width="stretch")
+
+
 def render_landing() -> None:
     """First page a visitor of the public site sees."""
-    st.markdown(f'<style>{LANDING_CSS}</style>', unsafe_allow_html=True)
+    render_topbar()
     render_scene("landing")
-    render_landing_buttons("")
     render_story()
     render_landing_buttons("_end")
     if accounts_enabled():
@@ -6776,7 +6919,9 @@ def render_auth_page(mode: str) -> None:
     screen and Nashmi never sees or stores a password. A new Google account
     becomes a Nashmi account the first time it signs in."""
     title, sub, ask, switch_label, switch_to = AUTH_TEXT[mode]
-    st.markdown(f'<style>{LANDING_CSS}</style>', unsafe_allow_html=True)
+    st.markdown(
+        f'<style>{LANDING_CSS}.block-container {{ max-width: 620px !important; }}</style>',
+        unsafe_allow_html=True)
     render_scene(mode)
     st.markdown(
         f'<div class="lp-signin"><h2>{html.escape(title)}</h2>'
