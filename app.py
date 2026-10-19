@@ -4455,17 +4455,16 @@ APP_POLISH_CSS = """
 [data-testid="stSidebar"] [data-testid^="stBaseButton"]:hover {
     background: rgba(229, 56, 59, 0.18) !important; transform: translateX(2px);
 }
-[data-testid="stSidebar"] [data-testid="stBaseButton-primary"] {
-    background: linear-gradient(135deg, #ff3b3f, #c81e3a) !important;
-    box-shadow: 0 8px 24px rgba(229, 56, 59, 0.4) !important;
+/* a softer red for the sidebar's main buttons */
+[data-testid="stSidebar"] [data-testid="stBaseButton-primary"],
+[data-testid="stSidebar"] .st-key-new_chat button {
+    background: linear-gradient(135deg, #c8414c, #9b2a3a) !important; color: #fff !important;
+    box-shadow: 0 6px 18px rgba(200, 65, 76, 0.22) !important;
 }
 [data-testid="stSidebar"] [data-testid="stBaseButton-tertiary"] { background: transparent !important; }
-[data-testid="stSidebar"] .st-key-new_chat button {
-    background: linear-gradient(135deg, #ff3b3f, #c81e3a) !important; color: #fff !important;
-    box-shadow: 0 8px 24px rgba(229, 56, 59, 0.4) !important;
-}
 [data-testid="stSidebar"] .st-key-new_chat button:hover {
-    background: linear-gradient(135deg, #ff5256, #d6243f) !important; transform: translateY(-1px);
+    background: linear-gradient(135deg, #d44d58, #a83244) !important; transform: translateY(-1px);
+    box-shadow: 0 8px 22px rgba(200, 65, 76, 0.3) !important;
 }
 [data-testid="stSidebar"] [data-baseweb="select"] > div,
 [data-testid="stSidebar"] [data-baseweb="input"],
