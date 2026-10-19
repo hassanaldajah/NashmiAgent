@@ -4254,6 +4254,10 @@ def render_nav(box) -> str:
             tt("New chat", "محادثة جديدة"), key="new_chat", icon=":material/add:",
             on_click=on_new_chat, disabled=mode in (MODE_SOC, MODE_TOOLS, MODE_EXAM),
         )
+        st.markdown(
+            f'<div class="side-label">{tt("Track", "التراك")}</div>',
+            unsafe_allow_html=True,
+        )
         return st.selectbox(
             "Track", MODES, key="track", label_visibility="collapsed",
             on_change=close_account,
@@ -6967,6 +6971,11 @@ div:has(> .st-key-topbar) { position: sticky; top: 10px; z-index: 60; }
     max-width: 640px; margin: 0.6rem auto 0; padding: 0.95rem 1.15rem; text-align: center;
     border-radius: 16px; background: rgba(19, 28, 43, 0.85);
     box-shadow: inset 0 0 0 1px var(--line);
+    transition: box-shadow 0.25s ease, background 0.25s ease;
+}
+.lp-about:hover {
+    background: rgba(40, 18, 28, 0.88);
+    box-shadow: inset 0 0 0 1px rgba(255, 51, 68, 0.75), 0 0 28px rgba(255, 51, 68, 0.28);
 }
 .lp-about b { color: var(--white); font-size: 1rem; }
 .lp-about p { margin: 0.3rem 0 0.6rem; color: var(--text); font-size: 0.88rem; line-height: 1.55; }
@@ -6974,6 +6983,12 @@ div:has(> .st-key-topbar) { position: sticky; top: 10px; z-index: 60; }
 .lp-chips span {
     padding: 2px 10px; border-radius: 999px; font: 600 0.72rem var(--mono);
     color: var(--text); background: rgba(229, 56, 59, 0.14);
+    transition: color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+    cursor: default;
+}
+.lp-chips span:hover {
+    color: #fff; background: rgba(255, 51, 68, 0.55);
+    box-shadow: 0 0 14px rgba(255, 51, 68, 0.65);
 }
 .st-key-topbar [data-baseweb="select"] > div {
     border: 0 !important; border-radius: 999px !important; min-height: 40px;
@@ -8049,7 +8064,7 @@ def render_topbar(mode: str = "landing") -> None:
 def render_about() -> None:
     """A small 'about' card under the story."""
     chips = "".join(f"<span>{name}</span>" for name in
-                    ("Python", "Streamlit", "PostgreSQL", "Three.js", "OAuth 2.0 + 2FA"))
+                    ("Python", "Streamlit", "PostgreSQL", "Three.js", "OAuth 2.0 + 2FA", "Claude Code"))
     st.markdown(
         f'<div class="lp-about"{dir_attr()}><b>{html.escape(tr("about_title"))}</b>'
         f'<p>{html.escape(tr("about_text"))}</p><div class="lp-chips">{chips}</div></div>',
