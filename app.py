@@ -6458,6 +6458,12 @@ __CAT_JS__
     var shell = new THREE.LineSegments(
         new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(2.7, 2)),
         new THREE.LineBasicMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0.2 }));
+    // a black round mesh hugging the cat, drawn under everything else
+    var blackMesh = new THREE.LineSegments(
+        new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(2.38, 2)),
+        new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.85 }));
+    blackMesh.renderOrder = -1;
+    group.add(blackMesh);
     var shellWrap = new THREE.Group();     // lets the big mesh stretch to the frame on wide screens
     shellWrap.add(shell);
     group.add(coreWire, shellWrap);
@@ -6594,6 +6600,7 @@ __CAT_JS__
         coreWire.rotation.x = t * 0.2;
         coreWire.scale.setScalar(1 + Math.sin(t * 1.6) * 0.03);
         shell.rotation.y = -t * 0.12;
+        blackMesh.rotation.y = t * 0.18; blackMesh.rotation.x = t * 0.07;
         net.rotation.y = wideNet ? Math.sin(t * 0.3) * 0.04 : t * 0.06;
         net.rotation.x = wideNet ? 0 : Math.sin(t * 0.2) * 0.1;
         ring.rotation.z = t * 0.25;
@@ -6851,7 +6858,7 @@ div:has(> .st-key-topbar) { position: sticky; top: 10px; z-index: 60; }
 }
 .st-key-topbar [data-baseweb="select"] > div {
     border: 0 !important; border-radius: 999px !important; min-height: 40px;
-    background: rgba(255, 255, 255, 0.07) !important; box-shadow: none !important;
+    background: transparent !important; box-shadow: none !important;
     font-size: 0.9rem; cursor: pointer;
 }
 .st-key-topbar [data-testid="stColumn"]:nth-child(2) { flex: 0 0 6rem !important; width: 6rem !important; min-width: 6rem !important; }
@@ -6859,8 +6866,26 @@ div:has(> .st-key-topbar) { position: sticky; top: 10px; z-index: 60; }
 .st-key-topbar [data-baseweb="select"] [class*="ValueContainer"], .st-key-topbar [data-baseweb="select"] div[value] { overflow: visible; }
 .st-key-topbar [data-baseweb="select"] > div { padding-left: 0.2rem; }
 .st-key-topbar [data-baseweb="select"] [data-baseweb="icon"], .st-key-topbar [data-baseweb="select"] svg { width: 16px; height: 16px; }
-.st-key-topbar [data-baseweb="select"] > div:hover { background: rgba(255, 255, 255, 0.12) !important; }
+.st-key-topbar [data-baseweb="select"] > div:hover { background: rgba(255, 255, 255, 0.06) !important; }
 .st-key-topbar [data-baseweb="select"] input { caret-color: transparent; cursor: pointer; }
+.st-key-topbar .stSelectbox div[data-baseweb="select"] > div,
+.st-key-topbar .stSelectbox div[data-baseweb="select"] > div > div {
+    background: transparent !important; background-color: transparent !important;
+    border: 0 !important; box-shadow: none !important;
+}
+.st-key-topbar .stSelectbox div[data-baseweb="select"] > div:hover { background-color: rgba(255, 255, 255, 0.06) !important; }
+.st-key-topbar [data-baseweb="select"] *, .st-key-topbar [data-baseweb="select"] > div {
+    background: transparent !important; background-color: transparent !important;
+    border-color: transparent !important; box-shadow: none !important;
+}
+/* Streamlit's newer select: the visible box is the element with role="group" */
+.st-key-topbar .stSelectbox [role="group"] {
+    background: transparent !important; background-color: transparent !important;
+    border: 0 !important; border-radius: 999px !important; box-shadow: none !important;
+    min-height: 40px;
+}
+.st-key-topbar .stSelectbox [role="group"]:hover { background-color: rgba(255, 255, 255, 0.06) !important; }
+.st-key-topbar .stSelectbox input { caret-color: transparent; cursor: pointer; }
 .st-key-topbar_home {
     position: absolute !important; width: 1px; height: 1px; overflow: hidden;
     opacity: 0; pointer-events: none; margin: 0 !important;
@@ -7007,7 +7032,7 @@ STORY_TEMPLATE = """<!DOCTYPE html>
     p { margin: 0; font-size: 0.94rem; line-height: 1.55; }
     #cat {
         position: absolute; left: 0; top: 0; z-index: 3;
-        width: 80px; height: 92px;
+        width: 64px; height: 74px;
         transform: translate(-50%, -56%); transform-origin: 50% 60%;
         image-rendering: pixelated; image-rendering: crisp-edges;
         pointer-events: none;
@@ -7016,7 +7041,7 @@ STORY_TEMPLATE = """<!DOCTYPE html>
     @media (max-width: 699px) {
         :root { --tx: 40px; }
         .row { padding-left: 84px; }
-        #cat { width: 60px; height: 69px; }
+        #cat { width: 46px; height: 53px; }
     }
     @media (min-width: 700px) {
         :root { --tx: 50%; }
@@ -7351,6 +7376,25 @@ STRINGS["ar"].update({
 })
 
 
+STRINGS["en"].update({
+    "login_title": "Welcome to Nashmi",
+    "login_sub": "Continue with Google. New here? Your account is created the first time.",
+    "login_steps": ("Google checks your e-mail, Nashmi never sees a password",
+                    "First time? Choose your name and a username",
+                    "Then start using Nashmi"),
+    "scene_login_h": "Welcome to Nashmi", "scene_login_p": "Continue with Google to start.",
+})
+STRINGS["ar"].update({
+    "login_title": "أهلاً بك في نشمي",
+    "login_sub": "تابع عبر Google. جديد هنا؟ يُنشأ حسابك أول مرة.",
+    "login_steps": ("Google تتحقق من بريدك، ونشمي لا يرى كلمة السر",
+                    "أول مرة؟ اختر اسمك واسم مستخدم",
+                    "ثم ابدأ استخدام نشمي"),
+    "scene_login_h": "أهلاً بك في نشمي",
+    "scene_login_p": "تابع عبر Google للبدء.",
+})
+
+
 def lang() -> str:
     """'en' or 'ar'. The first visit follows the browser language; the language
     button changes it. Switching only changes words and text direction, never
@@ -7409,6 +7453,8 @@ def current_gate() -> str:
     if not is_public() or current_user():
         return "app"
     gate = st.session_state.get("gate", "landing")
+    if gate == "signup":                  # there is no separate sign-up page any more
+        gate = "login"
     if gate == "app" and accounts_enabled():
         return "landing"
     return gate
@@ -7544,16 +7590,11 @@ def render_topbar(mode: str = "landing") -> None:
     """Floating pill bar: 3D logo and name on the left, language button and the
     actions that make sense on this page on the right."""
     if mode == "landing":
-        actions = ([("landing_signin", "sign_in", "tertiary", "login", None),
-                    ("landing_signup", "sign_up", "primary", "signup", None)]
+        actions = ([("landing_signin", "sign_in", "primary", "login", None)]
                    if accounts_enabled() else
                    [("landing_guest", "start", "primary", "app", None)])
     elif mode == "login":
-        actions = [("topbar_back", "back", "tertiary", "landing", ":material/arrow_back:"),
-                   ("topbar_switch", "sign_up", "primary", "signup", None)]
-    elif mode == "signup":
-        actions = [("topbar_back", "back", "tertiary", "landing", ":material/arrow_back:"),
-                   ("topbar_switch", "sign_in", "primary", "login", None)]
+        actions = [("topbar_back", "back", "tertiary", "landing", ":material/arrow_back:")]
     else:                                                  # finishing sign-up / two-step
         actions = [("topbar_signout", "sign_out", "tertiary", None, ":material/logout:")]
     with st.container(key="topbar"):
