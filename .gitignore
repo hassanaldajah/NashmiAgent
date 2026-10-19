@@ -6,3 +6,6 @@ settings.json
 *.db
 
 usage_counter.json
+
+# Local secrets and setup notes (never commit)
+private/
