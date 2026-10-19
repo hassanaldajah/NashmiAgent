@@ -2283,7 +2283,7 @@ def open_admin() -> None:
 
 
 def sign_out() -> None:
-    for key in ("guest", "_mfa_ok", "_mfa_codes", "_mfa_secret", "_profile_ok", "_account_deleted",
+    for key in ("guest", "_otp", "_otp_ok", "_mfa_ok", "_mfa_codes", "_mfa_secret", "_profile_ok", "_account_deleted",
                 "_account_id", "_account_sub", "_presence_at"):
         st.session_state.pop(key, None)
     st.session_state["gate"] = "landing"
@@ -3286,6 +3286,55 @@ pre, [data-testid="stCode"] {
 
 .st-key-side_user { margin-top: 0.6rem; }
 
+/* ---- Sidebar boxes: label inside, smooth hover ---- */
+[data-testid="stSidebar"] button,
+[data-testid="stSidebar"] [data-baseweb="select"] > div,
+[data-testid="stSidebar"] [data-baseweb="input"],
+[data-testid="stSidebar"] [data-testid="stRadioOption"] {
+    transition: background 0.22s ease, border-color 0.22s ease,
+                box-shadow 0.22s ease, transform 0.18s ease, color 0.22s ease;
+}
+.st-key-new_chat button:hover { transform: translateY(-1px); }
+.st-key-track_box, .st-key-lang_box, .st-key-guest_card {
+    gap: 0 !important;
+    padding: 0.45rem 0.55rem 0.3rem;
+    border-radius: 14px;
+    background: rgba(19, 28, 43, 0.75);
+    border: 1px solid var(--line);
+    transition: border-color 0.22s ease, box-shadow 0.22s ease;
+}
+.st-key-track_box:hover, .st-key-lang_box:hover, .st-key-guest_card:hover,
+.st-key-track_box:focus-within, .st-key-lang_box:focus-within {
+    border-color: rgba(255, 51, 68, 0.55);
+    box-shadow: 0 0 18px rgba(255, 51, 68, 0.14);
+}
+.box-label {
+    font-family: var(--mono); font-size: 0.62rem; letter-spacing: 1.6px;
+    text-transform: uppercase; color: var(--muted); padding: 0 0.15rem 0.1rem;
+}
+[data-testid="stSidebar"] [data-testid="stElementContainer"]:has(> .stMarkdown .box-label) {
+    height: auto !important; min-height: 1.1rem; overflow: visible;
+}
+[data-testid="stSidebar"] .stMarkdown:has(.box-label) > div { height: auto !important; }
+.st-key-track_box [data-testid="stSelectbox"] [role="group"],
+.st-key-lang_box [data-testid="stSelectbox"] [role="group"],
+.st-key-track_box [data-baseweb="select"] > div,
+.st-key-lang_box [data-baseweb="select"] > div {
+    background: transparent !important; border: 0 !important;
+    box-shadow: none !important; min-height: 32px !important; padding-left: 0.15rem;
+}
+.st-key-track_box input, .st-key-lang_box input { font-weight: 600; }
+.st-key-guest_card { padding: 0.6rem 0.65rem 0.65rem; }
+.st-key-guest_card .guest-text { color: var(--text); font-size: 0.84rem; margin: 0.1rem 0.15rem 0.5rem; }
+.st-key-guest_card button { width: 100%; }
+[data-testid="stSidebar"] [data-testid="stRadioOption"]:hover {
+    background: rgba(164, 177, 205, 0.08);
+}
+.st-key-chat_head [data-testid="stPopoverButton"] > div > div[aria-hidden="true"] { display: none; }
+.st-key-guest_card [data-testid="stElementContainer"],
+.st-key-guest_card [data-testid="stButton"] { width: 100% !important; }
+.st-key-guest_card .guest-text { margin-bottom: 0.65rem; }
+
 /* ---- Scrollbar (desktop) ---- */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -4254,15 +4303,16 @@ def render_nav(box) -> str:
             tt("New chat", "محادثة جديدة"), key="new_chat", icon=":material/add:",
             on_click=on_new_chat, disabled=mode in (MODE_SOC, MODE_TOOLS, MODE_EXAM),
         )
-        st.markdown(
-            f'<div class="side-label">{tt("Track", "التراك")}</div>',
-            unsafe_allow_html=True,
-        )
-        return st.selectbox(
-            "Track", MODES, key="track", label_visibility="collapsed",
-            on_change=close_account,
-            format_func=lambda name: tt(name, TRACK_AR.get(name, name)),
-        )
+        with st.container(key="track_box"):
+            st.markdown(
+                f'<div class="box-label">{tt("Track", "التراك")}</div>',
+                unsafe_allow_html=True,
+            )
+            return st.selectbox(
+                "Track", MODES, key="track", label_visibility="collapsed",
+                on_change=close_account,
+                format_func=lambda name: tt(name, TRACK_AR.get(name, name)),
+            )
 
 
 def render_projects_panel() -> None:
@@ -4429,9 +4479,12 @@ def render_user_card(box) -> None:
                                   on_click=open_admin,
                                   icon=":material/monitoring:")
         elif accounts_enabled():
-            st.caption(tt("Guest: chats are not saved. Sign in to keep them.",
-                          "ضيف: المحادثات لا تُحفظ. سجّل الدخول لتحتفظ بها."))
-            render_login_buttons("side")
+            with st.container(key="guest_card"):
+                st.markdown(
+                    f'<div class="box-label">{tt("Guest", "ضيف")}</div>'
+                    f'<div class="guest-text">{tt("Sign in to chat and save your work.", "سجّل الدخول لتتحدث وتحفظ عملك.")}</div>',
+                    unsafe_allow_html=True)
+                render_login_buttons("side")
             st.button(tt("Usage and settings", "الاستخدام والإعدادات"), key="open_account",
                       on_click=open_account,
                       icon=":material/account_circle:", type="tertiary")
@@ -4443,9 +4496,12 @@ def render_user_card(box) -> None:
 
 def render_side_language(box) -> None:
     """Language dropdown for the signed-in app (same choice as on the public pages)."""
-    with box:
+    with box, st.container(key="lang_box"):
+        st.markdown(f'<div class="box-label">{tt("Language", "اللغة")}</div>',
+                    unsafe_allow_html=True)
         st.session_state["side_lang"] = lang()
         st.selectbox(tt("Language", "اللغة"), ["en", "ar"], key="side_lang",
+                     label_visibility="collapsed",
                      format_func=lambda c: {"en": "English", "ar": "العربية"}[c],
                      on_change=on_app_lang_pick)
 
@@ -6963,6 +7019,26 @@ div:has(> .st-key-topbar) { position: sticky; top: 10px; z-index: 60; }
 }
 [data-testid="stImage"] { display: flex; justify-content: center; }
 .st-key-login_card { margin-top: 0.4rem; }
+.st-key-auth_box {
+    max-width: 460px; margin: 2.2rem auto 1rem; padding: 1.6rem 1.6rem 1.1rem;
+    border-radius: 20px !important; background: rgba(15, 22, 38, 0.92);
+    border: 1px solid rgba(255, 51, 68, 0.45) !important;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45), 0 0 40px rgba(255, 51, 68, 0.12);
+}
+.st-key-auth_box [data-testid="stFormSubmitButton"] button {
+    background: linear-gradient(135deg, #ff3344, #c8102e); color: #fff; border: 0;
+}
+.st-key-auth_box [data-testid="stFormSubmitButton"] button:hover { filter: brightness(1.1); color: #fff; }
+.auth-head { text-align: center; }
+.auth-head h2 { margin: 0.2rem 0 0.4rem; padding: 0; color: var(--white); font-size: 1.5rem; }
+.auth-head p { margin: 0 0 0.6rem; color: var(--text); font-size: 0.93rem; }
+.auth-steps { display: flex; gap: 0.4rem; justify-content: center; margin-bottom: 0.4rem; }
+.auth-steps span {
+    padding: 2px 10px; border-radius: 999px; font: 600 0.7rem var(--mono);
+    color: var(--muted); background: rgba(164, 177, 205, 0.1);
+}
+.auth-steps span.on { color: #fff; background: rgba(255, 51, 68, 0.55); }
+.auth-steps span.done { color: var(--text); background: rgba(255, 51, 68, 0.18); }
 @media (max-width: 480px) {
     .st-key-topbar button { padding: 0 0.75rem; min-width: 0; }
     .st-key-topbar { padding-left: 0.5rem; }
@@ -7510,6 +7586,16 @@ STRINGS["ar"].update({
 })
 
 
+STRINGS["en"].update({
+    "fs_title": "Choose your name",
+    "fs_p": "{email} is verified. This name and username are what you will use on Nashmi.",
+    "fs_create": "Submit",
+})
+STRINGS["ar"].update({
+    "fs_title": "اختر اسمك",
+    "fs_p": "تم التحقق من {email}. هذا الاسم واسم المستخدم هما ما ستستعمله في نشمي.",
+    "fs_create": "إرسال",
+})
 STRINGS["en"].update({
     "guest": "Guest", "guest_long": "Continue as guest",
     "guest_note": "No account needed. Your chats are not saved, and you bring your own API key.",
@@ -8064,7 +8150,7 @@ def render_topbar(mode: str = "landing") -> None:
 def render_about() -> None:
     """A small 'about' card under the story."""
     chips = "".join(f"<span>{name}</span>" for name in
-                    ("Python", "Streamlit", "PostgreSQL", "Three.js", "OAuth 2.0 + 2FA", "Claude Code"))
+                    ("Python", "Streamlit", "PostgreSQL", "Three.js", "OAuth 2.0", "Claude Code"))
     st.markdown(
         f'<div class="lp-about"{dir_attr()}><b>{html.escape(tr("about_title"))}</b>'
         f'<p>{html.escape(tr("about_text"))}</p><div class="lp-chips">{chips}</div></div>',
@@ -8105,15 +8191,16 @@ def narrow_page() -> None:
 
 
 def render_complete_signup(user_id: int, user: dict) -> None:
-    """Mandatory last step: nobody gets into the app without an account."""
+    """Last step for a new account: the name and username used on Nashmi."""
     render_topbar("onboarding")
     narrow_page()
-    render_scene("signup")
-    st.markdown(
-        f'<div class="lp-signin"{dir_attr()}><h2>{html.escape(tr("fs_title"))}</h2>'
-        f'<p>{tr("fs_p", email="<b>" + html.escape(user["email"] or "Google") + "</b>")}</p></div>',
-        unsafe_allow_html=True)
-    with st.container(key="login_card"):
+    with st.container(key="auth_box", border=True):
+        if otp_required():
+            st.markdown(auth_steps(2), unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="auth-head"{dir_attr()}><h2>{html.escape(tr("fs_title"))}</h2>'
+            f'<p>{tr("fs_p", email="<b>" + html.escape(user["email"] or "Google") + "</b>")}</p></div>',
+            unsafe_allow_html=True)
         with st.form("complete_signup", border=False):
             st.text_input(tr("fs_email"), value=user["email"], disabled=True)
             full_name = st.text_input(tr("fs_name"), value=user["name"], max_chars=120)
@@ -8152,9 +8239,10 @@ def _mfa_libs():
 
 
 def mfa_required() -> bool:
-    """On by default. NASHMI_REQUIRE_2FA=0 switches it off (for example if the
-    owner is locked out), and it stays off if the libraries are missing."""
-    return server_setting("NASHMI_REQUIRE_2FA") != "0" and _mfa_libs()[0] is not None
+    """Off by default: Google already verifies who signs in, so visitors are not
+    asked to scan a QR code. NASHMI_REQUIRE_2FA=1 turns the extra authenticator
+    step on; it also needs its libraries."""
+    return server_setting("NASHMI_REQUIRE_2FA") == "1" and _mfa_libs()[0] is not None
 
 
 def mfa_passed(user_id) -> bool:
@@ -8296,6 +8384,154 @@ def mfa_gate(user_id: int | None, user: dict | None) -> bool:
         render_mfa_setup(user_id, user)      # also shows the backup codes once
     else:
         render_mfa_challenge(user_id, state)
+    return True
+
+
+# ---------------------------------------------------------------------------
+# E-mail code (OTP) right after the Google sign-in, before anything else
+# ---------------------------------------------------------------------------
+OTP_TTL_SECONDS = 60        # a code is valid for one minute
+OTP_MAX_TRIES = 1           # one attempt per code, then a new code
+OTP_RESEND_SECONDS = 30     # wait between two e-mails while a code is live
+
+
+def otp_required() -> bool:
+    """On when the server can send e-mail (NASHMI_SMTP_USER and
+    NASHMI_SMTP_PASSWORD in the secrets). NASHMI_EMAIL_OTP=0 turns it off."""
+    return (server_setting("NASHMI_EMAIL_OTP") != "0"
+            and bool(server_setting("NASHMI_SMTP_USER"))
+            and bool(server_setting("NASHMI_SMTP_PASSWORD")))
+
+
+def _mask_email(email: str) -> str:
+    name, _, domain = (email or "").partition("@")
+    if not domain:
+        return email or "your e-mail"
+    shown = name[:2] if len(name) > 3 else name[:1]
+    return f"{shown}{'*' * max(1, len(name) - len(shown))}@{domain}"
+
+
+def _otp_hash(code: str, salt: str) -> str:
+    return hmac.new(salt.encode(), code.encode(), hashlib.sha256).hexdigest()
+
+
+def send_otp_email(to: str, code: str) -> None:
+    """Send the 6-digit code. Raises on any SMTP problem."""
+    import smtplib
+    from email.message import EmailMessage
+
+    user = server_setting("NASHMI_SMTP_USER")
+    msg = EmailMessage()
+    msg["Subject"] = f"{code} is your Nashmi sign-in code"
+    msg["From"] = server_setting("NASHMI_SMTP_FROM") or f"Nashmi Agent <{user}>"
+    msg["To"] = to
+    msg.set_content(
+        f"Your Nashmi Agent sign-in code is: {code}\n\n"
+        f"It works once and expires in {OTP_TTL_SECONDS} seconds. If you did not try to "
+        "sign in, you can ignore this e-mail.\n"
+    )
+    host = server_setting("NASHMI_SMTP_HOST") or "smtp.gmail.com"
+    port = int(server_setting("NASHMI_SMTP_PORT") or 465)
+    if port == 465:
+        with smtplib.SMTP_SSL(host, port, timeout=15) as smtp:
+            smtp.login(user, server_setting("NASHMI_SMTP_PASSWORD"))
+            smtp.send_message(msg)
+    else:
+        with smtplib.SMTP(host, port, timeout=15) as smtp:
+            smtp.starttls()
+            smtp.login(user, server_setting("NASHMI_SMTP_PASSWORD"))
+            smtp.send_message(msg)
+
+
+def _new_otp(user_id: int, email: str) -> bool:
+    """Make a fresh code, e-mail it and keep only its hash in the session."""
+    code = f"{secrets.randbelow(10 ** 6):06d}"
+    salt = secrets.token_hex(16)
+    try:
+        send_otp_email(email, code)
+    except Exception:  # noqa: BLE001 - never show SMTP details to visitors
+        LOGGER.exception("Could not send the sign-in code")
+        return False
+    now = time.time()
+    st.session_state["_otp"] = {
+        "uid": user_id, "salt": salt, "hash": _otp_hash(code, salt),
+        "expires": now + OTP_TTL_SECONDS, "sent": now, "tries": 0,
+    }
+    return True
+
+
+def auth_steps(current: int) -> str:
+    """Small '1. Verify e-mail  2. Your name' line on top of the sign-in box."""
+    names = [tt("Verify e-mail", "تحقق من البريد"), tt("Your name", "اسمك")]
+    items = "".join(
+        f'<span class="{"on" if i + 1 == current else ("done" if i + 1 < current else "")}">'
+        f'{i + 1}. {html.escape(n)}</span>' for i, n in enumerate(names))
+    return f'<div class="auth-steps"{dir_attr()}>{items}</div>'
+
+
+def otp_gate(user_id: int | None, user: dict | None) -> bool:
+    """True while the e-mail code page is shown. Runs once per session, right
+    after Google, before the name and username step."""
+    if not (user_id and user and otp_required()):
+        return False
+    if st.session_state.get("_otp_ok") == user_id:
+        return False
+    state = st.session_state.get("_otp")
+    now = time.time()
+    need_new = not state or state.get("uid") != user_id
+
+    # the framed box is drawn first, so the page is never blank while the
+    # e-mail is being sent
+    render_topbar("onboarding")
+    narrow_page()
+    with st.container(key="auth_box", border=True):
+        st.markdown(auth_steps(1), unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="auth-head"{dir_attr()}><h2>{tt("Check your e-mail", "تحقق من بريدك")}</h2>'
+            f'<p>{tt("We sent a 6-digit code to", "أرسلنا رمزاً من 6 أرقام إلى")} '
+            f'<b dir="ltr">{html.escape(_mask_email(user["email"]))}</b>. '
+            f'{tt("It works once, for 60 seconds.", "يعمل مرة واحدة ولمدة 60 ثانية.")}</p></div>',
+            unsafe_allow_html=True)
+        if need_new:
+            with st.spinner(tt("Sending your code...", "جارٍ إرسال الرمز...")):
+                state = st.session_state["_otp"] if _new_otp(user_id, user["email"]) else None
+            now = time.time()
+        if state is None:
+            st.error(tt("We could not send the code right now. Try again in a minute.",
+                        "تعذّر إرسال الرمز الآن. حاول مرة أخرى بعد دقيقة."))
+        else:
+            with st.form("otp_form", border=False):
+                code = st.text_input(tt("Code", "الرمز"), max_chars=6, placeholder="123456")
+                go = st.form_submit_button(tt("Verify", "تحقّق"), type="primary",
+                                           width="stretch")
+            if go:
+                code = re.sub(r"\D", "", code or "")
+                if now > state["expires"]:
+                    st.error(tt("This code has expired. Send a new one.",
+                                "انتهت صلاحية الرمز. أرسل رمزاً جديداً."))
+                elif state["tries"] >= OTP_MAX_TRIES:
+                    st.error(tt("This code was already used. Send a new one.",
+                                "هذا الرمز استُعمل. أرسل رمزاً جديداً."))
+                else:
+                    state["tries"] += 1        # every code gets one attempt only
+                    if len(code) == 6 and hmac.compare_digest(
+                            _otp_hash(code, state["salt"]), state["hash"]):
+                        st.session_state["_otp_ok"] = user_id
+                        st.session_state.pop("_otp", None)
+                        st.rerun()
+                    st.error(tt("That code is not right. Send a new one.",
+                                "الرمز غير صحيح. أرسل رمزاً جديداً."))
+        # a new code once this one is used up or expired, or after the wait
+        spent = state is None or state["tries"] >= OTP_MAX_TRIES or now > state["expires"]
+        wait = 0 if spent else int(OTP_RESEND_SECONDS - (now - state["sent"]))
+        label = tt("Send a new code", "أرسل رمزاً جديداً") + (f" ({wait}s)" if wait > 0 else "")
+        if st.button(label, key="otp_resend", type="tertiary", width="stretch",
+                     disabled=wait > 0):
+            st.session_state.pop("_otp", None)
+            st.rerun()
+        st.button(tr("fs_cancel"), key="otp_cancel", on_click=sign_out,
+                  type="tertiary", width="stretch", icon=":material/logout:")
+    render_footer()
     return True
 
 
@@ -8554,6 +8790,8 @@ def main() -> None:
                    "database. Sign out to finish.")
         st.button("Sign out", key="deleted_signout", on_click=sign_out,
                   icon=":material/logout:")
+        return
+    if otp_gate(account_id(), current_user()):
         return
     if needs_signup(account_id()):
         render_complete_signup(account_id(), current_user())
