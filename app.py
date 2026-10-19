@@ -3556,8 +3556,11 @@ pre, [data-testid="stCode"] {
 .st-key-user_actions [data-testid="stColumn"]:not(:first-child) {
     flex: 0 0 44px !important; width: 44px !important; min-width: 44px !important;
 }
-.st-key-side_signout button { min-height: 40px; padding: 0; }
-.st-key-side_signout button:hover { background: rgba(255, 51, 68, 0.2) !important; color: #fff; }
+.st-key-side_signout { margin-top: 0.4rem; }
+.st-key-side_signout button { min-height: 40px; border: 1px solid var(--line) !important; }
+.st-key-side_signout button:hover {
+    background: rgba(255, 51, 68, 0.2) !important; border-color: rgba(255, 51, 68, 0.6) !important; color: #fff;
+}
 .st-key-user_actions [data-testid="stPopover"],
 .st-key-user_actions [data-testid="stPopover"] > div { width: 100% !important; height: 100%; }
 .st-key-user_actions [data-testid="stPopoverButton"] {
@@ -4701,14 +4704,10 @@ def render_user_card(box) -> None:
                 unsafe_allow_html=True,
             )
             with st.container(key="user_actions"):
-                first, out, second = st.columns([4, 1, 1])
+                first, second = st.columns([4, 1])
                 first.button(tt("Account", "الحساب"), key="open_account",
                              on_click=open_account, width="stretch",
                              icon=":material/account_circle:")
-                # always visible: sign out and go back to the home page
-                out.button(" ", key="side_signout", on_click=sign_out,
-                           icon=":material/logout:", width="stretch",
-                           help=tt("Sign out", "تسجيل الخروج"))
                 with second.popover(" ", icon=":material/more_horiz:", width="stretch"):
                     if is_admin():
                         st.button(tt("Admin", "المشرف"), key="open_admin",
@@ -4743,6 +4742,27 @@ def render_user_card(box) -> None:
             st.button(tt("Usage and settings", "الاستخدام والإعدادات"), key="open_account",
                       on_click=open_account,
                       icon=":material/account_circle:", type="tertiary")
+
+
+def leave_guest() -> None:
+    """A guest leaves: back to the home page, nothing to sign out of."""
+    st.session_state.pop("guest", None)
+    st.session_state.pop("view", None)
+    st.session_state["gate"] = "landing"
+
+
+def render_side_exit(box) -> None:
+    """Last thing in the sidebar: sign out (or leave guest mode) and go home."""
+    if not is_public():
+        return
+    with box:
+        if current_user():
+            st.button(tt("Sign out", "تسجيل الخروج"), key="side_signout",
+                      on_click=sign_out, icon=":material/logout:", width="stretch")
+        elif st.session_state.get("guest"):
+            st.button(tt("Exit to home page", "الخروج للصفحة الرئيسية"),
+                      key="side_signout", on_click=leave_guest,
+                      icon=":material/logout:", width="stretch")
 
 
 def render_side_language(box) -> None:
@@ -9154,6 +9174,7 @@ def main() -> None:
     usage_slot.markdown(limit_widget_html(settings), unsafe_allow_html=True)
     render_user_card(user_box)
     render_side_language(user_box)
+    render_side_exit(user_box)
     if st.session_state.get("view") == "account":
         render_account(settings)
         return
