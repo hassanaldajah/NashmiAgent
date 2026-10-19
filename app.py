@@ -2636,6 +2636,38 @@ header[data-testid="stHeader"] {
     min-height: 44px;
 }
 
+/* ---- Smooth sidebar: eased slide, soft shadow, gentle control motion ---- */
+[data-testid="stSidebar"] {
+    transition: transform 0.45s cubic-bezier(.22, 1, .36, 1),
+                min-width 0.45s cubic-bezier(.22, 1, .36, 1),
+                max-width 0.45s cubic-bezier(.22, 1, .36, 1),
+                box-shadow 0.45s ease !important;
+    will-change: transform;
+}
+[data-testid="stSidebar"][aria-expanded="true"] {
+    box-shadow: 10px 0 40px rgba(0, 0, 0, 0.45);
+}
+[data-testid="stSidebar"] button,
+[data-testid="stSidebar"] [data-baseweb="select"] > div {
+    transition: transform 0.2s ease, background 0.2s ease,
+                border-color 0.2s ease, color 0.2s ease !important;
+}
+[data-testid="stSidebar"] button:hover { transform: translateX(2px); }
+[data-testid="stSidebarCollapsedControl"] button,
+[data-testid="stExpandSidebarButton"],
+[data-testid="stSidebarCollapseButton"] button {
+    transition: transform 0.25s cubic-bezier(.22, 1, .36, 1),
+                background 0.2s ease !important;
+}
+[data-testid="stSidebarCollapsedControl"] button:hover,
+[data-testid="stExpandSidebarButton"]:hover,
+[data-testid="stSidebarCollapseButton"] button:hover { transform: scale(1.08); }
+@media (prefers-reduced-motion: reduce) {
+    [data-testid="stSidebar"], [data-testid="stSidebar"] button {
+        transition: none !important;
+    }
+}
+
 /* ---- Base ---- */
 html, body { -webkit-text-size-adjust: 100%; }
 * { -webkit-tap-highlight-color: transparent; }
@@ -5852,7 +5884,213 @@ def render_exam_track(settings: Settings) -> None:
 # ---------------------------------------------------------------------------
 # Landing page, sign-in page and admin screen
 # ---------------------------------------------------------------------------
+THREE_URL = "https://cdn.jsdelivr.net/npm/three@0.150.1/build/three.min.js"
+THREE_SRI = "sha384-eWPGgBROV7OvRpuavxpzaTSoHT/gkcVjZ94JzXW7WDFZB9qEb4Q9k+8bfx/c1rTM"
+
+# Animated 3D banner for the landing and sign-in pages: a wireframe shield
+# core, an orbiting ring and a particle network that follows the pointer.
+SCENE_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src https://cdn.jsdelivr.net 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:">
+<style>
+    html, body {
+        margin: 0; height: 100%; overflow: hidden; background: transparent;
+        font-family: Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
+        -webkit-text-size-adjust: 100%;
+    }
+    #stage {
+        position: relative; box-sizing: border-box; width: 100%;
+        height: calc(100% - 4px); overflow: hidden; border-radius: 18px;
+        border: 1px solid rgba(229, 56, 59, 0.4);
+        background: radial-gradient(circle at 50% 38%, #2a1018 0%,
+            #0f1724 55%, #070b12 100%);
+    }
+    canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+    .copy {
+        position: absolute; left: 0; right: 0; bottom: 0;
+        padding: 36px 16px 16px; text-align: center; color: #a4b1cd;
+        background: linear-gradient(transparent, rgba(7, 11, 18, 0.88) 55%);
+        animation: rise 0.9s cubic-bezier(.22, 1, .36, 1) both;
+    }
+    .badge {
+        display: inline-block; padding: 3px 12px; border-radius: 999px;
+        border: 1px solid rgba(229, 56, 59, 0.45);
+        background: rgba(229, 56, 59, 0.12); color: #fff;
+        font: 600 12px ui-monospace, Consolas, monospace; letter-spacing: .04em;
+    }
+    h1 {
+        margin: 8px 0 6px; color: #fff; font-weight: 800; line-height: 1.08;
+        font-size: clamp(1.7rem, 7.5vw, 2.9rem);
+    }
+    h1 span { color: #E5383B; }
+    p { margin: 0 auto; max-width: 560px; line-height: 1.5;
+        font-size: clamp(0.88rem, 3.3vw, 1.02rem); }
+    @keyframes rise { from { opacity: 0; transform: translateY(16px); }
+                      to { opacity: 1; transform: none; } }
+    @media (prefers-reduced-motion: reduce) { .copy { animation: none; } }
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="c"></canvas><div class="copy">__COPY__</div></div>
+<script src="__THREE_URL__" integrity="__THREE_SRI__" crossorigin="anonymous"></script>
+<script>
+(function () {
+    if (!window.THREE) { return; }
+    var stage = document.getElementById('stage');
+    var canvas = document.getElementById('c');
+    var reduce = window.matchMedia &&
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var renderer;
+    try {
+        renderer = new THREE.WebGLRenderer(
+            { canvas: canvas, antialias: true, alpha: true });
+    } catch (err) { canvas.style.display = 'none'; return; }
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    var scene = new THREE.Scene();
+    var camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+    var group = new THREE.Group();
+    group.position.y = __OFFSET_Y__;
+    scene.add(group);
+    var RED = 0xE5383B;
+
+    var core = new THREE.Mesh(new THREE.IcosahedronGeometry(1.12, 1),
+        new THREE.MeshBasicMaterial({ color: 0x14090f }));
+    var coreWire = new THREE.LineSegments(
+        new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(1.2, 1)),
+        new THREE.LineBasicMaterial({ color: RED, transparent: true, opacity: 0.95 }));
+    var shell = new THREE.LineSegments(
+        new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(1.75, 2)),
+        new THREE.LineBasicMaterial({ color: 0xA4B1CD, transparent: true, opacity: 0.18 }));
+    group.add(core, coreWire, shell);
+
+    var N = 170, positions = new Float32Array(N * 3), pts = [];
+    for (var i = 0; i < N; i++) {
+        var r = 2.3 + Math.random() * 1.5;
+        var t = Math.random() * Math.PI * 2;
+        var u = Math.acos(2 * Math.random() - 1);
+        var x = r * Math.sin(u) * Math.cos(t);
+        var y = r * Math.sin(u) * Math.sin(t);
+        var z = r * Math.cos(u);
+        positions[i * 3] = x; positions[i * 3 + 1] = y; positions[i * 3 + 2] = z;
+        pts.push([x, y, z]);
+    }
+    var pg = new THREE.BufferGeometry();
+    pg.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    var points = new THREE.Points(pg, new THREE.PointsMaterial(
+        { color: 0xffffff, size: 0.045, transparent: true, opacity: 0.9 }));
+    var lineData = [], MAX_FLOATS = 260 * 6;
+    for (var a = 0; a < N && lineData.length < MAX_FLOATS; a++) {
+        for (var b = a + 1; b < N && lineData.length < MAX_FLOATS; b++) {
+            var dx = pts[a][0] - pts[b][0], dy = pts[a][1] - pts[b][1],
+                dz = pts[a][2] - pts[b][2];
+            if (dx * dx + dy * dy + dz * dz < 0.9) {
+                lineData.push(pts[a][0], pts[a][1], pts[a][2],
+                              pts[b][0], pts[b][1], pts[b][2]);
+            }
+        }
+    }
+    var lg = new THREE.BufferGeometry();
+    lg.setAttribute('position',
+        new THREE.BufferAttribute(new Float32Array(lineData), 3));
+    var lines = new THREE.LineSegments(lg, new THREE.LineBasicMaterial(
+        { color: RED, transparent: true, opacity: 0.35 }));
+    var net = new THREE.Group();
+    net.add(points, lines);
+    group.add(net);
+
+    var ring = new THREE.Mesh(new THREE.TorusGeometry(2.1, 0.012, 8, 160),
+        new THREE.MeshBasicMaterial({ color: RED, transparent: true, opacity: 0.7 }));
+    ring.rotation.x = 1.2;
+    group.add(ring);
+
+    function resize() {
+        var w = stage.clientWidth, h = stage.clientHeight;
+        if (!w || !h) { return; }
+        renderer.setSize(w, h, false);
+        camera.aspect = w / h;
+        camera.position.set(0, 0, w / h < 0.9 ? 10.5 : (w / h < 1.6 ? 8.6 : 7.2));
+        camera.updateProjectionMatrix();
+    }
+    resize();
+    if (window.ResizeObserver) { new ResizeObserver(resize).observe(stage); }
+    else { window.addEventListener('resize', resize); }
+
+    var tx = 0, ty = 0;
+    stage.addEventListener('pointermove', function (e) {
+        var rc = stage.getBoundingClientRect();
+        tx = (e.clientX - rc.left) / rc.width - 0.5;
+        ty = (e.clientY - rc.top) / rc.height - 0.5;
+    });
+    stage.addEventListener('pointerleave', function () { tx = 0; ty = 0; });
+
+    var start = performance.now(), running = false;
+    function frame(now) {
+        var t = (now - start) / 1000;
+        coreWire.rotation.y = t * 0.35;
+        coreWire.rotation.x = t * 0.2;
+        coreWire.scale.setScalar(1 + Math.sin(t * 1.6) * 0.03);
+        shell.rotation.y = -t * 0.12;
+        net.rotation.y = t * 0.06;
+        net.rotation.x = Math.sin(t * 0.2) * 0.1;
+        ring.rotation.z = t * 0.25;
+        group.rotation.y += (tx * 0.9 - group.rotation.y) * 0.05;
+        group.rotation.x += (ty * 0.6 - group.rotation.x) * 0.05;
+        renderer.render(scene, camera);
+        if (running) { requestAnimationFrame(frame); }
+    }
+    function play() {
+        if (reduce || running) { return; }
+        running = true;
+        requestAnimationFrame(frame);
+    }
+    frame(start);          // always paint one frame (also the reduced-motion look)
+    play();
+    document.addEventListener('visibilitychange', function () {
+        if (document.hidden) { running = false; } else { play(); }
+    });
+})();
+</script>
+</body>
+</html>
+"""
+
+SCENE_COPY = {
+    "landing": (
+        '<div class="badge">&gt; CYBERSECURITY AI AGENT</div>'
+        '<h1>Meet <span>Nashmi Agent</span></h1>'
+        '<p>An AI agent built only for cybersecurity. Analyse incidents, '
+        'look up vulnerabilities, solve CTFs and practise for exams, with '
+        'your own API key and your data kept private.</p>'
+    ),
+    "login": (
+        '<h1><span>&gt;_</span> Nashmi</h1>'
+        '<p>Sign in to keep your work between visits.</p>'
+    ),
+}
+SCENE_SIZES = {"landing": (460, 0.9), "login": (250, 0.55)}
+
+
+def render_scene(kind: str) -> None:
+    """Show the animated 3D banner for the landing or sign-in page."""
+    height, offset = SCENE_SIZES[kind]
+    markup = (
+        SCENE_TEMPLATE.replace("__COPY__", SCENE_COPY[kind])
+        .replace("__THREE_URL__", THREE_URL)
+        .replace("__THREE_SRI__", THREE_SRI)
+        .replace("__OFFSET_Y__", str(offset))
+    )
+    embed_html(markup, height)
+
+
 LANDING_CSS = """
+@keyframes lpUp {
+    from { opacity: 0; transform: translateY(14px); }
+    to { opacity: 1; transform: none; }
+}
 .lp-hero { text-align: center; padding: 2.2rem 0 0.4rem; }
 .lp-badge {
     display: inline-block; padding: 0.25rem 0.8rem; border-radius: 999px;
@@ -5883,7 +6121,7 @@ LANDING_CSS = """
     color: var(--muted); font-size: 0.85rem; line-height: 1.5;
 }
 .lp-signin {
-    max-width: 440px; margin: 2rem auto 0.6rem; padding: 1.6rem 1.4rem;
+    max-width: 440px; margin: 0.9rem auto 0.6rem; padding: 1.4rem 1.4rem;
     border-radius: 16px; background: var(--panel);
     border: 1px solid var(--line); text-align: center;
 }
@@ -5897,6 +6135,39 @@ LANDING_CSS = """
     color: var(--text); font-size: 0.92rem; line-height: 1.7;
 }
 .st-key-landing_cta, .st-key-login_card { max-width: 440px; margin: 0 auto; }
+
+/* Smooth entrance and hover motion */
+.lp-card {
+    animation: lpUp 0.7s cubic-bezier(.22, 1, .36, 1) both;
+    transition: transform 0.25s ease, border-color 0.25s ease,
+                box-shadow 0.25s ease;
+}
+.lp-card:nth-child(2) { animation-delay: 0.08s; }
+.lp-card:nth-child(3) { animation-delay: 0.16s; }
+.lp-card:nth-child(4) { animation-delay: 0.24s; }
+.lp-card:hover {
+    transform: translateY(-4px); border-color: var(--accent-dim);
+    box-shadow: 0 12px 30px rgba(229, 56, 59, 0.14);
+}
+.lp-signin { animation: lpUp 0.7s cubic-bezier(.22, 1, .36, 1) both; }
+.st-key-landing_cta, .st-key-login_card {
+    animation: lpUp 0.7s 0.1s cubic-bezier(.22, 1, .36, 1) both;
+}
+.st-key-landing_cta button, .st-key-login_card button {
+    transition: transform 0.2s ease, border-color 0.2s ease,
+                box-shadow 0.2s ease;
+}
+.st-key-landing_cta button:hover, .st-key-login_card button:hover {
+    transform: translateY(-2px); box-shadow: 0 8px 22px rgba(229, 56, 59, 0.18);
+}
+@media (prefers-reduced-motion: reduce) {
+    .lp-card, .lp-signin, .st-key-landing_cta, .st-key-login_card {
+        animation: none;
+    }
+    .lp-card, .st-key-landing_cta button, .st-key-login_card button {
+        transition: none;
+    }
+}
 .st-key-login_card [data-testid="stButton"],
 .st-key-login_card [data-testid="stButton"] button { width: 100%; }
 .st-key-login_card [data-testid="stCaptionContainer"] {
@@ -5943,17 +6214,8 @@ def render_landing() -> None:
         f'<span>{html.escape(text)}</span></div>'
         for title, text in LANDING_FEATURES
     )
-    st.markdown(
-        f'<style>{LANDING_CSS}</style>'
-        '<div class="lp-hero"><span class="lp-badge">&gt; CYBERSECURITY AI '
-        'AGENT</span>'
-        '<div class="lp-title" role="heading" aria-level="1">Meet '
-        f'<span>{html.escape(APP_NAME)}</span></div>'
-        '<p class="lp-sub">An AI agent built only for cybersecurity. '
-        'Analyse incidents, look up vulnerabilities and practise for exams, '
-        'with your own API key and your data kept private.</p></div>',
-        unsafe_allow_html=True,
-    )
+    st.markdown(f'<style>{LANDING_CSS}</style>', unsafe_allow_html=True)
+    render_scene("landing")
     with st.container(key="landing_cta"):
         if accounts_enabled():
             st.button("Sign in", key="landing_signin", type="primary",
@@ -5977,11 +6239,10 @@ def render_landing() -> None:
 def render_login_page() -> None:
     """Focused sign-in page. Google shows its own password / 2-step screen;
     Nashmi never sees or stores a password."""
+    st.markdown(f'<style>{LANDING_CSS}</style>', unsafe_allow_html=True)
+    render_scene("login")
     st.markdown(
-        f'<style>{LANDING_CSS}</style>'
-        '<div class="lp-signin"><h2>Sign in to '
-        f'{html.escape(APP_NAME)}</h2>'
-        '<p>Keep your work between visits.</p><ul>'
+        '<div class="lp-signin"><h2>Sign in</h2><ul>'
         '<li>Your chats and projects are saved</li>'
         '<li>Usage history across devices</li>'
         '<li>Optionally save API keys, encrypted</li></ul></div>',
