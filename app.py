@@ -5906,12 +5906,45 @@ SCENE_TEMPLATE = """<!DOCTYPE html>
         position: relative; box-sizing: border-box; width: 100%;
         height: calc(100% - 4px); overflow: hidden; border-radius: 18px;
         border: 1px solid rgba(229, 56, 59, 0.4);
-        background: radial-gradient(circle at 50% 38%, #2a1018 0%,
-            #0f1724 55%, #070b12 100%);
+        background: radial-gradient(circle at 50% __CAT_TOP__, #7d1020 0%,
+            #3b0d19 26%, #121827 62%, #070b12 100%);
     }
-    canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+    canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; z-index: 1; }
+    /* red and white shemagh check along the top edge */
+    .band {
+        position: absolute; left: 0; right: 0; top: 0; height: 12px; z-index: 3;
+        background: conic-gradient(#fff 25%, #E5383B 0 50%, #fff 0 75%,
+            #E5383B 0) 0 0 / 12px 12px;
+        opacity: 0.95;
+    }
+    .glow {
+        position: absolute; left: 50%; top: __CAT_TOP__; z-index: 0;
+        width: 86%; aspect-ratio: 1; max-width: 340px;
+        transform: translate(-50%, -50%); border-radius: 50%;
+        background: radial-gradient(circle, rgba(255, 59, 63, 0.55) 0%,
+            rgba(229, 56, 59, 0.22) 38%, transparent 68%);
+        animation: pulse 3.2s ease-in-out infinite;
+    }
+    .catbox {
+        position: absolute; left: 50%; top: __CAT_TOP__; z-index: 2;
+        width: __CAT_W__; transform: translate(-50%, -50%);
+        animation: floaty 4.2s ease-in-out infinite;
+    }
+    #cat {
+        display: block; width: 100%; height: auto; will-change: transform;
+        image-rendering: pixelated; image-rendering: crisp-edges;
+        -webkit-mask-image: radial-gradient(ellipse at center, #000 52%,
+            transparent 80%);
+        mask-image: radial-gradient(ellipse at center, #000 52%,
+            transparent 80%);
+        filter: drop-shadow(0 0 14px rgba(255, 255, 255, 0.28));
+    }
+    @keyframes pulse { 0%, 100% { opacity: 0.75; transform: translate(-50%, -50%) scale(0.96); }
+                       50% { opacity: 1; transform: translate(-50%, -50%) scale(1.06); } }
+    @keyframes floaty { 0%, 100% { transform: translate(-50%, -50%); }
+                        50% { transform: translate(-50%, calc(-50% - 7px)); } }
     .copy {
-        position: absolute; left: 0; right: 0; bottom: 0;
+        position: absolute; left: 0; right: 0; bottom: 0; z-index: 4;
         padding: 36px 16px 16px; text-align: center; color: #a4b1cd;
         background: linear-gradient(transparent, rgba(7, 11, 18, 0.88) 55%);
         animation: rise 0.9s cubic-bezier(.22, 1, .36, 1) both;
@@ -5931,11 +5964,19 @@ SCENE_TEMPLATE = """<!DOCTYPE html>
         font-size: clamp(0.88rem, 3.3vw, 1.02rem); }
     @keyframes rise { from { opacity: 0; transform: translateY(16px); }
                       to { opacity: 1; transform: none; } }
-    @media (prefers-reduced-motion: reduce) { .copy { animation: none; } }
+    @media (prefers-reduced-motion: reduce) {
+        .copy, .glow, .catbox { animation: none; }
+    }
 </style>
 </head>
 <body>
-<div id="stage"><canvas id="c"></canvas><div class="copy">__COPY__</div></div>
+<div id="stage">
+    <div class="glow"></div>
+    <canvas id="c"></canvas>
+    <div class="band"></div>
+    <div class="catbox"><img id="cat" alt="Nashmi, the cat in a red and white shemagh" src="data:image/png;base64,__CAT__"></div>
+    <div class="copy">__COPY__</div>
+</div>
 <script src="__THREE_URL__" integrity="__THREE_SRI__" crossorigin="anonymous"></script>
 <script>
 (function () {
@@ -5957,37 +5998,41 @@ SCENE_TEMPLATE = """<!DOCTYPE html>
     scene.add(group);
     var RED = 0xE5383B;
 
-    var core = new THREE.Mesh(new THREE.IcosahedronGeometry(1.12, 1),
-        new THREE.MeshBasicMaterial({ color: 0x14090f }));
+    group.scale.setScalar(__GSCALE__);
+    var BRIGHT = 0xFF3B3F;
+    // the cat sits in the middle; a red shield and a white shell orbit it
     var coreWire = new THREE.LineSegments(
-        new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(1.2, 1)),
-        new THREE.LineBasicMaterial({ color: RED, transparent: true, opacity: 0.95 }));
+        new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(2.05, 1)),
+        new THREE.LineBasicMaterial({ color: BRIGHT, transparent: true, opacity: 0.8 }));
     var shell = new THREE.LineSegments(
-        new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(1.75, 2)),
-        new THREE.LineBasicMaterial({ color: 0xA4B1CD, transparent: true, opacity: 0.18 }));
-    group.add(core, coreWire, shell);
+        new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(2.7, 2)),
+        new THREE.LineBasicMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0.2 }));
+    group.add(coreWire, shell);
 
-    var N = 170, positions = new Float32Array(N * 3), pts = [];
+    var N = 190, positions = new Float32Array(N * 3), colors = new Float32Array(N * 3), pts = [];
     for (var i = 0; i < N; i++) {
-        var r = 2.3 + Math.random() * 1.5;
+        var r = 3.2 + Math.random() * 1.5;
         var t = Math.random() * Math.PI * 2;
         var u = Math.acos(2 * Math.random() - 1);
         var x = r * Math.sin(u) * Math.cos(t);
         var y = r * Math.sin(u) * Math.sin(t);
         var z = r * Math.cos(u);
         positions[i * 3] = x; positions[i * 3 + 1] = y; positions[i * 3 + 2] = z;
+        // alternate white and bright red points
+        colors[i * 3] = 1; colors[i * 3 + 1] = i % 2 ? 1 : 0.23; colors[i * 3 + 2] = i % 2 ? 1 : 0.25;
         pts.push([x, y, z]);
     }
     var pg = new THREE.BufferGeometry();
     pg.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    pg.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     var points = new THREE.Points(pg, new THREE.PointsMaterial(
-        { color: 0xffffff, size: 0.045, transparent: true, opacity: 0.9 }));
+        { vertexColors: true, size: 0.075, transparent: true, opacity: 0.95 }));
     var lineData = [], MAX_FLOATS = 260 * 6;
     for (var a = 0; a < N && lineData.length < MAX_FLOATS; a++) {
         for (var b = a + 1; b < N && lineData.length < MAX_FLOATS; b++) {
             var dx = pts[a][0] - pts[b][0], dy = pts[a][1] - pts[b][1],
                 dz = pts[a][2] - pts[b][2];
-            if (dx * dx + dy * dy + dz * dz < 0.9) {
+            if (dx * dx + dy * dy + dz * dz < 1.7) {
                 lineData.push(pts[a][0], pts[a][1], pts[a][2],
                               pts[b][0], pts[b][1], pts[b][2]);
             }
@@ -5997,15 +6042,20 @@ SCENE_TEMPLATE = """<!DOCTYPE html>
     lg.setAttribute('position',
         new THREE.BufferAttribute(new Float32Array(lineData), 3));
     var lines = new THREE.LineSegments(lg, new THREE.LineBasicMaterial(
-        { color: RED, transparent: true, opacity: 0.35 }));
+        { color: BRIGHT, transparent: true, opacity: 0.45 }));
     var net = new THREE.Group();
     net.add(points, lines);
     group.add(net);
 
-    var ring = new THREE.Mesh(new THREE.TorusGeometry(2.1, 0.012, 8, 160),
-        new THREE.MeshBasicMaterial({ color: RED, transparent: true, opacity: 0.7 }));
-    ring.rotation.x = 1.2;
-    group.add(ring);
+    var ring = new THREE.Mesh(new THREE.TorusGeometry(3.0, 0.02, 8, 180),
+        new THREE.MeshBasicMaterial({ color: BRIGHT, transparent: true, opacity: 0.85 }));
+    ring.rotation.x = 1.25;
+    var ring2 = new THREE.Mesh(new THREE.TorusGeometry(3.5, 0.015, 8, 180),
+        new THREE.MeshBasicMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0.55 }));
+    ring2.rotation.x = 1.9;
+    ring2.rotation.y = 0.5;
+    group.add(ring, ring2);
+    var catEl = document.getElementById('cat'), sx = 0, sy = 0;
 
     function resize() {
         var w = stage.clientWidth, h = stage.clientHeight;
@@ -6037,8 +6087,14 @@ SCENE_TEMPLATE = """<!DOCTYPE html>
         net.rotation.y = t * 0.06;
         net.rotation.x = Math.sin(t * 0.2) * 0.1;
         ring.rotation.z = t * 0.25;
+        ring2.rotation.z = -t * 0.18;
         group.rotation.y += (tx * 0.9 - group.rotation.y) * 0.05;
         group.rotation.x += (ty * 0.6 - group.rotation.x) * 0.05;
+        sx += (tx - sx) * 0.06; sy += (ty - sy) * 0.06;
+        if (catEl) {
+            catEl.style.transform = 'translate(' + (-sx * 14).toFixed(1) + 'px,' +
+                                    (-sy * 10).toFixed(1) + 'px)';
+        }
         renderer.render(scene, camera);
         if (running) { requestAnimationFrame(frame); }
     }
@@ -6071,17 +6127,25 @@ SCENE_COPY = {
         '<p>Sign in to keep your work between visits.</p>'
     ),
 }
-SCENE_SIZES = {"landing": (460, 0.9), "login": (250, 0.55)}
+# height, scene offset, scene scale, cat width, cat vertical position
+SCENE_SIZES = {
+    "landing": (470, 0.9, 1.0, "min(210px, 56%)", "37%"),
+    "login": (270, 0.6, 0.66, "min(138px, 40%)", "38%"),
+}
 
 
 def render_scene(kind: str) -> None:
     """Show the animated 3D banner for the landing or sign-in page."""
-    height, offset = SCENE_SIZES[kind]
+    height, offset, scale, cat_width, cat_top = SCENE_SIZES[kind]
     markup = (
         SCENE_TEMPLATE.replace("__COPY__", SCENE_COPY[kind])
         .replace("__THREE_URL__", THREE_URL)
         .replace("__THREE_SRI__", THREE_SRI)
         .replace("__OFFSET_Y__", str(offset))
+        .replace("__GSCALE__", str(scale))
+        .replace("__CAT_W__", cat_width)
+        .replace("__CAT_TOP__", cat_top)
+        .replace("__CAT__", CAT_B64)
     )
     embed_html(markup, height)
 
