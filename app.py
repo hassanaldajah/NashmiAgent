@@ -7030,6 +7030,9 @@ div:has(> .st-key-topbar) { position: sticky; top: 10px; z-index: 60; }
 }
 .st-key-auth_box [data-testid="stFormSubmitButton"] button:hover { filter: brightness(1.1); color: #fff; }
 .auth-head { text-align: center; }
+.otp-left { text-align: center; font-size: 0.85rem; color: var(--muted); margin: 0.1rem 0 0.2rem; }
+.otp-left b { color: var(--white); font-family: var(--mono); }
+.otp-left.over { color: #ff6b76; }
 .auth-head h2 { margin: 0.2rem 0 0.4rem; padding: 0; color: var(--white); font-size: 1.5rem; }
 .auth-head p { margin: 0 0 0.6rem; color: var(--text); font-size: 0.93rem; }
 .auth-steps { display: flex; gap: 0.4rem; justify-content: center; margin-bottom: 0.4rem; }
@@ -8390,9 +8393,15 @@ def mfa_gate(user_id: int | None, user: dict | None) -> bool:
 # ---------------------------------------------------------------------------
 # E-mail code (OTP) right after the Google sign-in, before anything else
 # ---------------------------------------------------------------------------
-OTP_TTL_SECONDS = 60        # a code is valid for one minute
-OTP_MAX_TRIES = 1           # one attempt per code, then a new code
+OTP_TTL_SECONDS = 120       # a code is valid for two minutes
+OTP_MAX_TRIES = 3           # attempts per code, then a new code is needed
 OTP_RESEND_SECONDS = 30     # wait between two e-mails while a code is live
+
+_OTP_DIR = Path(__file__).resolve().parent / "components" / "otp"
+_otp_component = (
+    components.declare_component("nashmi_otp", path=str(_OTP_DIR))
+    if (_OTP_DIR / "index.html").exists() else None
+)
 
 
 def otp_required() -> bool:
@@ -8427,7 +8436,7 @@ def send_otp_email(to: str, code: str) -> None:
     msg["To"] = to
     msg.set_content(
         f"Your Nashmi Agent sign-in code is: {code}\n\n"
-        f"It works once and expires in {OTP_TTL_SECONDS} seconds. If you did not try to "
+        f"It works once and expires in {OTP_TTL_SECONDS // 60} minutes. If you did not try to "
         "sign in, you can ignore this e-mail.\n"
     )
     host = server_setting("NASHMI_SMTP_HOST") or "smtp.gmail.com"
@@ -8469,6 +8478,33 @@ def auth_steps(current: int) -> str:
     return f'<div class="auth-steps"{dir_attr()}>{items}</div>'
 
 
+@st.fragment(run_every="1s")
+def otp_timer() -> None:
+    """Time left on the code and the resend button, updated every second."""
+    state = st.session_state.get("_otp")
+    now = time.time()
+    if state:
+        left = int(state["expires"] - now)
+        if state["tries"] >= OTP_MAX_TRIES:
+            pass
+        elif left > 0:
+            st.markdown(
+                f'<div class="otp-left">{tt("Code expires in", "ينتهي الرمز خلال")} '
+                f'<b dir="ltr">{left // 60}:{left % 60:02d}</b></div>',
+                unsafe_allow_html=True)
+        else:
+            st.markdown(f'<div class="otp-left over">{tt("The code has expired.", "انتهت صلاحية الرمز.")}</div>',
+                        unsafe_allow_html=True)
+    # a new code once this one is used up or expired, or after the wait
+    spent = (not state or state["tries"] >= OTP_MAX_TRIES or now > state["expires"])
+    wait = 0 if spent else int(OTP_RESEND_SECONDS - (now - state["sent"]))
+    label = tt("Send a new code", "أرسل رمزاً جديداً") + (f" ({wait}s)" if wait > 0 else "")
+    if st.button(label, key="otp_resend", type="tertiary", width="stretch",
+                 disabled=wait > 0):
+        st.session_state.pop("_otp", None)
+        st.rerun(scope="app")
+
+
 def otp_gate(user_id: int | None, user: dict | None) -> bool:
     """True while the e-mail code page is shown. Runs once per session, right
     after Google, before the name and username step."""
@@ -8490,7 +8526,7 @@ def otp_gate(user_id: int | None, user: dict | None) -> bool:
             f'<div class="auth-head"{dir_attr()}><h2>{tt("Check your e-mail", "تحقق من بريدك")}</h2>'
             f'<p>{tt("We sent a 6-digit code to", "أرسلنا رمزاً من 6 أرقام إلى")} '
             f'<b dir="ltr">{html.escape(_mask_email(user["email"]))}</b>. '
-            f'{tt("It works once, for 60 seconds.", "يعمل مرة واحدة ولمدة 60 ثانية.")}</p></div>',
+            f'{tt("It is valid for 2 minutes, with 3 tries.", "صالح لمدة دقيقتين، ولك 3 محاولات.")}</p></div>',
             unsafe_allow_html=True)
         if need_new:
             with st.spinner(tt("Sending your code...", "جارٍ إرسال الرمز...")):
@@ -8500,35 +8536,47 @@ def otp_gate(user_id: int | None, user: dict | None) -> bool:
             st.error(tt("We could not send the code right now. Try again in a minute.",
                         "تعذّر إرسال الرمز الآن. حاول مرة أخرى بعد دقيقة."))
         else:
-            with st.form("otp_form", border=False):
-                code = st.text_input(tt("Code", "الرمز"), max_chars=6, placeholder="123456")
-                go = st.form_submit_button(tt("Verify", "تحقّق"), type="primary",
-                                           width="stretch")
-            if go:
-                code = re.sub(r"\D", "", code or "")
-                if now > state["expires"]:
-                    st.error(tt("This code has expired. Send a new one.",
-                                "انتهت صلاحية الرمز. أرسل رمزاً جديداً."))
-                elif state["tries"] >= OTP_MAX_TRIES:
-                    st.error(tt("This code was already used. Send a new one.",
-                                "هذا الرمز استُعمل. أرسل رمزاً جديداً."))
+            spent = state["tries"] >= OTP_MAX_TRIES or now > state["expires"]
+            if state.get("err"):
+                st.error(state["err"])
+            value = None
+            if _otp_component is not None:      # six boxes, one digit each
+                # the boxes empty themselves after every try (reset changes)
+                value = _otp_component(key=f"otp_{state['salt'][:8]}", default=None,
+                                       reset=f"{state['salt']}:{state['tries']}",
+                                       disabled=spent)
+            else:                               # fallback: one plain field
+                typed = st.text_input(tt("Code", "الرمز"), max_chars=6, placeholder="123456")
+                value = {"code": typed, "submit": False, "n": 0}
+            typed = re.sub(r"\D", "", (value or {}).get("code", "") or "")
+            go = st.button(tt("Verify", "تحقّق"), key="otp_verify", type="primary",
+                           width="stretch", disabled=spent or len(typed) != 6)
+            # Enter in the boxes submits as well as the button
+            entered = (value or {}).get("submit") and value.get("n") != state.get("seen")
+            if (go or entered) and not spent:
+                state["seen"] = (value or {}).get("n")
+                state["tries"] += 1
+                if len(typed) == 6 and hmac.compare_digest(
+                        _otp_hash(typed, state["salt"]), state["hash"]):
+                    st.session_state["_otp_ok"] = user_id
+                    st.session_state.pop("_otp", None)   # a code works only once
+                    st.rerun()
+                left = OTP_MAX_TRIES - state["tries"]
+                if left > 1:
+                    state["err"] = tt(f"That code is not right. {left} tries left.",
+                                      f"الرمز غير صحيح. باقي {left} محاولات.")
+                elif left == 1:
+                    state["err"] = tt("That code is not right. 1 try left.",
+                                      "الرمز غير صحيح. باقي محاولة واحدة.")
                 else:
-                    state["tries"] += 1        # every code gets one attempt only
-                    if len(code) == 6 and hmac.compare_digest(
-                            _otp_hash(code, state["salt"]), state["hash"]):
-                        st.session_state["_otp_ok"] = user_id
-                        st.session_state.pop("_otp", None)
-                        st.rerun()
-                    st.error(tt("That code is not right. Send a new one.",
-                                "الرمز غير صحيح. أرسل رمزاً جديداً."))
-        # a new code once this one is used up or expired, or after the wait
-        spent = state is None or state["tries"] >= OTP_MAX_TRIES or now > state["expires"]
-        wait = 0 if spent else int(OTP_RESEND_SECONDS - (now - state["sent"]))
-        label = tt("Send a new code", "أرسل رمزاً جديداً") + (f" ({wait}s)" if wait > 0 else "")
-        if st.button(label, key="otp_resend", type="tertiary", width="stretch",
-                     disabled=wait > 0):
-            st.session_state.pop("_otp", None)
-            st.rerun()
+                    state["err"] = tt("That code is not right and no tries are left. "
+                                      "Send a new one.",
+                                      "الرمز غير صحيح وانتهت المحاولات. أرسل رمزاً جديداً.")
+                st.rerun()
+            elif now > state["expires"]:
+                st.error(tt("This code has expired. Send a new one.",
+                            "انتهت صلاحية الرمز. أرسل رمزاً جديداً."))
+        otp_timer()
         st.button(tr("fs_cancel"), key="otp_cancel", on_click=sign_out,
                   type="tertiary", width="stretch", icon=":material/logout:")
     render_footer()

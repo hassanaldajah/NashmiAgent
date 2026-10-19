@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- The page can only draw, and talk to Streamlit through postMessage. -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: transparent; }
+    body { padding: 6px 2px 8px; font: 14px/1.4 Inter, system-ui, -apple-system, sans-serif; }
+    .boxes { display: flex; justify-content: center; gap: 10px; direction: ltr; }
+    input {
+        width: 48px; height: 58px; padding: 0; text-align: center;
+        font: 700 26px/1 "Cascadia Mono", Consolas, monospace; color: #ffffff;
+        background: #0f1626; border: 1px solid rgba(164, 177, 205, 0.28);
+        border-radius: 12px; outline: none; caret-color: #ff3344;
+        transition: border-color .18s ease, box-shadow .18s ease, transform .12s ease;
+    }
+    input:focus { border-color: #ff3344; box-shadow: 0 0 0 3px rgba(255, 51, 68, 0.22); }
+    input.filled { border-color: rgba(255, 51, 68, 0.6); }
+    input:disabled { opacity: .45; }
+    .gap { width: 6px; }
+    @media (max-width: 380px) { input { width: 40px; height: 50px; font-size: 22px; } .boxes { gap: 7px; } }
+</style>
+</head>
+<body>
+<div class="boxes" id="boxes"></div>
+<script>
+(() => {
+    'use strict';
+    const N = 6;
+    const wrap = document.getElementById('boxes');
+    const send = (type, data) => window.parent.postMessage(
+        Object.assign({ isStreamlitMessage: true, type: type }, data || {}), '*');
+    const setHeight = () => send('streamlit:setFrameHeight',
+        { height: Math.ceil(document.body.getBoundingClientRect().height) + 4 });
+    let count = 0, resetKey = null, disabled = false;
+    const boxes = [];
+
+    const code = () => boxes.map((b) => b.value).join('');
+    const emit = (submit) => {
+        const value = code();
+        if (value.length !== N) return;
+        count += 1;
+        send('streamlit:setComponentValue',
+             { value: { code: value, submit: !!submit, n: count }, dataType: 'json' });
+    };
+    const paint = () => boxes.forEach((b) => b.classList.toggle('filled', !!b.value));
+    const fill = (start, digits) => {
+        let i = start;
+        for (const d of digits) { if (i >= N) break; boxes[i].value = d; i += 1; }
+        paint();
+        boxes[Math.min(i, N - 1)].focus();
+        if (code().length === N) emit(false);
+    };
+
+    for (let i = 0; i < N; i += 1) {
+        if (i === 3) { const g = document.createElement('div'); g.className = 'gap'; wrap.appendChild(g); }
+        const b = document.createElement('input');
+        b.type = 'text'; b.inputMode = 'numeric'; b.maxLength = 1;
+        b.autocomplete = i === 0 ? 'one-time-code' : 'off';
+        b.setAttribute('aria-label', 'Digit ' + (i + 1));
+        b.addEventListener('input', () => {
+            const digits = b.value.replace(/\D/g, '');
+            b.value = '';
+            if (digits) fill(i, digits); else paint();
+        });
+        b.addEventListener('keydown', (e) => {
+            if (e.key === 'Backspace' && !b.value && i > 0) {
+                boxes[i - 1].value = ''; boxes[i - 1].focus(); paint(); e.preventDefault();
+            } else if (e.key === 'ArrowLeft' && i > 0) { boxes[i - 1].focus(); e.preventDefault(); }
+            else if (e.key === 'ArrowRight' && i < N - 1) { boxes[i + 1].focus(); e.preventDefault(); }
+            else if (e.key === 'Enter') { emit(true); e.preventDefault(); }
+        });
+        b.addEventListener('paste', (e) => {
+            const text = (e.clipboardData || window.clipboardData).getData('text') || '';
+            const digits = text.replace(/\D/g, '').slice(0, N);
+            if (digits) { e.preventDefault(); fill(0, digits); }
+        });
+        b.addEventListener('focus', () => b.select());
+        boxes.push(b); wrap.appendChild(b);
+    }
+
+    window.addEventListener('message', (event) => {
+        const data = event.data;
+        if (!data || data.type !== 'streamlit:render') return;
+        const args = data.args || {};
+        if (args.reset !== resetKey) {             // a new code: empty boxes
+            resetKey = args.reset;
+            boxes.forEach((b) => { b.value = ''; });
+            paint();
+            boxes[0].focus();
+        }
+        disabled = !!args.disabled;
+        boxes.forEach((b) => { b.disabled = disabled; });
+        setHeight();
+    });
+    new ResizeObserver(setHeight).observe(document.body);
+    send('streamlit:componentReady', { apiVersion: 1 });
+})();
+</script>
+</body>
+</html>
