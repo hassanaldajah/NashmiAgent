@@ -2429,9 +2429,9 @@ def open_admin() -> None:
 
 def sign_out() -> None:
     for key in ("guest", "_otp", "_otp_ok", "_mfa_ok", "_mfa_codes", "_mfa_secret", "_profile_ok", "_account_deleted",
-                "_account_id", "_account_sub", "_presence_at"):
+                "_account_id", "_account_sub", "_presence_at", "_username", "view"):
         st.session_state.pop(key, None)
-    st.session_state["gate"] = "landing"
+    st.session_state["gate"] = "landing"          # back to the home page
     st.logout()
 
 
@@ -3553,9 +3553,11 @@ pre, [data-testid="stCode"] {
 .st-key-user_actions [data-testid="stHorizontalBlock"] { align-items: stretch; flex-wrap: nowrap; gap: 0.4rem; }
 .st-key-user_actions [data-testid="stColumn"] { min-width: 0; }
 .st-key-user_actions [data-testid="stColumn"]:first-child { flex: 1 1 auto !important; width: auto !important; }
-.st-key-user_actions [data-testid="stColumn"]:last-child {
-    flex: 0 0 52px !important; width: 52px !important; min-width: 52px !important;
+.st-key-user_actions [data-testid="stColumn"]:not(:first-child) {
+    flex: 0 0 44px !important; width: 44px !important; min-width: 44px !important;
 }
+.st-key-side_signout button { min-height: 40px; padding: 0; }
+.st-key-side_signout button:hover { background: rgba(255, 51, 68, 0.2) !important; color: #fff; }
 .st-key-user_actions [data-testid="stPopover"],
 .st-key-user_actions [data-testid="stPopover"] > div { width: 100% !important; height: 100%; }
 .st-key-user_actions [data-testid="stPopoverButton"] {
@@ -4699,18 +4701,19 @@ def render_user_card(box) -> None:
                 unsafe_allow_html=True,
             )
             with st.container(key="user_actions"):
-                first, second = st.columns([4, 1])
+                first, out, second = st.columns([4, 1, 1])
                 first.button(tt("Account", "الحساب"), key="open_account",
                              on_click=open_account, width="stretch",
                              icon=":material/account_circle:")
+                # always visible: sign out and go back to the home page
+                out.button(" ", key="side_signout", on_click=sign_out,
+                           icon=":material/logout:", width="stretch",
+                           help=tt("Sign out", "تسجيل الخروج"))
                 with second.popover(" ", icon=":material/more_horiz:", width="stretch"):
                     if is_admin():
                         st.button(tt("Admin", "المشرف"), key="open_admin",
                                   on_click=open_admin, width="stretch",
                                   icon=":material/monitoring:")
-                    st.button(tt("Sign out", "تسجيل الخروج"), key="menu_signout",
-                              on_click=sign_out, width="stretch",
-                              icon=":material/logout:")
                     st.divider()
                     st.markdown(f"**{tt('Delete account', 'حذف الحساب')}**")
                     st.caption(tt(
