@@ -6190,7 +6190,7 @@ LANDING_CSS = """
     margin: 0.4rem 0 0; padding-left: 1.2rem; text-align: left;
     color: var(--text); font-size: 0.92rem; line-height: 1.7;
 }
-.st-key-landing_cta, .st-key-login_card { max-width: 440px; margin: 0 auto; }
+[class*="st-key-landing_cta"], .st-key-login_card { max-width: 440px; margin: 0 auto; }
 
 .lp-footer {
     margin: 2.2rem auto 0.4rem; padding-top: 1.2rem; text-align: center;
@@ -6228,21 +6228,21 @@ LANDING_CSS = """
     box-shadow: 0 12px 30px rgba(229, 56, 59, 0.14);
 }
 .lp-signin { animation: lpUp 0.7s cubic-bezier(.22, 1, .36, 1) both; }
-.st-key-landing_cta, .st-key-login_card {
+[class*="st-key-landing_cta"], .st-key-login_card {
     animation: lpUp 0.7s 0.1s cubic-bezier(.22, 1, .36, 1) both;
 }
-.st-key-landing_cta button, .st-key-login_card button {
+[class*="st-key-landing_cta"] button, .st-key-login_card button {
     transition: transform 0.2s ease, border-color 0.2s ease,
                 box-shadow 0.2s ease;
 }
-.st-key-landing_cta button:hover, .st-key-login_card button:hover {
+[class*="st-key-landing_cta"] button:hover, .st-key-login_card button:hover {
     transform: translateY(-2px); box-shadow: 0 8px 22px rgba(229, 56, 59, 0.18);
 }
 @media (prefers-reduced-motion: reduce) {
-    .lp-card, .lp-signin, .st-key-landing_cta, .st-key-login_card {
+    .lp-card, .lp-signin, [class*="st-key-landing_cta"], .st-key-login_card {
         animation: none;
     }
-    .lp-card, .st-key-landing_cta button, .st-key-login_card button {
+    .lp-card, [class*="st-key-landing_cta"] button, .st-key-login_card button {
         transition: none;
     }
 }
@@ -6253,20 +6253,322 @@ LANDING_CSS = """
 }
 """
 
-LANDING_FEATURES = (
-    ("SOC Analyzer",
-     "Upload logs, PCAPs, screenshots or alerts and get a structured "
-     "analyst-style report."),
-    ("Security Toolbox",
-     "CVE lookup from the NVD, hashing and encoding, and an IOC extractor "
-     "that need no AI at all."),
-    ("Practice Exams",
-     "Generate cybersecurity practice exams from your own material and get "
-     "them graded."),
-    ("CTF Coach",
-     "Describe any CTF challenge, web, crypto, pwn, reverse, forensics or "
-     "OSINT, and get a step-by-step approach."),
+# The scroll story on the landing page: a cat slides down a line as the
+# visitor scrolls, and each card lights up when the cat reaches it.
+STORY_CARDS = (
+    ("WHO", "Meet Nashmi",
+     "Nashmi is an AI agent built only for cybersecurity. Ask in Arabic or "
+     "English and get answers that use the field's own language."),
+    ("NAME", "Why the name?",
+     "In Jordanian Arabic a nashmi is someone gallant and dependable. That "
+     "is why the cat wears the red and white shemagh."),
+    ("SOC", "SOC Analyzer",
+     "Drop in logs, PCAPs, screenshots or alerts. Nashmi writes a structured "
+     "incident report with IoCs, MITRE ATT&CK mapping and remediation steps."),
+    ("CTF", "CTF Coach",
+     "Web, crypto, pwn, reverse, forensics, stego and OSINT. Describe the "
+     "challenge and get a step-by-step plan with exact commands, tuned to "
+     "the category."),
+    ("TOOLS", "Security Toolbox",
+     "CVE lookups from the NVD, hashing and encoding, and an IOC extractor. "
+     "No AI needed, and everything can be exported."),
+    ("EXAM", "Practice Exams",
+     "Build an exam from a topic or your own slides and PDFs, take it, and "
+     "get it graded."),
+    ("PRIVACY", "Your key, your data",
+     "Bring your own API key (Gemini, Groq, OpenAI or Claude). Signed-in "
+     "chats and saved keys are encrypted, and guests store nothing."),
+    ("MAKER", "Built by Hassan Aldajah",
+     "A fourth-year Cybersecurity student at the University of Jordan, "
+     "building tools for SOC analysts and CTF players."),
 )
+STORY_HEIGHT = 2100  # first guess; the page shrinks it to fit its content
+
+STORY_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:">
+<style>
+    :root { --tx: 24px; }
+    html, body {
+        margin: 0; background: transparent; overflow: hidden; color: #a4b1cd;
+        font-family: Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
+        -webkit-text-size-adjust: 100%;
+    }
+    #wrap { position: relative; padding: 30px 12px 50px; min-height: 300px; overflow: hidden; }
+    #sky {
+        position: absolute; left: 0; top: 0; width: 100%; overflow: hidden;
+        pointer-events: none;
+        -webkit-mask-image: linear-gradient(transparent, #000 20%, #000 80%, transparent);
+        mask-image: linear-gradient(transparent, #000 20%, #000 80%, transparent);
+    }
+    #sky canvas { position: absolute; left: -40px; top: 0; }
+    #track { position: absolute; width: 2px; background: rgba(164, 177, 205, 0.22); }
+    #fill {
+        position: absolute; width: 2px; z-index: 1;
+        background: linear-gradient(#E5383B, #ff6b6e);
+        box-shadow: 0 0 10px rgba(229, 56, 59, 0.6);
+    }
+    #rows { position: relative; z-index: 2; }
+    .row { position: relative; margin: 0 0 24px; min-height: 64px; }
+    .node {
+        position: absolute; top: 24px; left: var(--tx); width: 12px; height: 12px;
+        margin-left: -7px; background: #0b111c; z-index: 2;
+        border: 2px solid rgba(164, 177, 205, 0.5); transform: rotate(45deg);
+        transition: background 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+    }
+    .row.on .node {
+        background: #E5383B; border-color: #fff;
+        box-shadow: 0 0 0 6px rgba(229, 56, 59, 0.22);
+    }
+    .card {
+        position: relative; box-sizing: border-box; padding: 16px 18px;
+        background: rgba(19, 28, 43, 0.92); border-radius: 14px;
+        border: 1px solid rgba(164, 177, 205, 0.16);
+        opacity: 0.4; transform: translateY(10px);
+        transition: opacity 0.5s ease, transform 0.5s cubic-bezier(.22, 1, .36, 1),
+                    border-color 0.3s ease, box-shadow 0.3s ease;
+    }
+    .row.on .card { opacity: 1; transform: none; }
+    .row.active .card {
+        border-color: #E5383B; box-shadow: 0 10px 34px rgba(229, 56, 59, 0.22);
+    }
+    .tag {
+        display: inline-block; padding: 2px 9px; border-radius: 999px;
+        font: 700 11px ui-monospace, Consolas, monospace; letter-spacing: 0.08em;
+        color: #fff; background: rgba(229, 56, 59, 0.2);
+        border: 1px solid rgba(229, 56, 59, 0.5);
+    }
+    h3 { margin: 8px 0 4px; color: #fff; font-size: 1.15rem; }
+    p { margin: 0; font-size: 0.94rem; line-height: 1.55; }
+    #cat {
+        position: absolute; left: 0; top: 0; z-index: 3;
+        width: 120px; height: 138px;
+        transform: translate(-50%, 0); transform-origin: 50% 0;
+        image-rendering: pixelated; image-rendering: crisp-edges;
+        pointer-events: none;
+        filter: drop-shadow(0 0 12px rgba(255, 59, 63, 0.45));
+    }
+    @media (max-width: 699px) {
+        :root { --tx: 24px; }
+        .row { padding-left: 58px; }
+        #cat { width: 80px; height: 92px; }
+    }
+    @media (min-width: 700px) {
+        :root { --tx: 50%; }
+        .row .card { width: calc(50% - 50px); }
+        .row:nth-child(even) .card { margin-left: auto; }
+        #wrap { padding-left: 24px; padding-right: 24px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+        .card, .node { transition: none; }
+    }
+</style>
+</head>
+<body>
+<div id="wrap">
+    <div id="sky"><canvas id="far"></canvas><canvas id="near"></canvas></div>
+    <div id="track"></div><div id="fill"></div>
+    <div id="rows">__CARDS__</div>
+    <canvas id="cat" width="40" height="46" role="img" aria-label="Nashmi the cat sliding down the line"></canvas>
+</div>
+<script>
+(function () {
+    var reduce = window.matchMedia &&
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var wrap = document.getElementById('wrap');
+    var rows = Array.prototype.slice.call(document.querySelectorAll('.row'));
+    var track = document.getElementById('track'), fill = document.getElementById('fill');
+    var cat = document.getElementById('cat'), sky = document.getElementById('sky');
+    var far = document.getElementById('far'), near = document.getElementById('near');
+    var P = null, fe = null;
+    try { P = window.parent; fe = window.frameElement; void P.document.body; }
+    catch (err) { P = null; fe = null; }
+    var H = 0, W = 0, x = 0, y0 = 0, y1 = 0, centers = [], skyH = 0;
+
+    // the cat is drawn pixel by pixel (see drawCat) so it can move
+    var cctx = cat.getContext('2d');
+    var CW = 40, CH = 46;
+    var K = '#0b0b10', WH = '#ffffff', GR = '#d3d8e3', RD = '#E5383B';
+    function drawCat(ctx, t, vel) {
+        function px(x, y, w, h, c) { ctx.fillStyle = c; ctx.fillRect(Math.round(x), Math.round(y), w, h); }
+        function cloth(x, y) { return (((x >> 1) + (y >> 1)) & 1) ? RD : WH; }
+        ctx.clearRect(0, 0, CW, CH);
+        var flap = Math.round(Math.sin(t * 2.4));
+        var blink = (t % 3.6) > 3.45;
+        var swing = Math.max(-1, Math.min(1, Math.round(vel * 0.05)));
+        var k, tx, ty;
+
+        px(20, 0, 1, 5, '#a4b1cd');                       // rope to the line
+
+        for (k = 0; k < 10; k++) {                         // tail (wags)
+            tx = 29 + k * 0.9; ty = 41 - k * 1.15 + Math.sin(t * 4.2 + k * 0.55) * k * 0.3;
+            px(tx - 1, ty - 1, 4, 4, K);
+        }
+        for (k = 0; k < 10; k++) {
+            tx = 29 + k * 0.9; ty = 41 - k * 1.15 + Math.sin(t * 4.2 + k * 0.55) * k * 0.3;
+            px(tx, ty, 2, 2, WH);
+        }
+
+        var y, hw, x0, x1;
+        for (y = 24; y <= 41; y++) {                       // body
+            hw = y < 28 ? 6 : (y < 33 ? 8 : (y < 38 ? 9 : 10));
+            x0 = 20 - hw; x1 = 20 + hw;
+            px(x0 - 1, y, 1, 1, K); px(x1 + 1, y, 1, 1, K);
+            px(x0, y, x1 - x0 + 1, 1, WH);
+        }
+        px(10, 42, 21, 1, K);
+        px(14, 25, 13, 1, GR);                             // soft shade under the head
+        px(20, 34, 1, 8, K);                               // gap between the front legs
+        px(14, 41 + swing, 6, 1, K); px(21, 41 - swing, 6, 1, K);
+
+        for (y = 9; y <= 24; y++) {                        // head
+            var ins = y <= 10 ? 2 : (y === 11 ? 1 : (y >= 24 ? 1 : 0));
+            x0 = 9 + ins; x1 = 30 - ins;
+            px(x0 - 1, y, 1, 1, K); px(x1 + 1, y, 1, 1, K);
+            px(x0, y, x1 - x0 + 1, 1, WH);
+        }
+        px(10, 25, 20, 1, K);
+
+        for (y = 9; y <= 30; y++) {                        // shemagh flaps (sway)
+            var w = 4 + Math.floor((y - 9) / 6), sh = y > 18 ? flap : 0;
+            var lx1 = 11 + sh, lx0 = lx1 - w + 1, rx0 = 28 + sh, rx1 = rx0 + w - 1;
+            px(lx0 - 1, y, 1, 1, K); px(rx1 + 1, y, 1, 1, K);
+            for (x0 = lx0; x0 <= lx1; x0++) px(x0, y, 1, 1, cloth(x0, y));
+            for (x0 = rx0; x0 <= rx1; x0++) px(x0, y, 1, 1, cloth(x0, y));
+            if (y === 30) { px(lx0, y + 1, w, 1, K); px(rx0, y + 1, w, 1, K); }
+        }
+
+        for (y = 7; y <= 11; y++) {                        // cap
+            x0 = y === 7 ? 10 : 8; x1 = y === 7 ? 29 : 31;
+            for (var x = x0; x <= x1; x++) px(x, y, 1, 1, cloth(x, y));
+            px(x0 - 1, y, 1, 1, K); px(x1 + 1, y, 1, 1, K);
+        }
+        for (var f = 12; f <= 27; f += 2) px(f, 12, 1, 1, RD);   // fringe on the forehead
+
+        px(12, 4, 16, 1, K); px(8, 5, 24, 2, K);           // black agal (ring) on top
+        px(11, 5, 2, 1, '#3a3a46'); px(26, 5, 2, 1, '#3a3a46');
+
+        var eh = blink ? 1 : 5, ey = blink ? 16 : 14;      // tall black eyes, they blink
+        px(14, ey, 2, eh, K); px(24, ey, 2, eh, K);
+        px(19, 19, 2, 1, K);                               // nose
+        px(18, 21, 1, 1, K); px(19, 22, 2, 1, K); px(21, 21, 1, 1, K);   // mouth
+    }
+
+    function rng(seed) {
+        var s = seed;
+        return function () { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
+    }
+    var TOKENS = ['T1059', 'T1566', 'T1021', 'CVE-2021-44228', '0x4E41534D49',
+        'nashmi{shemagh_cat}', 'SOC>', 'IOC', 'SHA256', 'nc -lvnp 4444', 'TCP/443',
+        'XOR 0x5A', 'base64 -d', 'SELECT * FROM logs', 'ssh -p 22', '10.0.0.0/8',
+        'YARA', 'flag{...}', 'Event ID 4625', 'PCAP'];
+    function drawTokens(c, seed, count, size, alpha) {
+        var g = c.getContext('2d'), r = rng(seed);
+        g.clearRect(0, 0, c.width, c.height);
+        g.font = '600 ' + size + 'px ui-monospace, Consolas, monospace';
+        g.textBaseline = 'top';
+        for (var i = 0; i < count; i++) {
+            var tk = TOKENS[Math.floor(r() * TOKENS.length)];
+            g.fillStyle = r() < 0.55 ? 'rgba(229,56,59,' + alpha + ')'
+                : 'rgba(255,255,255,' + (alpha * 0.7).toFixed(2) + ')';
+            g.fillText(tk, r() * Math.max(10, c.width - 140), r() * c.height);
+        }
+    }
+
+    function layout() {
+        var wb = wrap.getBoundingClientRect();
+        W = wrap.clientWidth; H = wrap.offsetHeight;
+        centers = rows.map(function (r) {
+            var n = r.querySelector('.node').getBoundingClientRect();
+            return n.top - wb.top + n.height / 2;
+        });
+        var n0 = rows[0].querySelector('.node').getBoundingClientRect();
+        x = n0.left - wb.left + n0.width / 2;
+        y0 = centers[0]; y1 = centers[centers.length - 1];
+        track.style.left = (x - 1) + 'px'; track.style.top = y0 + 'px';
+        track.style.height = (y1 - y0) + 'px';
+        fill.style.left = (x - 1) + 'px'; fill.style.top = y0 + 'px';
+        cat.style.left = x + 'px';
+        var vh = (P && P.innerHeight) || 700;
+        skyH = Math.min(vh, H);
+        sky.style.height = skyH + 'px';
+        far.width = near.width = W + 80; far.height = near.height = skyH + 240;
+        drawTokens(far, 7, 30, 11, 0.2);
+        drawTokens(near, 19, 18, 14, 0.3);
+        if (fe && Math.abs((parseInt(fe.style.height, 10) || 0) - H) > 2) {
+            fe.style.height = H + 'px'; fe.setAttribute('height', H);
+            if (fe.parentElement) {   // Streamlit's wrapper keeps the old height otherwise
+                var bs = fe.parentElement.style, hp = H + 'px';
+                bs.setProperty('height', hp, 'important');
+                bs.setProperty('min-height', '0', 'important');
+                bs.setProperty('max-height', hp, 'important');
+                bs.setProperty('flex', '0 0 ' + hp, 'important');
+            }
+        }
+    }
+    layout();
+    if (window.ResizeObserver) { new ResizeObserver(layout).observe(wrap); }
+    window.addEventListener('resize', layout);
+
+    var cy = y0, passed = [], active = -1;
+    function frame(now) {
+        var r = fe ? fe.getBoundingClientRect() : null;
+        var vh = (P && P.innerHeight) || 700, tgt;
+        if (r) { tgt = Math.max(y0, Math.min(y1, vh * 0.5 - r.top)); }
+        else { tgt = y0 + (Math.sin(now / 3500 - 1.57) * 0.5 + 0.5) * (y1 - y0); }
+        var d = tgt - cy;
+        cy += d * 0.14;
+        if (Math.abs(d) < 0.05) { cy = tgt; }
+        var rot = Math.max(-14, Math.min(14, d * 0.1)) + Math.sin(now / 650) * 2.2;
+        cat.style.top = cy + 'px';
+        drawCat(cctx, now / 1000, d);
+        cat.style.transform = 'translate(-50%, 0) rotate(' + rot.toFixed(2) + 'deg)';
+        fill.style.height = Math.max(0, cy - y0) + 'px';
+        var best = 0, bd = 1e9;
+        for (var i = 0; i < rows.length; i++) {
+            var on = centers[i] <= cy + 14;
+            if (on !== passed[i]) { passed[i] = on; rows[i].classList.toggle('on', on); }
+            var dd = Math.abs(centers[i] - cy);
+            if (dd < bd) { bd = dd; best = i; }
+        }
+        if (best !== active) {
+            if (active >= 0) { rows[active].classList.remove('active'); }
+            rows[best].classList.add('active'); active = best;
+        }
+        var top = r ? Math.max(0, Math.min(H - skyH, -r.top)) : 0;
+        sky.style.transform = 'translateY(' + top + 'px)';
+        var prog = r ? Math.max(0, Math.min(1, (vh * 0.5 - r.top - y0) / ((y1 - y0) || 1))) : 0;
+        far.style.transform = 'translate(' + (-prog * 20).toFixed(1) + 'px,' + (-prog * 110).toFixed(1) + 'px)';
+        near.style.transform = 'translate(' + (-prog * 40).toFixed(1) + 'px,' + (-prog * 230).toFixed(1) + 'px)';
+        if (!reduce) { requestAnimationFrame(frame); }
+    }
+    if (reduce) {
+        rows.forEach(function (r) { r.classList.add('on'); });
+    }
+    frame(0);
+    if (!reduce) { requestAnimationFrame(frame); }
+})();
+</script>
+</body>
+</html>
+"""
+
+
+def render_story() -> None:
+    """The scrolling 'who is Nashmi' story with the cat on the line."""
+    cards = "".join(
+        '<div class="row"><i class="node"></i><article class="card">'
+        f'<span class="tag">{html.escape(tag)}</span>'
+        f'<h3>{html.escape(title)}</h3><p>{html.escape(text)}</p>'
+        '</article></div>'
+        for tag, title, text in STORY_CARDS
+    )
+    markup = STORY_TEMPLATE.replace("__CARDS__", cards)
+    embed_html(markup, STORY_HEIGHT)
 
 PRIVACY_NOTE = (
     "Signing in stores your name, e-mail address and sign-in times. Your "
@@ -6336,30 +6638,30 @@ def render_footer() -> None:
     )
 
 
+def render_landing_buttons(suffix: str) -> None:
+    """Sign in / guest buttons. The page shows them above and below the
+    story, so each copy needs its own widget keys."""
+    with st.container(key=f"landing_cta{suffix}"):
+        if accounts_enabled():
+            st.button("Sign in", key=f"landing_signin{suffix}",
+                      type="primary", on_click=go_gate, args=("login",),
+                      icon=":material/login:", width="stretch")
+            st.button("Continue as guest", key=f"landing_guest{suffix}",
+                      on_click=go_gate, args=("app",),
+                      icon=":material/arrow_forward:", width="stretch")
+        else:
+            st.button("Start", key=f"landing_guest{suffix}", type="primary",
+                      on_click=go_gate, args=("app",),
+                      icon=":material/arrow_forward:", width="stretch")
+
+
 def render_landing() -> None:
     """First page a visitor of the public site sees."""
-    cards = "".join(
-        f'<div class="lp-card"><b>{html.escape(title)}</b>'
-        f'<span>{html.escape(text)}</span></div>'
-        for title, text in LANDING_FEATURES
-    )
     st.markdown(f'<style>{LANDING_CSS}</style>', unsafe_allow_html=True)
     render_scene("landing")
-    with st.container(key="landing_cta"):
-        if accounts_enabled():
-            st.button("Sign in", key="landing_signin", type="primary",
-                      on_click=go_gate, args=("login",),
-                      icon=":material/login:", width="stretch")
-            st.button("Continue as guest", key="landing_guest",
-                      on_click=go_gate, args=("app",),
-                      icon=":material/arrow_forward:",
-                      width="stretch")
-        else:
-            st.button("Start", key="landing_guest", type="primary",
-                      on_click=go_gate, args=("app",),
-                      icon=":material/arrow_forward:",
-                      width="stretch")
-    st.markdown(f'<div class="lp-grid">{cards}</div>', unsafe_allow_html=True)
+    render_landing_buttons("")
+    render_story()
+    render_landing_buttons("_end")
     if accounts_enabled():
         st.markdown(f'<p class="lp-note">{html.escape(PRIVACY_NOTE)}</p>',
                     unsafe_allow_html=True)
