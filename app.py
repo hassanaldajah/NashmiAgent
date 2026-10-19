@@ -3422,192 +3422,77 @@ pre, [data-testid="stCode"] {
 }
 .exam-timer.low { color: var(--accent); }
 
-/* ---- Sidebar: calm and compact ---- */
-[data-testid="stSidebar"] [data-testid="stVerticalBlock"] { gap: 0.5rem; }
-[data-testid="stSidebar"] [data-baseweb="select"] > div,
-[data-testid="stSidebar"] [data-baseweb="input"] { min-height: 38px; }
-.st-key-side_chats { margin-top: 0.2rem; }
-.st-key-side_chats [data-testid="stRadio"] [role="radiogroup"] {
-    max-height: 34vh;
-    overflow-y: auto;
-    padding-right: 2px;
-}
-[data-testid="stSidebar"] [data-testid="stRadioOption"] { padding: 4px 10px; }
-.st-key-chat_head [data-testid="stHorizontalBlock"] {
-    flex-wrap: nowrap;
-    align-items: center;
-    gap: 0;
-}
-.st-key-chat_head [data-testid="stColumn"] {
-    flex: 1 1 auto;
-    width: auto;
-    min-width: 0;
-}
-.st-key-chat_head [data-testid="stColumn"]:last-child {
-    flex: 0 0 34px;
-    width: 34px;
-}
-.st-key-chat_head .side-label { margin: 0.1rem 0 0; }
-.st-key-chat_head [data-testid="stPopover"] button {
-    width: 32px;
-    min-height: 28px;
-    padding: 0;
-    border: none;
-    background: transparent;
-    color: var(--muted);
-}
-.st-key-chat_head [data-testid="stPopover"] button:hover {
-    color: var(--white);
-    background: rgba(164, 177, 205, 0.12);
-}
-.st-key-side_settings {
-    margin-top: 0.5rem;
-    padding-top: 0.8rem;
-    border-top: 1px solid var(--line);
-}
-.st-key-user_actions [data-testid="stHorizontalBlock"] {
-    flex-wrap: nowrap;
-    gap: 0.4rem;
-}
-.st-key-user_actions [data-testid="stColumn"] {
-    flex: 1 1 0;
-    min-width: 0;
-}
+/* ==== Sidebar ==========================================================
+   One look for every control: pill shapes, one text size, one icon size,
+   a red glow on hover, smooth transitions. */
 
+/* -- rhythm */
+[data-testid="stSidebar"] [data-testid="stVerticalBlock"] { gap: 0.5rem; }
+.st-key-side_chats { margin-top: 0.25rem; }
+.st-key-side_chats .side-label { margin: 0.75rem 0.2rem 0; }
+/* the RECENT label keeps its own height, so the first chat sits below it */
+[data-testid="stSidebar"] [data-testid="stElementContainer"]:has(.side-label),
+[data-testid="stSidebar"] .stMarkdown:has(.side-label) > div {
+    height: auto !important; overflow: visible;
+}
+.st-key-side_chats [data-testid="stElementContainer"]:has(.side-label) { margin-bottom: 0.35rem; }
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"]:has(> .side-label) { margin-bottom: 0 !important; }
+.st-key-side_settings { margin-top: 0.5rem; padding-top: 0.8rem; border-top: 1px solid var(--line); }
 .st-key-side_user { margin-top: 0.6rem; }
 
-/* ---- Sidebar boxes: label inside, smooth hover ---- */
+/* -- shape, size and motion */
 [data-testid="stSidebar"] button,
-[data-testid="stSidebar"] [data-baseweb="select"] > div,
 [data-testid="stSidebar"] [data-baseweb="input"],
-[data-testid="stSidebar"] [data-testid="stRadioOption"] {
+[data-testid="stSidebar"] [data-testid="stTextInputRootElement"],
+[data-testid="stSidebar"] .stLinkButton a {
+    border-radius: 999px !important;
     transition: background 0.22s ease, border-color 0.22s ease,
                 box-shadow 0.22s ease, transform 0.18s ease, color 0.22s ease;
 }
-.st-key-new_chat button:hover { transform: translateY(-1px); }
-.st-key-track_box, .st-key-lang_box, .st-key-guest_card {
-    gap: 0 !important;
-    padding: 0.45rem 0.55rem 0.3rem;
-    border-radius: 14px;
-    background: rgba(19, 28, 43, 0.75);
-    border: 1px solid var(--line);
-    transition: border-color 0.22s ease, box-shadow 0.22s ease;
-}
-.st-key-track_box:hover, .st-key-lang_box:hover, .st-key-guest_card:hover,
-.st-key-track_box:focus-within, .st-key-lang_box:focus-within {
-    border-color: rgba(255, 51, 68, 0.55);
-    box-shadow: 0 0 18px rgba(255, 51, 68, 0.14);
-}
-.box-label {
-    font-family: var(--mono); font-size: 0.62rem; letter-spacing: 1.6px;
-    text-transform: uppercase; color: var(--muted); padding: 0 0.15rem 0.1rem;
-}
-[data-testid="stSidebar"] [data-testid="stElementContainer"]:has(> .stMarkdown .box-label) {
-    height: auto !important; min-height: 1.1rem; overflow: visible;
-}
-[data-testid="stSidebar"] .stMarkdown:has(.box-label) > div { height: auto !important; }
-.st-key-track_box [data-testid="stSelectbox"] [role="group"],
-.st-key-lang_box [data-testid="stSelectbox"] [role="group"],
-.st-key-track_box [data-baseweb="select"] > div,
-.st-key-lang_box [data-baseweb="select"] > div {
-    background: transparent !important; border: 0 !important;
-    box-shadow: none !important; min-height: 32px !important; padding-left: 0.15rem;
-}
-.st-key-track_box input, .st-key-lang_box input { font-weight: 600; }
-.st-key-guest_card { padding: 0.6rem 0.65rem 0.65rem; }
-.st-key-guest_card .guest-text { color: var(--text); font-size: 0.84rem; margin: 0.1rem 0.15rem 0.5rem; }
-.st-key-guest_card button { width: 100%; }
-[data-testid="stSidebar"] [data-testid="stRadioOption"]:hover {
-    background: rgba(164, 177, 205, 0.08);
-}
-.st-key-chat_head [data-testid="stPopoverButton"] > div > div[aria-hidden="true"] { display: none; }
-.st-key-guest_card [data-testid="stElementContainer"],
-.st-key-guest_card [data-testid="stButton"] { width: 100% !important; }
-.st-key-guest_card .guest-text { margin-bottom: 0.65rem; }
-
-/* ---- Sidebar: one shape for every control ---- */
+[data-testid="stSidebar"] [data-baseweb="input"] { min-height: 38px; }
 [data-testid="stSidebar"] button,
-[data-testid="stSidebar"] [data-testid="stRadioOption"],
-[data-testid="stSidebar"] [data-baseweb="input"],
-[data-testid="stSidebar"] [data-testid="stTextInputRootElement"],
-[data-testid="stSidebar"] [data-testid="stSelectbox"] [role="group"] {
-    border-radius: 999px !important;
-}
-.st-key-track_box, .st-key-lang_box, .user-card { border-radius: 999px !important; }
-.st-key-track_box, .st-key-lang_box { padding-left: 1.1rem; padding-right: 0.9rem; }
-.st-key-guest_card { border-radius: 26px !important; }
-[data-testid="stSidebar"] .stLinkButton a { border-radius: 999px !important; }
-.user-card { padding: 8px 18px 8px 10px; }
-.user-card img, .user-card .avatar-fallback { border-radius: 50% !important; }
-.user-card em { display: block; font-style: normal; color: #ff8a93; font-size: 0.74rem;
-                font-family: var(--mono); }
-.user-card span { display: block; }
-.st-key-user_actions, .st-key-user_actions [data-testid="stHorizontalBlock"] { width: 100% !important; }
-.st-key-user_actions [data-testid="stHorizontalBlock"] { align-items: stretch; flex-wrap: nowrap; gap: 0.4rem; }
-.st-key-user_actions [data-testid="stPopover"],
-.st-key-user_actions [data-testid="stPopover"] > div { width: 100% !important; height: 100%; }
-.st-key-side_delete_account button:not(:disabled) {
-    background: linear-gradient(135deg, #ff3b3f, #c81e3a) !important; color: #fff !important; border: 0 !important;
-}
-.st-key-user_actions [data-testid="stPopoverButton"] {
-    width: 100%; height: 100%; min-height: 40px; padding: 0; border-radius: 999px !important;
-    border: 0 !important; background: rgba(255, 255, 255, 0.05) !important;
-}
-.st-key-user_actions [data-testid="stPopoverButton"] > div > div[aria-hidden="true"] { display: none; }
-.st-key-user_actions [data-testid="stColumn"]:first-child { flex: 1 1 auto !important; width: auto !important; }
-.st-key-user_actions [data-testid="stColumn"]:last-child {
-    flex: 0 0 52px !important; width: 52px !important; min-width: 52px !important;
-}
-
-/* ---- Sidebar: one text size, one icon size ---- */
 [data-testid="stSidebar"] button p,
-[data-testid="stSidebar"] button,
 [data-testid="stSidebar"] input,
-[data-testid="stSidebar"] [data-testid="stRadioOption"] p,
 [data-testid="stSidebar"] [data-testid="stExpander"] summary p,
-[data-testid="stSidebar"] .stLinkButton a p,
-[data-testid="stSidebar"] .stLinkButton a {
-    font-size: 0.9rem !important; line-height: 1.3 !important;
-}
-.st-key-track_box input, .st-key-lang_box input { font-weight: 600 !important; }
-[data-testid="stSidebar"] [data-testid="stRadio"] label,
-[data-testid="stSidebar"] [data-testid="stRadio"] label p,
-[data-testid="stSidebar"] [data-testid="stRadio"] [data-testid="stMarkdownContainer"] p {
-    font-size: 0.9rem !important; line-height: 1.3 !important;
-}
+[data-testid="stSidebar"] .stLinkButton a,
+[data-testid="stSidebar"] .stLinkButton a p { font-size: 0.9rem !important; line-height: 1.3 !important; }
+[data-testid="stSidebar"] [data-testid="stCaptionContainer"] { font-size: 0.76rem !important; }
+[data-testid="stSidebar"] .side-label,
+[data-testid="stSidebar"] .box-label,
+[data-testid="stSidebar"] label p { font-size: 0.64rem !important; letter-spacing: 1.5px; }
 [data-testid="stSidebar"] [data-testid="stIconMaterial"] { font-size: 0.95rem !important; }
-/* logo and name up in the corner, beside the collapse button */
+.box-label {
+    font-family: var(--mono); text-transform: uppercase; color: var(--muted);
+    padding: 0 0.15rem 0.1rem;
+}
+/* the popover chevron is noise next to "..." buttons */
+.st-key-user_actions [data-testid="stPopoverButton"] > div > div[aria-hidden="true"],
+[class*="st-key-chatrow_"] [data-testid="stPopoverButton"] > div > div[aria-hidden="true"] { display: none; }
+
+/* -- brand: up in the corner, beside the collapse button */
 .st-key-side_brand { margin-top: -3.15rem; width: calc(100% - 52px) !important; position: relative; z-index: 3; }
 .st-key-side_brand .brand img { width: 26px; height: 26px; }
-/* Track / Language: a plain pill button, the choices open below it */
-.st-key-track_box, .st-key-lang_box { padding: 0 !important; border: 0 !important; background: transparent !important; }
+[data-testid="stSidebar"] .brand span { font-size: 1.05rem; }
+.st-key-new_chat button:hover { transform: translateY(-1px); }
+
+/* -- Track and Language: pill buttons, their choices open below */
 .st-key-track_box [data-testid="stPopoverButton"],
 .st-key-lang_box [data-testid="stPopoverButton"] {
-    width: 100%; min-height: 40px; border-radius: 999px !important; justify-content: flex-start;
+    width: 100%; min-height: 40px; justify-content: flex-start; font-weight: 600;
     background: rgba(255, 255, 255, 0.05) !important; border: 1px solid var(--line) !important;
-    font-weight: 600;
 }
 .st-key-track_box [data-testid="stPopoverButton"]:hover,
 .st-key-lang_box [data-testid="stPopoverButton"]:hover {
     border-color: rgba(255, 51, 68, 0.6) !important; box-shadow: 0 0 16px rgba(255, 51, 68, 0.18) !important;
 }
-[data-testid="stSidebar"] .brand span { font-size: 1.05rem; }
-[data-testid="stSidebar"] [data-testid="stCaptionContainer"],
-[data-testid="stSidebar"] .user-card span,
-[data-testid="stSidebar"] .user-card em { font-size: 0.76rem !important; }
-[data-testid="stSidebar"] .user-card b { font-size: 0.88rem; }
-[data-testid="stSidebar"] .side-label,
-[data-testid="stSidebar"] .box-label,
-[data-testid="stSidebar"] label p { font-size: 0.64rem !important; letter-spacing: 1.5px; }
 
-/* ---- Chat list: one row per chat with its own ... menu ---- */
+/* -- chat list: one row per chat, its own ... menu */
 .st-key-chat_list { max-height: 36vh; overflow-y: auto; gap: 0.15rem !important; padding-right: 2px; }
 [class*="st-key-chatrow_"] [data-testid="stHorizontalBlock"] { flex-wrap: nowrap; gap: 0.2rem; align-items: center; }
 [class*="st-key-chatrow_"] [data-testid="stColumn"]:first-child { flex: 1 1 auto !important; min-width: 0 !important; width: auto !important; }
 [class*="st-key-chatrow_"] [data-testid="stColumn"]:last-child { flex: 0 0 34px !important; width: 34px !important; min-width: 34px !important; }
 [class*="st-key-chatrow_"] [data-testid="stColumn"]:first-child button {
-    justify-content: flex-start; text-align: left; padding: 6px 12px; min-height: 34px;
-    border-radius: 999px !important; color: var(--text);
+    justify-content: flex-start; padding: 6px 12px; min-height: 34px; color: var(--text);
 }
 [class*="st-key-chatrow_"] [data-testid="stColumn"]:first-child button > div,
 [class*="st-key-chatrow_"] [data-testid="stColumn"]:first-child button > div > div {
@@ -3616,7 +3501,6 @@ pre, [data-testid="stCode"] {
 [class*="st-key-chatrow_"] [data-testid="stColumn"]:first-child button [data-testid="stMarkdownContainer"] {
     text-align: start; min-width: 0; overflow: hidden;
 }
-[class*="st-key-chatrow_"] [data-testid="stPopoverButton"]:focus { box-shadow: none !important; }
 [class*="st-key-chatrow_"] [data-testid="stColumn"]:first-child button p {
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -3625,12 +3509,49 @@ pre, [data-testid="stCode"] {
     color: var(--white) !important; box-shadow: inset 3px 0 0 #ff3344 !important;
 }
 [class*="st-key-chatrow_"] [data-testid="stPopoverButton"] {
-    width: 30px; min-height: 30px; padding: 0; border: 0 !important; border-radius: 999px !important;
+    width: 30px; min-height: 30px; padding: 0; border: 0 !important;
     background: transparent !important; color: var(--muted); opacity: 0.55;
 }
+[class*="st-key-chatrow_"] [data-testid="stPopoverButton"]:focus { box-shadow: none !important; }
 [class*="st-key-chatrow_"]:hover [data-testid="stPopoverButton"],
 [class*="st-key-chatrow_on_"] [data-testid="stPopoverButton"] { opacity: 1; }
-[class*="st-key-chatrow_"] [data-testid="stPopoverButton"] > div > div[aria-hidden="true"] { display: none; }
+
+/* -- guest card */
+.st-key-guest_card {
+    gap: 0 !important; padding: 0.6rem 0.65rem 0.65rem; border-radius: 26px !important;
+    background: rgba(19, 28, 43, 0.75); border: 1px solid var(--line);
+    transition: border-color 0.22s ease, box-shadow 0.22s ease;
+}
+.st-key-guest_card:hover { border-color: rgba(255, 51, 68, 0.55); box-shadow: 0 0 18px rgba(255, 51, 68, 0.14); }
+.st-key-guest_card .guest-text { color: var(--text); font-size: 0.84rem; margin: 0.1rem 0.15rem 0.65rem; }
+.st-key-guest_card [data-testid="stElementContainer"],
+.st-key-guest_card [data-testid="stButton"],
+.st-key-guest_card button { width: 100% !important; }
+
+/* -- signed-in user: card, Account and the ... menu */
+.user-card { border-radius: 999px !important; padding: 8px 18px 8px 10px; }
+.user-card img, .user-card .avatar-fallback { border-radius: 50% !important; }
+.user-card span { display: block; }
+.user-card em { display: block; font-style: normal; color: #ff8a93; font-family: var(--mono); }
+[data-testid="stSidebar"] .user-card span,
+[data-testid="stSidebar"] .user-card em { font-size: 0.76rem !important; }
+[data-testid="stSidebar"] .user-card b { font-size: 0.88rem; }
+.st-key-user_actions, .st-key-user_actions [data-testid="stHorizontalBlock"] { width: 100% !important; }
+.st-key-user_actions [data-testid="stHorizontalBlock"] { align-items: stretch; flex-wrap: nowrap; gap: 0.4rem; }
+.st-key-user_actions [data-testid="stColumn"] { min-width: 0; }
+.st-key-user_actions [data-testid="stColumn"]:first-child { flex: 1 1 auto !important; width: auto !important; }
+.st-key-user_actions [data-testid="stColumn"]:last-child {
+    flex: 0 0 52px !important; width: 52px !important; min-width: 52px !important;
+}
+.st-key-user_actions [data-testid="stPopover"],
+.st-key-user_actions [data-testid="stPopover"] > div { width: 100% !important; height: 100%; }
+.st-key-user_actions [data-testid="stPopoverButton"] {
+    width: 100%; height: 100%; min-height: 40px; padding: 0;
+    border: 0 !important; background: rgba(255, 255, 255, 0.05) !important;
+}
+.st-key-side_delete_account button:not(:disabled) {
+    background: linear-gradient(135deg, #ff3b3f, #c81e3a) !important; color: #fff !important; border: 0 !important;
+}
 
 /* ---- Scrollbar (desktop) ---- */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
