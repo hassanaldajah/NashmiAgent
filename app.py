@@ -7020,11 +7020,16 @@ MINI_LOGO_TEMPLATE = """<!DOCTYPE html>
     html, body { margin: 0; height: 100%; background: transparent; overflow: hidden;
         font-family: Inter, system-ui, -apple-system, 'Segoe UI', sans-serif; }
     .row { display: flex; align-items: center; height: 100%; gap: 8px; }
-    canvas { width: 40px; height: 40px; display: block; flex: none; }
+    .logo { position: relative; width: 44px; height: 44px; flex: none; }
+    .logo canvas { position: absolute; left: 0; top: 0; width: 44px; height: 44px; }
+    .logo img { position: absolute; left: 6px; top: 6px; width: 32px; height: 32px;
+        border-radius: 50%; object-fit: cover; image-rendering: pixelated;
+        box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.16), 0 0 14px rgba(255, 59, 63, 0.55); }
     .name { color: #fff; font-weight: 800; font-size: 19px; letter-spacing: 0.01em; white-space: nowrap; }
     .name span { color: #E5383B; font-family: ui-monospace, Consolas, monospace; }
 </style></head>
-<body><div class="row"><canvas id="c"></canvas><div class="name"><span>&gt;_</span> Nashmi</div></div>
+<body><div class="row"><div class="logo"><canvas id="c"></canvas><img alt="Nashmi" src="__AVATAR__"></div>
+<div class="name"><span>&gt;_</span> Nashmi</div></div>
 <script src="__THREE_URL__" integrity="__THREE_SRI__" crossorigin="anonymous"></script>
 <script>
 (function () {
@@ -7033,26 +7038,29 @@ MINI_LOGO_TEMPLATE = """<!DOCTYPE html>
     try { r = new THREE.WebGLRenderer({ canvas: c, alpha: true, antialias: true }); }
     catch (err) { c.style.display = 'none'; return; }
     r.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    r.setSize(40, 40, false);
+    r.setSize(44, 44, false);
     var sc = new THREE.Scene(), cam = new THREE.PerspectiveCamera(40, 1, 0.1, 50);
     cam.position.z = 4.2;
-    var g = new THREE.Group(); sc.add(g);
-    var outer = new THREE.LineSegments(
-        new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(1.25, 1)),
-        new THREE.LineBasicMaterial({ color: 0xFF3B3F }));
-    var inner = new THREE.LineSegments(
-        new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(0.7, 0)),
-        new THREE.LineBasicMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0.85 }));
-    var ring = new THREE.Mesh(new THREE.TorusGeometry(1.7, 0.04, 6, 60),
-        new THREE.MeshBasicMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0.6 }));
-    ring.rotation.x = 1.2;
-    g.add(outer, inner, ring);
+    var ring = new THREE.Mesh(new THREE.TorusGeometry(1.42, 0.035, 8, 80),
+        new THREE.MeshBasicMaterial({ color: 0xFF3B3F }));
+    var ring2 = new THREE.Mesh(new THREE.TorusGeometry(1.42, 0.02, 8, 80),
+        new THREE.MeshBasicMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0.7 }));
+    sc.add(ring, ring2);
+    var dots = new THREE.Group(); sc.add(dots);
+    for (var i = 0; i < 3; i++) {
+        var d = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 8),
+            new THREE.MeshBasicMaterial({ color: i % 2 ? 0xFFFFFF : 0xFF3B3F }));
+        var a = i * 2.094;
+        d.position.set(Math.cos(a) * 1.42, Math.sin(a) * 1.42, 0);
+        dots.add(d);
+    }
     var reduce = window.matchMedia &&
         window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     function f(now) {
         var t = now / 1000;
-        outer.rotation.y = t * 0.9; outer.rotation.x = t * 0.5;
-        inner.rotation.y = -t * 1.2; ring.rotation.z = t * 0.8;
+        ring.rotation.x = 1.0 + Math.sin(t * 0.8) * 0.3; ring.rotation.y = t * 0.9;
+        ring2.rotation.x = -0.9; ring2.rotation.y = -t * 0.7;
+        dots.rotation.z = t * 1.4; dots.rotation.x = 0.5;
         r.render(sc, cam);
         if (!reduce) { requestAnimationFrame(f); }
     }
@@ -7072,7 +7080,8 @@ def render_topbar() -> None:
             # the page style rides with the first element so nothing sits above the bar
             st.markdown(f'<style>{LANDING_CSS}</style>', unsafe_allow_html=True)
             embed_html(MINI_LOGO_TEMPLATE.replace("__THREE_URL__", THREE_URL)
-                       .replace("__THREE_SRI__", THREE_SRI), 48)
+                       .replace("__THREE_SRI__", THREE_SRI)
+                       .replace("__AVATAR__", avatar_data_uri()), 48)
         if accounts_enabled():
             first.button("Sign in", key="landing_signin", type="tertiary",
                          on_click=go_gate, args=("login",), width="stretch")
