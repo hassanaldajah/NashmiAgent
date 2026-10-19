@@ -1394,6 +1394,8 @@ def generate_stream(
     files: PreparedFiles | None = None,
 ) -> Iterator[str]:
     """Stream the reply text for the conversation from any provider."""
+    if guest_viewer():  # the interface blocks this too; this is the real lock
+        raise ProviderError("Sign in to use Nashmi.")
     files = files or PreparedFiles()
     msgs = _with_attachment_text(prepare_history(messages), files)
     if not msgs:
@@ -2024,6 +2026,12 @@ def accounts_enabled() -> bool:
     return bool(auth_providers()) and get_db() is not None
 
 
+def guest_viewer() -> bool:
+    """A visitor of the shared site who has not signed in. Guests can look
+    around and switch tracks, but nothing that sends a request is allowed."""
+    return is_public() and accounts_enabled() and not account_id()
+
+
 LOGIN_LABELS = {
     "google": "Continue with Google",
     "apple": "Continue with Apple",
@@ -2275,7 +2283,7 @@ def open_admin() -> None:
 
 
 def sign_out() -> None:
-    for key in ("_mfa_ok", "_mfa_codes", "_mfa_secret", "_profile_ok", "_account_deleted",
+    for key in ("guest", "_mfa_ok", "_mfa_codes", "_mfa_secret", "_profile_ok", "_account_deleted",
                 "_account_id", "_account_sub", "_presence_at"):
         st.session_state.pop(key, None)
     st.session_state["gate"] = "landing"
@@ -4314,6 +4322,34 @@ def render_login_buttons(key_prefix: str) -> None:
         )
 
 
+def render_signin_gate() -> None:
+    """The prompt a guest sees where they would have used Nashmi."""
+    with st.container(key="signin_gate", border=True):
+        st.markdown(
+            f"**{tt('Sign in to use Nashmi', 'سجّل الدخول لتستعمل نشمي')}**"
+        )
+        st.caption(tt(
+            "You can look around and switch tracks as a guest. To chat, run "
+            "analyses or take exams, sign in with Google. It takes a few "
+            "seconds and Nashmi never sees your password.",
+            "كضيف تقدر تتجول وتنتقل بين التراكات. للمحادثة أو التحليل أو "
+            "الامتحانات سجّل الدخول بحساب Google. بياخد ثواني ونشمي ما "
+            "بيشوف كلمة المرور."))
+        render_login_buttons("gate")
+
+
+def render_guest_track(mode: str) -> None:
+    """A track page that can be looked at but not used."""
+    track = TRACKS_BY_NAME[mode]
+    st.markdown(
+        f'<div class="empty-title">{html.escape(track_title(track))}</div>'
+        f'<div class="empty-blurb">{html.escape(track_blurb(track))}</div>',
+        unsafe_allow_html=True,
+    )
+    render_signin_gate()
+    render_references(mode)
+
+
 def key_label(provider: Provider) -> str:
     if lang() == "ar":
         return (f"احصل على مفتاح {provider.short} المجاني" if provider.free
@@ -4627,6 +4663,9 @@ def render_settings(box, mode: str):
         st.session_state.setdefault(
             "provider_choice", PROVIDERS_BY_ID[DEFAULT_PROVIDER_ID].label)
         current = PROVIDERS[st.session_state["provider_choice"]]
+        if guest_viewer():  # guests only look around: no model or key panel
+            return (Settings(current, "", current.models[0], mode),
+                    st.empty())
         has_key = bool(
             str(st.session_state.get(f"key_{current.id}", "")).strip()
             or get_secret(*current.env_keys)
@@ -4689,6 +4728,12 @@ def render_settings(box, mode: str):
 
 def render_topline(settings: Settings) -> None:
     """One quiet line: current track, model and whether a key is loaded."""
+    if guest_viewer():
+        st.markdown(
+            f'<div class="topline"><span class="t-track">'
+            f'{html.escape(tt(settings.mode, TRACK_AR.get(settings.mode, settings.mode)))}'
+            f'</span></div>', unsafe_allow_html=True)
+        return
     ok = bool(settings.api_key)
     st.markdown(
         f'<div class="topline"><span class="t-track">'
@@ -4857,6 +4902,12 @@ def read_chat_input(placeholder: str):
 
     Returns ``(text, files, audio)``.
     """
+    if guest_viewer():
+        st.chat_input(
+            tt("Sign in to chat with Nashmi", "سجّل الدخول للمحادثة مع نشمي"),
+            disabled=True, key="guest_composer",
+        )
+        return "", [], None
     try:
         value = st.chat_input(
             placeholder, accept_file="multiple", file_type=None,
@@ -4982,7 +5033,12 @@ def render_chat_track(settings: Settings, chats_box) -> None:
     else:
         with start_screen.container():
             quick_prompt = render_empty_state(track)
-            if not settings.api_key:
+            if guest_viewer():
+                if quick_prompt:
+                    st.toast(tt("Sign in to use Nashmi", "سجّل الدخول لتستعمل نشمي"))
+                quick_prompt = None
+                render_signin_gate()
+            elif not settings.api_key:
                 render_key_help(settings.provider)
 
     typed, files, audio = read_chat_input(COMPOSER_PLACEHOLDER)
@@ -5015,6 +5071,9 @@ def render_chat_track(settings: Settings, chats_box) -> None:
 
 def render_soc_track(settings: Settings) -> None:
     """Upload logs/media and stream a SOC report."""
+    if guest_viewer():
+        render_guest_track(MODE_SOC)
+        return
     provider = settings.provider
     track = TRACKS_BY_NAME[MODE_SOC]
     st.markdown(
@@ -5161,6 +5220,9 @@ def show_cve(rec: dict) -> None:
 
 def render_toolbox() -> None:
     """Non-AI helpers an analyst needs all day: CVE, hashes, encoders, IOCs."""
+    if guest_viewer():
+        render_guest_track(MODE_TOOLS)
+        return
     track = TRACKS_BY_NAME[MODE_TOOLS]
     st.markdown(
         f'<div class="empty-title">{html.escape(track_title(track))}</div>'
@@ -6005,6 +6067,9 @@ def render_exam_track(settings: Settings) -> None:
     """Router for the Practice Exam track."""
     if nashmi_exam is None:
         st.error("The exam engine (nashmi_exam.py) is missing.")
+        return
+    if guest_viewer():
+        render_guest_track(MODE_EXAM)
         return
     stage = exam_state().get("stage", "setup")
     if stage == "ready":
@@ -7429,6 +7494,14 @@ STRINGS["ar"].update({
 
 
 STRINGS["en"].update({
+    "guest": "Guest", "guest_long": "Continue as guest",
+    "guest_note": "No account needed. Your chats are not saved, and you bring your own API key.",
+})
+STRINGS["ar"].update({
+    "guest": "ضيف", "guest_long": "المتابعة كضيف",
+    "guest_note": "بدون حساب. محادثاتك لا تُحفظ، وتستعمل مفتاح API الخاص بك.",
+})
+STRINGS["en"].update({
     "login_title": "Welcome to Nashmi",
     "login_sub": "Continue with Google. New here? Your account is created the first time.",
     "login_steps": ("Google checks your e-mail, Nashmi never sees a password",
@@ -7786,6 +7859,13 @@ def go_gate(name: str) -> None:
     st.session_state["gate"] = name
 
 
+def continue_as_guest() -> None:
+    """Enter the app without an account. Nothing is saved on the server and
+    every visitor still brings their own API key."""
+    st.session_state["guest"] = True
+    st.session_state["gate"] = "app"
+
+
 def current_gate() -> str:
     """'landing', 'login', 'signup' or 'app'. Only a shared (public) server
     gates, and once accounts work there is no guest way in."""
@@ -7794,7 +7874,7 @@ def current_gate() -> str:
     gate = st.session_state.get("gate", "landing")
     if gate == "signup":                  # there is no separate sign-up page any more
         gate = "login"
-    if gate == "app" and accounts_enabled():
+    if gate == "app" and accounts_enabled() and not st.session_state.get("guest"):
         return "landing"
     return gate
 
@@ -7929,7 +8009,8 @@ def render_topbar(mode: str = "landing") -> None:
     """Floating pill bar: 3D logo and name on the left, language button and the
     actions that make sense on this page on the right."""
     if mode == "landing":
-        actions = ([("landing_signin", "sign_in", "primary", "login", None)]
+        actions = ([("landing_signin", "sign_in", "primary", "login", None),
+                    ("landing_guest", "guest", "tertiary", "guest", None)]
                    if accounts_enabled() else
                    [("landing_guest", "start", "primary", "app", None)])
     elif mode == "login":
@@ -7954,6 +8035,9 @@ def render_topbar(mode: str = "landing") -> None:
         for col, (key, label, kind, target, icon) in zip(cols[2:], actions):
             if target is None:
                 col.button(tr(label), key=key, type=kind, on_click=sign_out,
+                           icon=icon, width="stretch")
+            elif target == "guest":
+                col.button(tr(label), key=key, type=kind, on_click=continue_as_guest,
                            icon=icon, width="stretch")
             else:
                 col.button(tr(label), key=key, type=kind, on_click=go_gate,
@@ -8217,6 +8301,9 @@ def render_auth_page(mode: str) -> None:
         with st.container(key="login_card"):
             render_login_buttons(mode)
             st.caption(tr("google_note"))
+            st.button(tr("guest_long"), key="login_guest", type="tertiary",
+                      on_click=continue_as_guest, width="stretch")
+            st.caption(tr("guest_note"))
     render_footer()
 
 
