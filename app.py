@@ -2399,7 +2399,18 @@ def on_change_username() -> None:
                                                       "تم تحديث اسم المستخدم."))
 
 
+def _delete_confirmed() -> bool:
+    user = current_user() or {}
+    email = (user.get("email") or "").strip().lower()
+    typed_word = str(st.session_state.get("side_confirm_delete", "")).strip()
+    typed_mail = str(st.session_state.get("confirm_delete_email", "")).strip().lower()
+    return typed_word == "DELETE" or bool(email and typed_mail == email)
+
+
 def on_delete_account() -> None:
+    if not _delete_confirmed():
+        st.toast(tt("Type the confirmation first.", "اكتب التأكيد أولاً."))
+        return
     user_id, db = st.session_state.get("_account_id"), get_db()
     if user_id and db:
         db.delete_user(user_id)
@@ -2735,6 +2746,8 @@ def on_import_data() -> None:
 
 
 def on_wipe_all() -> None:
+    if not st.session_state.get("confirm_wipe"):
+        return
     st.session_state.saved_history = {}
     st.session_state["store"] = _sanitize_store(None)
     for key in list(st.session_state.keys()):
@@ -8663,6 +8676,7 @@ def mfa_gate(user_id: int | None, user: dict | None) -> bool:
 OTP_TTL_SECONDS = 120       # a code is valid for two minutes
 OTP_MAX_TRIES = 3           # attempts per code, then a new code is needed
 OTP_RESEND_SECONDS = 30     # wait between two e-mails while a code is live
+OTP_MAX_SENDS = 6           # e-mails one browser session may ask for
 
 _OTP_DIR = Path(__file__).resolve().parent / "components" / "otp"
 _otp_component = (
@@ -8721,6 +8735,11 @@ def send_otp_email(to: str, code: str) -> None:
 
 def _new_otp(user_id: int, email: str) -> bool:
     """Make a fresh code, e-mail it and keep only its hash in the session."""
+    sent = st.session_state.get("_otp_sends", 0)
+    if sent >= OTP_MAX_SENDS:
+        LOGGER.warning("Sign-in code limit reached for one session")
+        return False
+    st.session_state["_otp_sends"] = sent + 1
     code = f"{secrets.randbelow(10 ** 6):06d}"
     salt = secrets.token_hex(16)
     try:
@@ -8767,7 +8786,7 @@ def otp_timer() -> None:
     wait = 0 if spent else int(OTP_RESEND_SECONDS - (now - state["sent"]))
     label = tt("Send a new code", "أرسل رمزاً جديداً") + (f" ({wait}s)" if wait > 0 else "")
     if st.button(label, key="otp_resend", type="tertiary", width="stretch",
-                 disabled=wait > 0):
+                 disabled=wait > 0) and wait <= 0:     # the wait holds on the server too
         st.session_state.pop("_otp", None)
         st.rerun(scope="app")
 
@@ -8799,7 +8818,10 @@ def otp_gate(user_id: int | None, user: dict | None) -> bool:
             with st.spinner(tt("Sending your code...", "جارٍ إرسال الرمز...")):
                 state = st.session_state["_otp"] if _new_otp(user_id, user["email"]) else None
             now = time.time()
-        if state is None:
+        if state is None and st.session_state.get("_otp_sends", 0) >= OTP_MAX_SENDS:
+            st.error(tt("Too many codes were requested. Sign out and try again later.",
+                        "طُلبت رموز كثيرة. سجّل الخروج وحاول لاحقاً."))
+        elif state is None:
             st.error(tt("We could not send the code right now. Try again in a minute.",
                         "تعذّر إرسال الرمز الآن. حاول مرة أخرى بعد دقيقة."))
         else:
