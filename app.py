@@ -3529,17 +3529,32 @@ pre, [data-testid="stCode"] {
 [class*="st-key-chatrow_"]:hover [data-testid="stPopoverButton"],
 [class*="st-key-chatrow_on_"] [data-testid="stPopoverButton"] { opacity: 1; }
 
-/* -- guest card */
+/* -- guest card: a short line and one Google button, nothing else */
 .st-key-guest_card {
-    gap: 0 !important; padding: 0.6rem 0.65rem 0.65rem; border-radius: 26px !important;
+    gap: 0.5rem !important; padding: 0.75rem 0.8rem 0.8rem; border-radius: 22px !important;
     background: rgba(19, 28, 43, 0.75); border: 1px solid var(--line);
     transition: border-color 0.22s ease, box-shadow 0.22s ease;
 }
 .st-key-guest_card:hover { border-color: rgba(255, 51, 68, 0.55); box-shadow: 0 0 18px rgba(255, 51, 68, 0.14); }
-.st-key-guest_card .guest-text { color: var(--text); font-size: 0.84rem; margin: 0.1rem 0.15rem 0.65rem; }
+.st-key-guest_card [data-testid="stMarkdownContainer"] { margin-bottom: 0 !important; }
+.st-key-guest_card [data-testid="stElementContainer"],
+.st-key-guest_card .stMarkdown > div { height: auto !important; }
+.st-key-guest_card .box-label { padding: 0 0.2rem; }
+.st-key-guest_card .guest-text { color: var(--text); font-size: 0.8rem !important; line-height: 1.35; margin: 0.15rem 0.2rem 0; }
 .st-key-guest_card [data-testid="stElementContainer"],
 .st-key-guest_card [data-testid="stButton"],
 .st-key-guest_card button { width: 100% !important; }
+[data-testid="stSidebar"] .st-key-guest_card button {
+    min-height: 40px; padding: 0 1rem 0 2.6rem !important;
+    border: 1px solid var(--line) !important;
+    background-color: rgba(255, 255, 255, 0.06) !important;
+    background-repeat: no-repeat !important; background-position: 0.95rem center !important;
+    background-size: 18px 18px !important;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 48 48%22%3E%3Cpath fill=%22%23EA4335%22 d=%22M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z%22/%3E%3Cpath fill=%22%234285F4%22 d=%22M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z%22/%3E%3Cpath fill=%22%23FBBC05%22 d=%22M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z%22/%3E%3Cpath fill=%22%2334A853%22 d=%22M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z%22/%3E%3C/svg%3E") !important;
+}
+[data-testid="stSidebar"] .st-key-guest_card button:hover {
+    background-color: rgba(255, 51, 68, 0.16) !important; border-color: rgba(255, 51, 68, 0.6) !important;
+}
 
 /* -- signed-in user: card, Account and the ... menu */
 .user-card { border-radius: 999px !important; padding: 8px 18px 8px 10px; }
@@ -3557,8 +3572,10 @@ pre, [data-testid="stCode"] {
     flex: 0 0 44px !important; width: 44px !important; min-width: 44px !important;
 }
 .st-key-side_signout { margin-top: 0.4rem; }
-.st-key-side_signout button { min-height: 40px; border: 1px solid var(--line) !important; }
-.st-key-side_signout button:hover {
+[data-testid="stSidebar"] .st-key-side_signout button {
+    min-height: 40px; border: 1px solid var(--line) !important; background: rgba(255, 255, 255, 0.05) !important;
+}
+[data-testid="stSidebar"] .st-key-side_signout button:hover {
     background: rgba(255, 51, 68, 0.2) !important; border-color: rgba(255, 51, 68, 0.6) !important; color: #fff;
 }
 .st-key-user_actions [data-testid="stPopover"],
