@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Iterable
 
@@ -110,8 +111,23 @@ presence = Table(
     Column("last_seen", DateTime(timezone=True), nullable=False, index=True),
 )
 
+profiles = Table(
+    "profiles", metadata,
+    Column("user_id", Integer, ForeignKey("users.id", ondelete="CASCADE"),
+           primary_key=True),
+    Column("username", String(32), nullable=False, unique=True),
+    Column("full_name", String(120), nullable=False, default=""),
+    Column("registered_at", DateTime(timezone=True), nullable=False),
+)
+
 ALL_USER_TABLES = (chats, projects, prefs, usage, api_keys,
-                   login_events, presence)
+                   login_events, presence, profiles)
+
+USERNAME_RE = re.compile(r"^[a-z0-9_.]{3,24}$")
+RESERVED_USERNAMES = frozenset({
+    "admin", "administrator", "root", "support", "nashmi", "nashmiagent",
+    "system", "moderator", "staff", "help", "security", "owner",
+})
 
 LOGIN_EVENT_RETENTION_DAYS = 90
 
@@ -211,6 +227,43 @@ class Database:
             ))
             return int(result.inserted_primary_key[0])
 
+    # ------------------------------------------------------- sign-up profile
+    def get_profile(self, user_id: int) -> dict | None:
+        """The finished sign-up of this user, or None if they have not
+        completed it (they may then not use the app)."""
+        with self.engine.connect() as conn:
+            row = conn.execute(
+                select(profiles).where(profiles.c.user_id == user_id)
+            ).mappings().first()
+        if not row:
+            return None
+        return {"username": row["username"], "full_name": row["full_name"],
+                "registered_at": row["registered_at"]}
+
+    def create_profile(self, user_id: int, username: str,
+                       full_name: str) -> str | None:
+        """Finish the sign-up. Returns an error message, or None on success."""
+        username = (username or "").strip().lower()
+        full_name = " ".join((full_name or "").split())[:120]
+        if len(full_name) < 2:
+            return "Please enter your name."
+        if not USERNAME_RE.match(username):
+            return ("The username needs 3 to 24 characters: lowercase "
+                    "letters, digits, dot or underscore.")
+        if username in RESERVED_USERNAMES:
+            return "That username is reserved. Please pick another one."
+        try:
+            with self.engine.begin() as conn:
+                if conn.execute(select(profiles.c.user_id).where(
+                        profiles.c.user_id == user_id)).first():
+                    return None                      # already registered
+                conn.execute(insert(profiles).values(
+                    user_id=user_id, username=username, full_name=full_name,
+                    registered_at=_now()))
+        except IntegrityError:
+            return "That username is already taken."
+        return None
+
     # ------------------------------------------- sign-in log and presence
     def record_login(self, user_id: int) -> None:
         """Log one sign-in and drop entries older than the retention window."""
@@ -273,8 +326,9 @@ class Database:
             )
             everyone = conn.execute(
                 select(users.c.name, users.c.email, users.c.created_at,
-                       users.c.last_login, counts.c.n)
+                       users.c.last_login, counts.c.n, profiles.c.username)
                 .outerjoin(counts, counts.c.user_id == users.c.id)
+                .outerjoin(profiles, profiles.c.user_id == users.c.id)
                 .order_by(users.c.last_login.desc()).limit(max_users)
             ).mappings().all()
         return {
@@ -285,6 +339,7 @@ class Database:
             "recent_logins": [dict(r) for r in recent_logins],
             "users": [{
                 "name": r["name"], "email": r["email"],
+                "username": r["username"] or "",
                 "created_at": r["created_at"], "last_login": r["last_login"],
                 "logins": int(r["n"] or 0),
             } for r in everyone],

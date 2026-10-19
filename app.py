@@ -2257,6 +2257,7 @@ def on_delete_account() -> None:
     if user_id and db:
         db.delete_user(user_id)
     st.session_state["_account_deleted"] = True
+    st.session_state.pop("_profile_ok", None)
     _forget_account_data()
 
 
@@ -4146,15 +4147,81 @@ def md_escape(text: str) -> str:
     return re.sub(r"([\\`*_{}\[\]()#+!~|<>])", r"\\\1", text)
 
 
+APP_POLISH_CSS = """
+/* Sidebar: soft gradient, pill controls without borders */
+[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #0f1626 0%, #0b111c 55%, #150b14 100%) !important;
+    border-right: 0 !important; box-shadow: 12px 0 40px rgba(0, 0, 0, 0.35);
+}
+[data-testid="stSidebar"] [data-testid^="stBaseButton"] {
+    border: 0 !important; border-radius: 999px !important;
+    background: rgba(255, 255, 255, 0.05) !important; box-shadow: none !important;
+    transition: background 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+}
+[data-testid="stSidebar"] [data-testid^="stBaseButton"]:hover {
+    background: rgba(229, 56, 59, 0.18) !important; transform: translateX(2px);
+}
+[data-testid="stSidebar"] [data-testid="stBaseButton-primary"] {
+    background: linear-gradient(135deg, #ff3b3f, #c81e3a) !important;
+    box-shadow: 0 8px 24px rgba(229, 56, 59, 0.4) !important;
+}
+[data-testid="stSidebar"] [data-testid="stBaseButton-tertiary"] { background: transparent !important; }
+[data-testid="stSidebar"] .st-key-new_chat button {
+    background: linear-gradient(135deg, #ff3b3f, #c81e3a) !important; color: #fff !important;
+    box-shadow: 0 8px 24px rgba(229, 56, 59, 0.4) !important;
+}
+[data-testid="stSidebar"] .st-key-new_chat button:hover {
+    background: linear-gradient(135deg, #ff5256, #d6243f) !important; transform: translateY(-1px);
+}
+[data-testid="stSidebar"] [data-baseweb="select"] > div,
+[data-testid="stSidebar"] [data-baseweb="input"],
+[data-testid="stSidebar"] [data-baseweb="base-input"],
+[data-testid="stSidebar"] textarea {
+    border: 0 !important; border-radius: 999px !important;
+    background: rgba(255, 255, 255, 0.05) !important; box-shadow: none !important;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] details {
+    border: 0 !important; border-radius: 22px !important;
+    background: rgba(255, 255, 255, 0.04) !important;
+}
+.st-key-side_brand [data-testid="stHorizontalBlock"] {
+    flex-direction: row !important; flex-wrap: nowrap !important;
+    gap: 0.3rem !important; align-items: center !important;
+}
+.st-key-side_brand [data-testid="stColumn"] { min-width: 0 !important; width: auto !important; flex: 0 0 auto !important; }
+.st-key-side_brand [data-testid="stColumn"]:first-child { flex: 1 1 auto !important; }
+.st-key-side_brand button { min-height: 36px; padding: 0 0.8rem; white-space: nowrap; }
+/* Main area: soft rounded cards instead of outlined boxes */
+[data-testid="stMain"] [data-testid^="stBaseButton"] {
+    border: 0 !important; border-radius: 16px !important;
+    background: rgba(255, 255, 255, 0.045) !important;
+    transition: background 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+}
+[data-testid="stMain"] [data-testid^="stBaseButton"]:hover {
+    background: rgba(229, 56, 59, 0.14) !important; transform: translateY(-1px);
+    box-shadow: 0 8px 24px rgba(229, 56, 59, 0.14);
+}
+[data-testid="stMain"] [data-testid="stBaseButton-primary"] {
+    background: linear-gradient(135deg, #ff3b3f, #c81e3a) !important;
+}
+"""
+
+
 def render_nav(box) -> str:
     """Logo, New chat button and the track list; returns the active track."""
     mode = current_mode()
     with box:
-        st.markdown(
-            f'<div class="brand"><img src="{avatar_data_uri()}" alt="">'
-            f'<span><span class="prompt">&gt;</span> Nashmi</span></div>',
-            unsafe_allow_html=True,
-        )
+        with st.container(key="side_brand"):
+            logo, out = st.columns([3, 2], vertical_alignment="center",
+                                   gap="small")
+            logo.markdown(
+                f'<div class="brand"><img src="{avatar_data_uri()}" alt="">'
+                f'<span><span class="prompt">&gt;</span> Nashmi</span></div>',
+                unsafe_allow_html=True,
+            )
+            if is_public() and current_user():
+                out.button("Sign out", key="side_signout", on_click=sign_out,
+                           type="tertiary", icon=":material/logout:")
         st.button(
             "New chat", key="new_chat", icon=":material/add:",
             on_click=on_new_chat, disabled=mode in (MODE_SOC, MODE_TOOLS, MODE_EXAM),
@@ -4221,7 +4288,7 @@ def render_login_buttons(key_prefix: str) -> None:
             LOGIN_LABELS.get(provider, "Sign in"),
             key=f"{key_prefix}_login_{provider}",
             on_click=start_login, args=(provider,),
-            icon=":material/login:",
+            icon=None if provider == "google" else ":material/login:",
             width="stretch" if key_prefix in ("login", "signup") else "content",
         )
 
@@ -4278,11 +4345,10 @@ def render_user_card(box) -> None:
                 first.button("Account", key="open_account",
                              on_click=open_account,
                              icon=":material/account_circle:")
-                second.button("Sign out", key="sign_out", on_click=sign_out,
-                              icon=":material/logout:", type="tertiary")
                 if is_admin():
-                    st.button("Admin", key="open_admin", on_click=open_admin,
-                              icon=":material/monitoring:", type="tertiary")
+                    second.button("Admin", key="open_admin",
+                                  on_click=open_admin,
+                                  icon=":material/monitoring:")
         elif accounts_enabled():
             st.caption("Guest: chats are not saved. Sign in to keep them.")
             render_login_buttons("side")
@@ -4505,25 +4571,33 @@ def render_account(settings: Settings) -> None:
 
 
 def render_settings(box, mode: str):
-    """Provider, key and model controls tucked into one collapsed panel."""
+    """Provider, key and model in one tidy panel. It opens by itself only
+    when no key is available yet, and folds away once one is."""
     with box:
-        with st.expander("Model and API key", expanded=is_public()):
-            if is_public():
-                st.caption(
-                    "Public demo: paste your own API key below. It "
-                    "stays in your browser session and is never stored."
-                )
-            labels = list(PROVIDERS)
-            label = st.selectbox(
-                "Provider", labels,
-                index=labels.index(PROVIDERS_BY_ID[DEFAULT_PROVIDER_ID].label),
-            )
+        labels = list(PROVIDERS)
+        st.session_state.setdefault(
+            "provider_choice", PROVIDERS_BY_ID[DEFAULT_PROVIDER_ID].label)
+        current = PROVIDERS[st.session_state["provider_choice"]]
+        has_key = bool(
+            str(st.session_state.get(f"key_{current.id}", "")).strip()
+            or get_secret(*current.env_keys)
+            or saved_keys().get(current.id, "")
+        )
+        with st.expander(
+            f"AI model: {current.short}", icon=":material/tune:",
+            expanded=is_public() and not has_key,
+        ):
+            label = st.selectbox("Provider", labels, key="provider_choice")
             provider = PROVIDERS[label]
 
             typed_key = st.text_input(
                 f"{provider.short} API key",
                 type="password",
                 key=f"key_{provider.id}",
+                placeholder="Paste your key here",
+                help=("Used for this session only. Signed-in accounts can "
+                      "save it, encrypted, from the Account page."
+                      if is_public() else None),
             )
             env_key = get_secret(*provider.env_keys)
             stored_key = saved_keys().get(provider.id, "")
@@ -4532,6 +4606,10 @@ def render_settings(box, mode: str):
                 st.caption("Key loaded from .env. Type here to override it.")
             elif stored_key and not typed_key.strip():
                 st.caption("Using the key saved in your account.")
+            st.link_button(
+                key_label(provider), provider.key_url,
+                icon=":material/key:", width="stretch",
+            )
 
             if provider.id == "openrouter":
                 options = openrouter_free_models() or list(OPENROUTER_FALLBACK)
@@ -4542,14 +4620,15 @@ def render_settings(box, mode: str):
             else:
                 options = list(provider.models)
             chosen = st.selectbox("Model", options, key=f"model_{provider.id}")
-            custom = st.text_input(
-                "Custom model (optional)", key=f"custom_{provider.id}"
-            )
+            custom = ""
+            if st.toggle("Use a custom model name",
+                         key=f"custom_on_{provider.id}"):
+                custom = st.text_input(
+                    "Custom model", key=f"custom_{provider.id}",
+                    label_visibility="collapsed",
+                    placeholder="exact model id",
+                )
             st.caption(provider.note)
-            st.link_button(
-                key_label(provider), provider.key_url,
-                icon=":material/key:",
-            )
         usage_slot = st.empty()
     return Settings(provider, api_key, custom.strip() or chosen, mode), usage_slot
 
@@ -5892,7 +5971,20 @@ def render_exam_track(settings: Settings) -> None:
 # Shared by the landing banner and the scroll story. makeLook gives a cat eyes
 # that follow the pointer (also the pointer over the rest of the page) and
 # glance around by themselves when nobody is moving one.
-CAT_JS = """function trackPointer(cb) {
+CAT_JS = """function releaseFrameBoxOnExit() {
+    // the page resizes Streamlit's wrapper around this frame; when the frame goes
+    // away (another page reuses that wrapper) the wrapper must get its size back
+    var boxEl = null;
+    try { boxEl = window.frameElement && window.frameElement.parentElement; } catch (err) { }
+    window.addEventListener('pagehide', function () {
+        if (!boxEl) { return; }
+        ['height', 'min-height', 'max-height', 'flex'].forEach(function (k) {
+            boxEl.style.removeProperty(k);
+        });
+    });
+}
+
+function trackPointer(cb) {
     var own = function (e) { cb(e.clientX, e.clientY); };
     document.addEventListener('pointermove', own, { passive: true });
     document.addEventListener('pointerdown', own, { passive: true });
@@ -5930,83 +6022,119 @@ function makeLook(el, getCenter) {
 }
 """
 
-# The cat that walks down the line in the story. It has no shemagh. Its arms
-# and legs swing while it travels (gait follows the distance), and it stands
-# still, blinks and wags its tail when the line is not moving.
+# The cat on the line in the story. It has no shemagh. It sits (blinks, wags its
+# tail, looks at the pointer) when the line is still, and runs along the line
+# with a leg cycle that follows the distance travelled when it moves.
 WALKER_JS = """var WW = 40, WHT = 46;
 var K = '#0b0b10', WH = '#ffffff', GR = '#d3d8e3', RD = '#E5383B', PK = '#f4a3a8';
-function drawWalker(ctx, t, gait, mv, lx, ly) {
+
+function drawCatSit(ctx, t, lx, ly) {
     function px(x, y, w, h, c) { ctx.fillStyle = c; ctx.fillRect(Math.round(x), Math.round(y), w, h); }
     ctx.clearRect(0, 0, WW, WHT);
-    var ph = Math.sin(gait * Math.PI);
-    var s = ph * mv;                                   // walking phase -1..1
-    var B = Math.round(Math.abs(ph) * mv);             // body bobs while walking
-    var blink = (t % 3.6) > 3.45;
+    var B = Math.sin(t * 1.6) > 0.75 ? 1 : 0;
     function pb(x, y, w, h, c) { px(x, y + B, w, h, c); }
-    var k, y, x0, x1;
+    var blink = (t % 3.6) > 3.45, k, y;
 
-    for (k = 0; k < 12; k++) {                         // tail (behind everything)
-        var u = k / 11, wg = Math.sin(t * 4 + k * 0.5) * u * 3.2 * (1.25 - mv);
-        px(26 + 8 * Math.sin(u * 1.4) + wg - 1, 36 - 15 * u * u + B - 1, 4, 4, K);
+    for (k = 0; k < 11; k++) {                        // tail curling round the right side
+        var u = k / 10, wg = Math.sin(t * 3.2 + k * 0.5) * u * 2.2;
+        px(28 + 8 * Math.sin(u * 2.0) + wg - 1, 43 - 15 * u + B - 1, 4, 4, K);
     }
-    for (k = 0; k < 12; k++) {
-        var v = k / 11, wg2 = Math.sin(t * 4 + k * 0.5) * v * 3.2 * (1.25 - mv);
-        px(26 + 8 * Math.sin(v * 1.4) + wg2, 36 - 15 * v * v + B, 2, 2, WH);
+    for (k = 0; k < 11; k++) {
+        var v = k / 10, wg2 = Math.sin(t * 3.2 + k * 0.5) * v * 2.2;
+        px(28 + 8 * Math.sin(v * 2.0) + wg2, 43 - 15 * v + B, 2, 2, WH);
     }
 
-    function leg(lx0, lift) {                          // legs step one after the other
-        var top = 35 + B, bot = 43 - lift;
-        px(lx0 - 1, top, 5, bot - top + 1, K);
-        px(lx0, top, 3, bot - top, WH);
-        px(lx0 - 1, bot, 6, 1, K);
+    for (y = 29; y <= 43; y++) {                      // sitting body
+        var hw = y < 32 ? 6 : (y < 37 ? 7 : 9);
+        pb(20 - hw - 1, y, 1, 1, K); pb(20 + hw, y, 1, 1, K);
+        pb(20 - hw, y, hw * 2, 1, WH);
     }
-    leg(14, Math.round(Math.max(0, s) * 3));
-    leg(23, Math.round(Math.max(0, -s) * 3));
+    pb(10, 44, 20, 1, K);
+    pb(16, 34, 8, 6, GR);                             // belly
+    pb(13, 40, 5, 4, WH); pb(22, 40, 5, 4, WH);       // front paws
+    pb(12, 40, 1, 5, K); pb(18, 40, 1, 5, K); pb(21, 40, 1, 5, K); pb(27, 40, 1, 5, K);
+    pb(15, 42, 1, 2, K); pb(24, 42, 1, 2, K);
 
-    for (y = 24; y <= 36; y++) {                       // body
-        var bi = y < 26 ? 1 : 0;
-        pb(13 + bi, y, 1, 1, K); pb(26 - bi, y, 1, 1, K);
-        pb(14 + bi, y, 12 - bi * 2, 1, WH);
-    }
-    pb(15, 36, 10, 1, GR);
-    pb(17, 28, 6, 5, GR);                              // soft belly
-
-    function arm(ax, off) {                            // arms swing opposite the legs
-        pb(ax - 1, 25, 5, 5, K); pb(ax, 25, 3, 5, WH);
-        pb(ax - 1 + off, 30, 5, 6, K); pb(ax + off, 30, 3, 5, WH);
-    }
-    arm(9, Math.round(-s * 2));
-    arm(28, Math.round(s * 2));
-
-    pb(13, 22, 14, 2, RD);                             // little red collar
-    pb(13, 22, 1, 2, K); pb(26, 22, 1, 2, K);
-
-    for (y = 6; y <= 21; y++) {                        // big round head
-        var ins = (y <= 7 || y >= 20) ? 2 : (y === 8 || y === 19 ? 1 : 0);
-        x0 = 7 + ins; x1 = 32 - ins;
+    for (y = 12; y <= 27; y++) {                      // head
+        var ins = (y <= 13 || y >= 26) ? 2 : (y === 14 || y === 25 ? 1 : 0);
+        var x0 = 7 + ins, x1 = 32 - ins;
         pb(x0 - 1, y, 1, 1, K); pb(x1 + 1, y, 1, 1, K);
         pb(x0, y, x1 - x0 + 1, 1, WH);
     }
-    pb(9, 5, 22, 1, K); pb(9, 22, 4, 1, K); pb(27, 22, 4, 1, K);
+    pb(9, 11, 22, 1, K); pb(9, 28, 22, 1, K);
+    pb(13, 28, 14, 2, RD);                            // collar
+    pb(13, 28, 1, 2, K); pb(26, 28, 1, 2, K);
 
-    // pointed ears
-    var ew = [1, 2, 4, 5, 7];
-    for (y = 1; y <= 5; y++) {
-        var w = ew[y - 1], e0 = 11 - Math.floor(w / 2), f0 = 28 - Math.floor(w / 2);
+    var ew = [1, 2, 4, 5, 7];                         // ears
+    for (y = 6; y <= 10; y++) {
+        var w = ew[y - 6], e0 = 11 - Math.floor(w / 2), f0 = 28 - Math.floor(w / 2);
         pb(e0 - 1, y, 1, 1, K); pb(e0, y, w, 1, WH); pb(e0 + w, y, 1, 1, K);
         pb(f0 - 1, y, 1, 1, K); pb(f0, y, w, 1, WH); pb(f0 + w, y, 1, 1, K);
     }
-    pb(11, 0, 1, 1, K); pb(28, 0, 1, 1, K);
-    pb(11, 3, 1, 2, PK); pb(28, 3, 1, 2, PK);
+    pb(11, 5, 1, 1, K); pb(28, 5, 1, 1, K);
+    pb(11, 8, 1, 2, PK); pb(28, 8, 1, 2, PK);
 
     var ox = Math.round((lx || 0) * 2), oy = Math.round((ly || 0) * 1.5);
     var nx = Math.round(lx || 0), ny = Math.round(ly || 0);
-    var eh = blink ? 1 : 5, ey = (blink ? 12 : 10) + oy;
-    pb(13 + ox, ey, 2, eh, K); pb(25 + ox, ey, 2, eh, K);      // tall eyes like the logo cat
-    pb(19 + nx, 16 + ny, 2, 1, RD);                            // nose
-    pb(18 + nx, 18 + ny, 1, 1, K); pb(19 + nx, 19 + ny, 2, 1, K); pb(21 + nx, 18 + ny, 1, 1, K);
-    pb(3 + nx, 16, 4, 1, GR); pb(4 + nx, 18, 3, 1, GR);        // whiskers
-    pb(33 + nx, 16, 4, 1, GR); pb(33 + nx, 18, 3, 1, GR);
+    var eh = blink ? 1 : 5, ey = (blink ? 18 : 16) + oy;
+    pb(13 + ox, ey, 2, eh, K); pb(25 + ox, ey, 2, eh, K);
+    pb(19 + nx, 22 + ny, 2, 1, RD);
+    pb(18 + nx, 24 + ny, 1, 1, K); pb(19 + nx, 25 + ny, 2, 1, K); pb(21 + nx, 24 + ny, 1, 1, K);
+    pb(3 + nx, 22, 4, 1, GR); pb(4 + nx, 24, 3, 1, GR);
+    pb(33 + nx, 22, 4, 1, GR); pb(33 + nx, 24, 3, 1, GR);
+}
+
+function drawCatRun(ctx, t, gait) {
+    function px(x, y, w, h, c) { ctx.fillStyle = c; ctx.fillRect(Math.round(x), Math.round(y), w, h); }
+    ctx.clearRect(0, 0, WW, WHT);
+    var g = Math.sin(gait * Math.PI), bob = Math.abs(g) > 0.6 ? 1 : 0;
+    var k, y;
+
+    for (k = 0; k < 10; k++) {                         // tail streams behind
+        var u = k / 9, wv = Math.sin(t * 9 + k * 0.7) * u * 2;
+        px(8 - 7 * u - 1, 21 - 9 * u * u + wv - 1 + bob, 4, 4, K);
+    }
+    for (k = 0; k < 10; k++) {
+        var v = k / 9, wv2 = Math.sin(t * 9 + k * 0.7) * v * 2;
+        px(8 - 7 * v, 21 - 9 * v * v + wv2 + bob, 2, 2, WH);
+    }
+
+    function leg(x, phase) {                           // four legs, diagonal pairs move together
+        var sw = Math.round(Math.sin(gait * Math.PI + phase) * 4);
+        var lift = Math.max(0, Math.sin(gait * Math.PI + phase)) * 2;
+        px(x + sw - 1, 25 - lift + bob, 5, 11, K);
+        px(x + sw, 25 - lift + bob, 3, 10, WH);
+        px(x + sw - 1, 35 - lift + bob, 6, 1, K);
+    }
+    leg(10, 0); leg(26, 0);
+    leg(14, Math.PI); leg(22, Math.PI);
+
+    for (y = 18; y <= 28; y++) {                       // long running body
+        var bi = (y === 18 || y === 28) ? 2 : 0;
+        px(7 + bi, y + bob, 1, 1, K); px(27 - bi, y + bob, 1, 1, K);
+        px(8 + bi, y + bob, 19 - bi * 2, 1, WH);
+    }
+    px(10, 18 + bob, 15, 1, K); px(10, 29 + bob, 15, 1, K);
+    px(11, 25 + bob, 12, 2, GR);                       // belly shade
+
+    for (y = 14; y <= 26; y++) {                       // head (looks right)
+        var ins = (y <= 15 || y >= 25) ? 2 : (y === 16 || y === 24 ? 1 : 0);
+        px(26 + ins - 1, y + bob, 1, 1, K); px(37 - ins + 1, y + bob, 1, 1, K);
+        px(26 + ins, y + bob, 12 - ins * 2, 1, WH);
+    }
+    px(28, 13 + bob, 8, 1, K); px(28, 27 + bob, 8, 1, K);
+    px(26, 20 + bob, 2, 7, RD);                        // collar
+    px(28, 10 + bob, 3, 3, WH); px(28, 9 + bob, 3, 1, K); px(27, 10 + bob, 1, 3, K); px(31, 10 + bob, 1, 3, K);
+    px(33, 10 + bob, 3, 3, WH); px(33, 9 + bob, 3, 1, K); px(32, 10 + bob, 1, 3, K); px(36, 10 + bob, 1, 3, K);
+    px(29, 11 + bob, 1, 2, PK); px(34, 11 + bob, 1, 2, PK);
+    px(33, 17 + bob, 2, 4, K);                         // tall eye
+    px(37, 21 + bob, 2, 1, RD);                        // nose
+    px(36, 23 + bob, 2, 1, K);                         // mouth
+    px(38, 19 + bob, 2, 1, GR); px(38, 22 + bob, 2, 1, GR);
+}
+
+function drawCatPose(ctx, t, gait, mv, lx, ly) {
+    if (mv > 0.45) { drawCatRun(ctx, t, gait); } else { drawCatSit(ctx, t, lx, ly); }
 }
 """
 
@@ -6110,6 +6238,7 @@ __CAT_JS__
 </script>
 <script>
 (function () {
+    releaseFrameBoxOnExit();
     var cat = document.getElementById('cat'), stage = document.getElementById('stage');
     var box = document.querySelector('.catbox'), cctx = cat.getContext('2d');
     var reduce = window.matchMedia &&
@@ -6495,29 +6624,50 @@ header[data-testid="stHeader"], [data-testid="stToolbar"],
     background-size: auto, auto, auto, 40px 40px, 40px 40px, auto !important;
     background-attachment: fixed !important;
 }
-/* the bar sits inside a wrapper that is only as tall as the bar, so the wrapper sticks */
-div:has(> .st-key-topbar) { position: sticky; top: 0; z-index: 60; }
+/* floating pill bar; its wrapper is only as tall as the bar, so the wrapper sticks */
+div:has(> .st-key-topbar) { position: sticky; top: 10px; z-index: 60; }
 .st-key-topbar {
-    margin: 0 -1.25rem 1rem;
-    width: calc(100% + 2.5rem) !important; max-width: none !important;
-    padding: 0.55rem 1.25rem; border-bottom: 1px solid var(--line);
-    background: rgba(11, 17, 28, 0.78);
-    -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+    margin: 10px 0 14px; padding: 0.3rem 0.45rem 0.3rem 0.8rem;
+    border-radius: 999px; background: rgba(14, 21, 36, 0.72);
+    -webkit-backdrop-filter: blur(16px) saturate(1.4);
+    backdrop-filter: blur(16px) saturate(1.4);
+    box-shadow: 0 10px 34px rgba(0, 0, 0, 0.35),
+                inset 0 0 0 1px rgba(255, 255, 255, 0.07);
 }
 .st-key-topbar [data-testid="stHorizontalBlock"] {
     flex-direction: row !important; flex-wrap: nowrap !important;
-    gap: 0.5rem !important; align-items: center !important;
+    gap: 0.3rem !important; align-items: center !important;
 }
 .st-key-topbar [data-testid="stColumn"] {
     min-width: 0 !important; width: auto !important; flex: 0 0 auto !important;
 }
 .st-key-topbar [data-testid="stColumn"]:first-child { flex: 1 1 auto !important; }
-.st-key-topbar button { min-height: 40px; padding: 0 1.1rem; }
-.tb-brand {
-    color: var(--white); font: 800 1.2rem var(--sans);
-    letter-spacing: 0.01em; white-space: nowrap;
+.st-key-topbar [data-testid="stColumn"] > [data-testid="stVerticalBlock"] { gap: 0 !important; }
+.st-key-topbar button {
+    border: 0 !important; border-radius: 999px !important; box-shadow: none;
+    min-height: 40px; padding: 0 1.15rem; font-weight: 600;
+    background: transparent; color: var(--text);
+    transition: background 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
 }
-.tb-brand span { color: var(--accent); font-family: var(--mono); }
+.st-key-topbar button:hover { background: rgba(255, 255, 255, 0.09); color: var(--white); }
+.st-key-topbar [data-testid="stBaseButton-primary"] {
+    color: #fff; background: linear-gradient(135deg, #ff3b3f, #c81e3a);
+    box-shadow: 0 6px 20px rgba(229, 56, 59, 0.45);
+}
+.st-key-topbar [data-testid="stBaseButton-primary"]:hover {
+    background: linear-gradient(135deg, #ff5256, #d6243f); transform: translateY(-1px);
+    box-shadow: 0 10px 26px rgba(229, 56, 59, 0.55);
+}
+.lp-footer-note {
+    max-width: 640px; margin: 0 auto 1.1rem; color: var(--muted);
+    font-size: 0.85rem; line-height: 1.5;
+}
+/* Google's G on the left of "Continue with Google" */
+[class*="_login_google"] button {
+    padding-left: 3rem !important; background-repeat: no-repeat !important;
+    background-position: 1.1rem center !important; background-size: 20px 20px !important;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 48 48%22%3E%3Cpath fill=%22%23EA4335%22 d=%22M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z%22/%3E%3Cpath fill=%22%234285F4%22 d=%22M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z%22/%3E%3Cpath fill=%22%23FBBC05%22 d=%22M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z%22/%3E%3Cpath fill=%22%2334A853%22 d=%22M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z%22/%3E%3C/svg%3E") !important;
+}
 """
 
 # The scroll story on the landing page: a cat slides down a line as the
@@ -6619,7 +6769,7 @@ STORY_TEMPLATE = """<!DOCTYPE html>
     p { margin: 0; font-size: 0.94rem; line-height: 1.55; }
     #cat {
         position: absolute; left: 0; top: 0; z-index: 3;
-        width: 120px; height: 138px;
+        width: 80px; height: 92px;
         transform: translate(-50%, -56%); transform-origin: 50% 60%;
         image-rendering: pixelated; image-rendering: crisp-edges;
         pointer-events: none;
@@ -6653,6 +6803,7 @@ __CAT_JS__
 </script>
 <script>
 (function () {
+    releaseFrameBoxOnExit();
     var reduce = window.matchMedia &&
         window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     var wrap = document.getElementById('wrap');
@@ -6670,7 +6821,7 @@ __CAT_JS__
         var r = cat.getBoundingClientRect();
         return { x: r.left + r.width / 2, y: r.top + r.height * 0.4 };
     });
-    var gait = 0, mv = 0;
+    var gait = 0, mv = 0, dirSign = 1, ang = 0, angTarget = 0;
 
     function rng(seed) {
         var s = seed;
@@ -6734,12 +6885,14 @@ __CAT_JS__
         if (Math.abs(d) < 0.05) { cy = tgt; }
         var moved = Math.abs(d * 0.14);
         mv += ((moved > 0.25 ? 1 : 0) - mv) * 0.2;      // 1 while the line is moving
-        gait += moved / 6;                              // one stride every ~6 px travelled
-        var rot = Math.max(-6, Math.min(6, d * 0.04));
+        gait += moved / 5;                              // one stride every ~5 px travelled
+        if (Math.abs(d) > 0.5) { dirSign = d > 0 ? 1 : -1; }
+        angTarget = mv > 0.45 ? dirSign * 90 : 0;       // runs head first along the line
+        ang += (angTarget - ang) * 0.25;
         cat.style.top = cy + 'px';
         look.update(now);
-        drawWalker(cctx, now / 1000, gait, mv, look.x, look.y);
-        cat.style.transform = 'translate(-50%, -56%) rotate(' + rot.toFixed(2) + 'deg)';
+        drawCatPose(cctx, now / 1000, gait, mv, look.x, look.y);
+        cat.style.transform = 'translate(-50%, -56%) rotate(' + ang.toFixed(1) + 'deg)';
         fill.style.height = Math.max(0, cy - y0) + 'px';
         var best = 0, bd = 1e9;
         for (var i = 0; i < rows.length; i++) {
@@ -6845,8 +6998,10 @@ def render_footer() -> None:
         f'aria-hidden="true"><path d="{path}"/></svg></a>'
         for label, url, path in OWNER_LINKS
     )
+    note = (f'<div class="lp-footer-note">{html.escape(PRIVACY_NOTE)}</div>'
+            if accounts_enabled() else "")
     st.markdown(
-        '<div class="lp-footer">'
+        '<div class="lp-footer">' + note +
         f'<div class="lp-social">{icons}</div>'
         f'<div>&copy; 2026 {html.escape(OWNER_NAME)}. All rights reserved.</div>'
         '<div class="lp-footer-sub">Questions or feedback? '
@@ -6856,35 +7011,71 @@ def render_footer() -> None:
     )
 
 
-def render_landing_buttons(suffix: str) -> None:
-    """Sign up / sign in buttons. The page shows them above and below the
-    story, so each copy needs its own widget keys."""
-    with st.container(key=f"landing_cta{suffix}"):
-        if accounts_enabled():
-            st.button("Sign up", key=f"landing_signup{suffix}",
-                      type="primary", on_click=go_gate, args=("signup",),
-                      icon=":material/person_add:", width="stretch")
-            st.button("Sign in", key=f"landing_signin{suffix}",
-                      on_click=go_gate, args=("login",),
-                      icon=":material/login:", width="stretch")
-        else:
-            st.button("Start", key=f"landing_guest{suffix}", type="primary",
-                      on_click=go_gate, args=("app",),
-                      icon=":material/arrow_forward:", width="stretch")
+MINI_LOGO_TEMPLATE = """<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src https://cdn.jsdelivr.net 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:">
+<style>
+    html, body { margin: 0; height: 100%; background: transparent; overflow: hidden;
+        font-family: Inter, system-ui, -apple-system, 'Segoe UI', sans-serif; }
+    .row { display: flex; align-items: center; height: 100%; gap: 8px; }
+    canvas { width: 40px; height: 40px; display: block; flex: none; }
+    .name { color: #fff; font-weight: 800; font-size: 19px; letter-spacing: 0.01em; white-space: nowrap; }
+    .name span { color: #E5383B; font-family: ui-monospace, Consolas, monospace; }
+</style></head>
+<body><div class="row"><canvas id="c"></canvas><div class="name"><span>&gt;_</span> Nashmi</div></div>
+<script src="__THREE_URL__" integrity="__THREE_SRI__" crossorigin="anonymous"></script>
+<script>
+(function () {
+    if (!window.THREE) { return; }
+    var c = document.getElementById('c'), r;
+    try { r = new THREE.WebGLRenderer({ canvas: c, alpha: true, antialias: true }); }
+    catch (err) { c.style.display = 'none'; return; }
+    r.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    r.setSize(40, 40, false);
+    var sc = new THREE.Scene(), cam = new THREE.PerspectiveCamera(40, 1, 0.1, 50);
+    cam.position.z = 4.2;
+    var g = new THREE.Group(); sc.add(g);
+    var outer = new THREE.LineSegments(
+        new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(1.25, 1)),
+        new THREE.LineBasicMaterial({ color: 0xFF3B3F }));
+    var inner = new THREE.LineSegments(
+        new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(0.7, 0)),
+        new THREE.LineBasicMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0.85 }));
+    var ring = new THREE.Mesh(new THREE.TorusGeometry(1.7, 0.04, 6, 60),
+        new THREE.MeshBasicMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0.6 }));
+    ring.rotation.x = 1.2;
+    g.add(outer, inner, ring);
+    var reduce = window.matchMedia &&
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    function f(now) {
+        var t = now / 1000;
+        outer.rotation.y = t * 0.9; outer.rotation.x = t * 0.5;
+        inner.rotation.y = -t * 1.2; ring.rotation.z = t * 0.8;
+        r.render(sc, cam);
+        if (!reduce) { requestAnimationFrame(f); }
+    }
+    f(0);
+    if (!reduce) { requestAnimationFrame(f); }
+})();
+</script></body></html>
+"""
 
 
 def render_topbar() -> None:
-    """Sticky bar with the brand and the sign-in buttons."""
+    """Floating pill bar: 3D logo and name on the left, sign-in on the right."""
     with st.container(key="topbar"):
         brand, first, second = st.columns(
             [6, 2, 2], vertical_alignment="center", gap="small")
-        # the page style travels with the brand so no empty element sits above the bar
-        brand.markdown(f'<style>{LANDING_CSS}</style>'
-                       '<div class="tb-brand"><span>&gt;_</span> Nashmi</div>',
-                       unsafe_allow_html=True)
+        with brand:
+            # the page style rides with the first element so nothing sits above the bar
+            st.markdown(f'<style>{LANDING_CSS}</style>', unsafe_allow_html=True)
+            embed_html(MINI_LOGO_TEMPLATE.replace("__THREE_URL__", THREE_URL)
+                       .replace("__THREE_SRI__", THREE_SRI), 48)
         if accounts_enabled():
-            first.button("Sign in", key="landing_signin", on_click=go_gate,
-                         args=("login",), width="stretch")
+            first.button("Sign in", key="landing_signin", type="tertiary",
+                         on_click=go_gate, args=("login",), width="stretch")
             second.button("Sign up", key="landing_signup", type="primary",
                           on_click=go_gate, args=("signup",), width="stretch")
         else:
@@ -6897,10 +7088,6 @@ def render_landing() -> None:
     render_topbar()
     render_scene("landing")
     render_story()
-    render_landing_buttons("_end")
-    if accounts_enabled():
-        st.markdown(f'<p class="lp-note">{html.escape(PRIVACY_NOTE)}</p>',
-                    unsafe_allow_html=True)
     render_footer()
 
 
@@ -6914,6 +7101,63 @@ AUTH_TEXT = {
 }
 
 
+def needs_signup(user_id: int | None) -> bool:
+    """True for a signed-in Google user who has not finished signing up."""
+    db = get_db()
+    if not (user_id and db):
+        return False
+    if st.session_state.get("_profile_ok") == user_id:
+        return False
+    try:
+        if db.get_profile(user_id):
+            st.session_state["_profile_ok"] = user_id
+            return False
+    except Exception:  # noqa: BLE001 - never lock people out of a broken DB
+        LOGGER.exception("Could not read the profile")
+        return False
+    return True
+
+
+def render_complete_signup(user_id: int, user: dict) -> None:
+    """Mandatory last step: nobody gets into the app without an account."""
+    st.markdown(
+        f'<style>{LANDING_CSS}.block-container {{ max-width: 620px !important; }}</style>',
+        unsafe_allow_html=True)
+    render_scene("signup")
+    st.markdown(
+        '<div class="lp-signin"><h2>Finish creating your account</h2>'
+        f'<p>No Nashmi account exists yet for '
+        f'<b>{html.escape(user["email"] or "this Google account")}</b>. '
+        'Choose your name and username to create it.</p></div>',
+        unsafe_allow_html=True)
+    with st.container(key="login_card"):
+        with st.form("complete_signup", border=False):
+            st.text_input("E-mail (checked by Google)", value=user["email"],
+                          disabled=True)
+            full_name = st.text_input("Full name", value=user["name"],
+                                      max_chars=120)
+            username = st.text_input(
+                "Username", max_chars=24, placeholder="e.g. hassan.sec",
+                help="3 to 24 characters: lowercase letters, digits, . or _")
+            agree = st.checkbox(PRIVACY_NOTE)
+            go = st.form_submit_button("Create account", type="primary",
+                                       width="stretch")
+        if go:
+            if not agree:
+                st.error("Please accept the note above to continue.")
+            else:
+                error = get_db().create_profile(user_id, username, full_name)
+                if error:
+                    st.error(error)
+                else:
+                    st.session_state["_profile_ok"] = user_id
+                    st.rerun()
+        st.button("Cancel and sign out", key="signup_cancel", on_click=sign_out,
+                  type="tertiary", width="stretch",
+                  icon=":material/logout:")
+    render_footer()
+
+
 def render_auth_page(mode: str) -> None:
     """Sign-in and sign-up page. Google shows its own password / 2-step
     screen and Nashmi never sees or stores a password. A new Google account
@@ -6923,12 +7167,19 @@ def render_auth_page(mode: str) -> None:
         f'<style>{LANDING_CSS}.block-container {{ max-width: 620px !important; }}</style>',
         unsafe_allow_html=True)
     render_scene(mode)
+    steps = (
+        ("Continue with Google, which checks your e-mail for us",
+         "Choose your name and a username",
+         "Start using Nashmi")
+        if mode == "signup" else
+        ("Sign in works only with an account you already created",
+         "Your chats and projects are saved",
+         "Usage history across devices")
+    )
+    items = "".join(f"<li>{html.escape(item)}</li>" for item in steps)
     st.markdown(
         f'<div class="lp-signin"><h2>{html.escape(title)}</h2>'
-        f'<p>{html.escape(sub)}</p><ul>'
-        '<li>Your chats and projects are saved</li>'
-        '<li>Usage history across devices</li>'
-        '<li>Optionally save API keys, encrypted</li></ul></div>',
+        f'<p>{html.escape(sub)}</p><ul>{items}</ul></div>',
         unsafe_allow_html=True,
     )
     with st.container(key="login_card"):
@@ -6941,8 +7192,6 @@ def render_auth_page(mode: str) -> None:
         st.button("Back", key=f"auth_back_{mode}", on_click=go_gate,
                   args=("landing",), type="tertiary", width="stretch",
                   icon=":material/arrow_back:")
-    st.markdown(f'<p class="lp-note">{html.escape(PRIVACY_NOTE)}</p>',
-                unsafe_allow_html=True)
     render_footer()
 
 
@@ -7067,8 +7316,8 @@ def render_admin_users(db) -> None:
 
     data = db.admin_overview(online_minutes=ONLINE_WINDOW_MINUTES)
     frame = pd.DataFrame([
-        {"Name": r["name"], "E-mail": r["email"],
-         "Joined": _stamp(r["created_at"]),
+        {"Name": r["name"], "Username": r["username"] or "(not finished)",
+         "E-mail": r["email"], "Joined": _stamp(r["created_at"]),
          "Last sign-in": _stamp(r["last_login"]), "Sign-ins": r["logins"]}
         for r in data["users"]
     ])
@@ -7165,6 +7414,19 @@ def main() -> None:
     if gate in ("login", "signup"):
         render_auth_page(gate)
         return
+    if st.session_state.get("_account_deleted") and current_user():
+        st.markdown(
+            f'<style>{LANDING_CSS}.block-container {{ max-width: 620px !important; }}</style>',
+            unsafe_allow_html=True)
+        st.success("Your account and all its data were deleted from the "
+                   "database. Sign out to finish.")
+        st.button("Sign out", key="deleted_signout", on_click=sign_out,
+                  icon=":material/logout:")
+        return
+    if needs_signup(account_id()):
+        render_complete_signup(account_id(), current_user())
+        return
+    st.markdown(f"<style>{APP_POLISH_CSS}</style>", unsafe_allow_html=True)
     nav_box = st.sidebar.container(key="side_nav")
     chats_box = st.sidebar.container(key="side_chats")
     settings_box = st.sidebar.container(key="side_settings")
