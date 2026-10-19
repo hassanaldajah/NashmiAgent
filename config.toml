@@ -8,6 +8,11 @@ textColor = "#A4B1CD"
 
 [server]
 maxUploadSize = 50   # MB per file; keeps phones and small servers responsive
+enableXsrfProtection = true
+enableCORS = true
 
 [browser]
 gatherUsageStats = false
+
+[client]
+toolbarMode = "viewer"   # visitors do not get the developer menu

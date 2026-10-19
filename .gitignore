@@ -2,3 +2,7 @@
 chat_history.json
 __pycache__/
 .streamlit/secrets.toml
+settings.json
+*.db
+
+usage_counter.json

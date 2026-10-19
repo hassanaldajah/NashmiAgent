@@ -1,9 +1,14 @@
 """Nashmi Agent: a multi-provider cybersecurity assistant built with Streamlit.
 
 Features
-    * Providers: Gemini, GLM (Z.ai) and Groq (all free tiers).
+    * Providers: Gemini and Groq (free tiers), plus OpenAI (ChatGPT models)
+      and Claude (Anthropic) with the user's own paid key.
     * Streaming replies for every provider.
-    * File attachments in the chat box (text, code, images, PDF, video).
+    * Ten specialised cybersecurity tracks, each with its own chats and a
+      search box.
+    * File attachments and voice notes in the chat box (text, code, images,
+      PDF, video, audio).
+    * One-click copy under every answer.
     * API keys read from a ``.env`` file or Streamlit secrets, never shown
       in the browser and never written to the chat history.
     * Mobile-first layout for iOS and Android browsers.
@@ -14,6 +19,8 @@ Run with:  streamlit run app.py
 from __future__ import annotations
 
 import base64
+import codecs
+import csv
 import hashlib
 import html
 import io
@@ -22,9 +29,13 @@ import json
 import logging
 import mimetypes
 import os
+import random
 import re
 import tempfile
 import time
+import urllib.parse
+import uuid
+import zipfile
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -44,6 +55,15 @@ except ImportError:  # python-dotenv is optional at runtime
     def load_dotenv(*_args, **_kwargs) -> bool:
         return False
 
+try:
+    import nashmi_db
+except ImportError:  # accounts need sqlalchemy and cryptography
+    nashmi_db = None
+try:
+    import nashmi_exam
+except ImportError:  # the Practice Exam track needs this module
+    nashmi_exam = None
+
 load_dotenv()
 
 logging.basicConfig(
@@ -51,6 +71,7 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 LOGGER = logging.getLogger("nashmi")
+logging.getLogger("fontTools").setLevel(logging.WARNING)
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -60,17 +81,48 @@ HISTORY_FILE = Path(
     os.getenv("NASHMI_HISTORY_FILE")
     or Path(__file__).resolve().with_name("chat_history.json")
 )
-PERSIST_HISTORY = os.getenv("NASHMI_PERSIST_HISTORY", "1") != "0"
+# Public demo mode (set NASHMI_PUBLIC_MODE=1 on the host): keys from .env or
+# server secrets are never used, so every visitor must bring their own key,
+# and chats are kept only in that visitor's session, never written to disk.
+PUBLIC_MODE = os.getenv("NASHMI_PUBLIC_MODE", "0") == "1"
+
+
+def is_public() -> bool:
+    """True on a shared deployment.
+
+    Set by NASHMI_PUBLIC_MODE, and switched on automatically as soon as
+    sign-in is configured, so a forgotten setting can never hand the
+    owner's API keys or a shared chat file to visitors.
+    """
+    if PUBLIC_MODE:
+        return True
+    try:
+        return bool(st.secrets.get("auth"))
+    except Exception:  # noqa: BLE001 - no secrets.toml configured
+        return False
+
+
+def persistence_enabled() -> bool:
+    """Chats and settings go to local files only on a private computer."""
+    return not is_public() and os.getenv("NASHMI_PERSIST_HISTORY", "1") != "0"
 USAGE_FILE = Path(
     os.getenv("NASHMI_USAGE_FILE")
     or Path(__file__).resolve().with_name("usage_counter.json")
 )
+SETTINGS_FILE = Path(
+    os.getenv("NASHMI_SETTINGS_FILE")
+    or Path(__file__).resolve().with_name("settings.json")
+)
+DETAIL_CHOICES = ("Concise", "Balanced", "Detailed")
+LANGUAGE_CHOICES = ("Auto", "Arabic", "English")
+DEFAULT_PREFS = {"detail": "Balanced", "language": "Auto"}
 # Daily request limits we know for sure (the app also learns new ones from
 # the provider's own "quota exceeded" message).
 KNOWN_DAILY_LIMITS = {"gemini:gemini-3.8-flash": 20}
 
 TEMPERATURE = 0.3
 MAX_HISTORY_MESSAGES = 6
+MAX_PROMPT_CHARS = 20_000
 MAX_TEXT_CHARS = 15_000
 MAX_MEDIA_BYTES = 18 * 1024 * 1024
 REQUEST_TIMEOUT = (10, 180)  # (connect, read) seconds
@@ -79,13 +131,6 @@ RETRY_BACKOFF = 1.0
 RETRY_STATUS = {429, 500, 502, 503, 504}
 NEW_CHAT_TITLE = "New Chat"
 HERO_HEIGHT = 300
-
-MODE_CHAT = "General Chat"
-MODE_SECURITY = "Security Intelligence Labs"
-MODE_CPSS = "CPSS Projects (Cyber-Physical Systems)"
-MODE_CODE = "General Code Lab and SQL"
-MODE_SOC = "SOC Log Analyzer (File Upload)"
-MODES = (MODE_CHAT, MODE_SECURITY, MODE_CPSS, MODE_CODE, MODE_SOC)
 
 TEXT_EXTENSIONS = frozenset({
     ".txt", ".log", ".csv", ".json", ".py", ".js", ".ts", ".java", ".c",
@@ -116,6 +161,7 @@ class Provider:
     env_keys: tuple[str, ...]
     base_url: str = ""
     media: str = "none"  # "multimodal", "image+pdf", "image" or "none"
+    free: bool = True    # False: billed to the user's own account
 
     def accepts(self, mime_type: str) -> bool:
         """Return True if this provider can receive the given media type."""
@@ -143,17 +189,6 @@ PROVIDER_LIST = (
         media="multimodal",
     ),
     Provider(
-        label="GLM (Z.ai) - Free Flash models",
-        id="glm",
-        short="GLM",
-        kind="openai",
-        models=("glm-4.7-flash", "glm-4.5-flash"),
-        key_url="https://z.ai/manage-apikey/apikey-list",
-        note="Only the Flash models are free. Other GLM models are billed.",
-        env_keys=("GLM_API_KEY", "ZAI_API_KEY"),
-        base_url="https://api.z.ai/api/paas/v4",
-    ),
-    Provider(
         label="Groq (GPT-OSS / Qwen) - Free",
         id="groq",
         short="Groq",
@@ -172,99 +207,466 @@ PROVIDER_LIST = (
         env_keys=("GROQ_API_KEY",),
         base_url="https://api.groq.com/openai/v1",
     ),
+    Provider(
+        label="OpenAI (ChatGPT models) - your own key",
+        id="openai",
+        short="OpenAI",
+        kind="openai",
+        models=("gpt-4o-mini", "gpt-4o"),
+        key_url="https://platform.openai.com/api-keys",
+        note=(
+            "Billed to your own OpenAI account. The list shows the models "
+            "your key can use; any other model name can be typed under "
+            "Custom model."
+        ),
+        env_keys=("OPENAI_API_KEY",),
+        base_url="https://api.openai.com/v1",
+        media="image",
+        free=False,
+    ),
+    Provider(
+        label="Claude (Anthropic) - your own key",
+        id="anthropic",
+        short="Claude",
+        kind="anthropic",
+        models=("claude-sonnet-5-5", "claude-haiku-5-5", "claude-opus-5-5",
+                "claude-fable-5-1"),
+        key_url="https://console.anthropic.com/settings/keys",
+        note=(
+            "Billed to your own Anthropic account. The list shows the "
+            "models your key can use."
+        ),
+        env_keys=("ANTHROPIC_API_KEY",),
+        media="image+pdf",
+        free=False,
+    ),
 )
 PROVIDERS = {p.label: p for p in PROVIDER_LIST}
-OPENROUTER_FALLBACK = ("openai/gpt-oss-20b:free", "z-ai/glm-5.2:free")
+PROVIDERS_BY_ID = {p.id: p for p in PROVIDER_LIST}
+OPENROUTER_FALLBACK = ("openai/gpt-oss-20b:free",)
 
 # ---------------------------------------------------------------------------
-# Prompts
+# Tracks and prompts
 # ---------------------------------------------------------------------------
-WELCOME = {
-    MODE_CHAT: (
-        "Hi there! I'm **Nashmi**. Ask me anything, in Arabic or English. "
-        "Switch the Track in the sidebar when you want the cybersecurity "
-        "labs or the SOC file analyzer."
+@dataclass(frozen=True)
+class Track:
+    """One specialised area of cybersecurity the user can work in."""
+
+    name: str
+    blurb: str
+    placeholder: str
+    focus: str = ""    # what the system prompt tells the model to focus on
+    context: str = ""  # short topic list used to wrap each question
+    actions: tuple[tuple[str, str], ...] = ()  # (button label, prompt)
+
+
+MODE_CHAT = "Chat"
+MODE_SOC = "SOC Analyzer"
+MODE_TOOLS = "Toolbox"
+MODE_EXAM = "Practice Exam"
+
+TRACKS = (
+    Track(
+        name="Security Intelligence",
+        blurb="Threat intel, OSINT, log analysis with Pandas and anomaly "
+              "detection.",
+        placeholder="Ask about threat intel, OSINT, Sigma/YARA, log analysis",
+        focus=(
+            "writing and explaining code for threat analysis, in whatever "
+            "language fits the task (Threat Intel APIs, OSINT, log "
+            "analysis, machine learning anomaly detection, YARA/Sigma "
+            "rules)."
+        ),
+        context=(
+            "Security Intelligence Labs: threat intel, OSINT, Pandas log "
+            "analysis, anomaly detection, Sigma/YARA"
+        ),
+        actions=(
+            (
+                "Pandas Security Data Lab",
+                "Explain and write Python code that uses Pandas to read a "
+                "security dataset and detect anomalous behavior (Anomaly "
+                "Detection) as part of a Security Intelligence lab.",
+            ),
+            (
+                "Threat Intel (OSINT) Script",
+                "Write Python code that pulls threat intelligence for "
+                "suspicious IP addresses and domains and classifies them in "
+                "a table.",
+            ),
+            (
+                "AI Attack Detection Model",
+                "Write simple Python code using scikit-learn to build a "
+                "classifier that distinguishes normal traffic from attack "
+                "traffic for a Security Intelligence lab, with an "
+                "explanation of every step.",
+            ),
+        ),
     ),
-    MODE_SECURITY: (
-        "Hi there! You're in **Security Intelligence Labs**. Ask me about "
-        "log analysis with Pandas, OSINT and threat intel scripts, or "
-        "anomaly detection, or tap a quick action above."
+    Track(
+        name="CPSS",
+        blurb="Cyber-physical systems security: SCADA, ICS, IoT and "
+              "intrusion detection projects.",
+        placeholder="Ask about SCADA, ICS, Modbus, MQTT, IoT security",
+        focus=(
+            "industrial and IoT security (SCADA, ICS, PLC, Modbus, MQTT, "
+            "sensor spoofing, intrusion detection in cyber-physical "
+            "systems). Suggest practical project ideas with simulation "
+            "code in a language that suits them."
+        ),
+        context=(
+            "Cyber-Physical Systems (CPSS) Lab: SCADA, Modbus, MQTT, PLC, "
+            "IoT security"
+        ),
+        actions=(
+            (
+                "CPSS Project Ideas",
+                "Suggest 3 strong, practical project ideas for a "
+                "Cyber-Physical Security Systems (CPSS) course that can be "
+                "implemented and simulated with Python, and explain each "
+                "project idea.",
+            ),
+            (
+                "Modbus / IoT Attack Simulation",
+                "Write Python code that simulates an industrial system or "
+                "IoT sensors (such as MQTT or Modbus) along with a script "
+                "that detects sensor spoofing.",
+            ),
+            (
+                "CPS Intrusion Detection (IDS)",
+                "How do I build a simple Python monitoring system that "
+                "watches physical sensor readings (temperature/pressure/"
+                "power) and detects Replay Attacks or False Data "
+                "Injection?",
+            ),
+        ),
     ),
-    MODE_CPSS: (
-        "Hi there! You're in **CPSS Projects (Cyber-Physical Systems)**. "
-        "I can help you pick a project idea, simulate ICS and IoT attacks "
-        "like Modbus or sensor spoofing, or design an intrusion detection "
-        "system."
+    Track(
+        name=MODE_CHAT,
+        blurb="Ask anything, in Arabic or English. Cybersecurity and "
+              "programming are my strong side.",
+        placeholder="Message Nashmi",
     ),
-    MODE_CODE: (
-        "Hi there! You're in **General Code Lab and SQL**. I can walk you "
-        "through vulnerable versus secure code line by line, from SQL "
-        "injection to port scanning and brute-force detection."
+    Track(
+        name="Secure Coding & SQL",
+        blurb="Vulnerable versus secure code, explained line by line.",
+        placeholder="Ask about SQL injection, secure code, code review",
+        focus=(
+            "complete code explained line by line, comparing vulnerable "
+            "code with secure code (SQL injection, input validation, "
+            "authentication, common web vulnerabilities)."
+        ),
+        context="Secure Coding & SQL Lab: vulnerable versus secure code",
+        actions=(
+            (
+                "SQL Injection Defense Code",
+                "Explain how a SQL Injection vulnerability happens in code, "
+                "and write Python and SQL code comparing a vulnerable "
+                "query with a secure one.",
+            ),
+            (
+                "Network Port Scanner Script",
+                "Write an educational Python script that scans open ports "
+                "on my local machine to verify service security, with an "
+                "explanation of every line.",
+            ),
+            (
+                "Brute Force Detection Script",
+                "Write a Python script that reads log files and detects "
+                "repeated failed login attempts.",
+            ),
+        ),
+    ),
+    Track(
+        name="Penetration Testing",
+        blurb="Authorized testing methodology, labs, CTFs and reporting.",
+        placeholder="Ask about recon, web testing, labs, CTFs, reporting",
+        focus=(
+            "authorized penetration testing methodology: reconnaissance, "
+            "enumeration, web and network testing in legal labs and CTFs, "
+            "and professional reporting. Always stress scope, permission "
+            "and remediation."
+        ),
+        context=(
+            "Penetration Testing Lab: recon, enumeration, authorized "
+            "testing, CTFs, reporting"
+        ),
+        actions=(
+            (
+                "Recon Methodology",
+                "Walk me through a structured reconnaissance and "
+                "enumeration methodology for an authorized penetration "
+                "test of a small web application, with the tools used at "
+                "each stage.",
+            ),
+            (
+                "Practice Lab Setup",
+                "How do I build a safe, isolated home lab with DVWA or "
+                "Juice Shop to practice web exploitation legally? Give the "
+                "exact setup steps.",
+            ),
+            (
+                "Pentest Report Template",
+                "Give me a professional penetration test report structure "
+                "with one example finding written in full (description, "
+                "impact, evidence, CVSS, remediation).",
+            ),
+        ),
+    ),
+    Track(
+        name="Malware Analysis",
+        blurb="Static and dynamic analysis, reverse engineering and YARA, "
+              "from a defender's view.",
+        placeholder="Ask about static analysis, sandboxes, YARA, reversing",
+        focus=(
+            "defensive malware analysis: static and dynamic analysis, "
+            "sandboxing, unpacking, reverse engineering basics, YARA rules "
+            "and writing detections. Never provide working malware."
+        ),
+        context=(
+            "Malware Analysis Lab: static and dynamic analysis, sandboxes, "
+            "reverse engineering, YARA"
+        ),
+        actions=(
+            (
+                "Static Analysis Workflow",
+                "Explain a step-by-step static analysis workflow for a "
+                "suspicious Windows executable (hashes, strings, PE "
+                "headers, imports) and the tools for each step.",
+            ),
+            (
+                "Safe Sandbox Setup",
+                "How do I set up an isolated malware analysis lab with a "
+                "VM, network isolation and snapshots, and which tools "
+                "should I install?",
+            ),
+            (
+                "Write a YARA Rule",
+                "Explain how YARA rules work and write an example rule "
+                "that detects a suspicious packed executable, line by "
+                "line.",
+            ),
+        ),
+    ),
+    Track(
+        name="Forensics & IR",
+        blurb="Digital forensics and incident response: artifacts, "
+              "timelines and playbooks.",
+        placeholder="Ask about forensics, artifacts, timelines, IR playbooks",
+        focus=(
+            "digital forensics and incident response (DFIR): disk, memory "
+            "and log forensics, Windows artifacts, timelines, evidence "
+            "handling and NIST-style incident response playbooks."
+        ),
+        context=(
+            "Digital Forensics & Incident Response Lab: artifacts, "
+            "timelines, memory and disk forensics, playbooks"
+        ),
+        actions=(
+            (
+                "Ransomware IR Playbook",
+                "Write a concise incident response playbook for a "
+                "ransomware infection, following the NIST phases.",
+            ),
+            (
+                "Windows Forensic Artifacts",
+                "Which Windows artifacts (event logs, prefetch, registry, "
+                "MFT) matter most in an investigation, and how do I read "
+                "them?",
+            ),
+            (
+                "Build an Event Timeline",
+                "Show me how to use Python and Pandas to merge logs from "
+                "several sources into a single investigation timeline.",
+            ),
+        ),
+    ),
+    Track(
+        name="Network Security",
+        blurb="Traffic analysis, IDS/IPS, firewalls and segmentation.",
+        placeholder="Ask about Wireshark, Suricata, firewalls, protocols",
+        focus=(
+            "network security: packet and traffic analysis (Wireshark, "
+            "Zeek), IDS/IPS rules (Suricata, Snort), firewalls, VPNs, "
+            "segmentation and protocol weaknesses."
+        ),
+        context=(
+            "Network Security Lab: traffic analysis, IDS/IPS, firewalls, "
+            "segmentation"
+        ),
+        actions=(
+            (
+                "Wireshark Triage",
+                "Teach me a practical Wireshark workflow to spot port "
+                "scans, beaconing and data exfiltration in a capture.",
+            ),
+            (
+                "Suricata Rule",
+                "Explain Suricata rule syntax and write a rule that "
+                "detects repeated SSH login attempts.",
+            ),
+            (
+                "Segmentation Design",
+                "Design a network segmentation plan for a small company "
+                "with offices, servers and guest Wi-Fi, and explain the "
+                "firewall rules.",
+            ),
+        ),
+    ),
+    Track(
+        name="Cloud Security",
+        blurb="IAM, misconfigurations, containers and Kubernetes hardening.",
+        placeholder="Ask about AWS, Azure, IAM, containers, Kubernetes",
+        focus=(
+            "cloud security on AWS, Azure and GCP: IAM and least "
+            "privilege, storage and network misconfigurations, logging, "
+            "container and Kubernetes hardening."
+        ),
+        context=(
+            "Cloud Security Lab: IAM, misconfigurations, containers, "
+            "Kubernetes"
+        ),
+        actions=(
+            (
+                "IAM Least Privilege",
+                "Explain least privilege in AWS IAM with a risky policy "
+                "next to a hardened one.",
+            ),
+            (
+                "Storage Misconfigurations",
+                "What are the most common cloud storage misconfigurations "
+                "that cause data leaks, and how do I audit and fix them?",
+            ),
+            (
+                "Container Hardening",
+                "Give a Docker and Kubernetes security hardening "
+                "checklist with the reason for each item.",
+            ),
+        ),
+    ),
+    Track(
+        name=MODE_SOC,
+        blurb="Upload logs, screenshots or captures and get a SOC report "
+              "you can export as PDF.",
+        placeholder="",
+        focus=(
+            "SOC analysis: turning logs, screenshots and media into a "
+            "professional incident report with IoCs, MITRE ATT&CK mapping "
+            "and remediation."
+        ),
+        context="SOC Analyzer",
+    ),
+    Track(
+        name=MODE_TOOLS,
+        blurb="Look up CVEs in the official NVD, hash and decode data, and "
+              "pull indicators out of any text. Everything can be exported.",
+        placeholder="",
+    ),
+    Track(
+        name=MODE_EXAM,
+        blurb="Build a full exam from a subject or your own slides and PDFs: "
+              "multiple choice, drag and drop, image labelling, short "
+              "answers and more. Take it, get graded, export it.",
+        placeholder="",
+    ),
+)
+TRACKS_BY_NAME = {t.name: t for t in TRACKS}
+MODES = tuple(t.name for t in TRACKS)
+
+COMMON_REFS = (
+    ("MITRE ATT&CK", "https://attack.mitre.org/"),
+    ("NVD (National Vulnerability Database)", "https://nvd.nist.gov/"),
+    ("CVE Program", "https://www.cve.org/"),
+    ("CISA Known Exploited Vulnerabilities",
+     "https://www.cisa.gov/known-exploited-vulnerabilities-catalog"),
+)
+TRACK_REFS = {
+    "Security Intelligence": (
+        ("MISP Project", "https://www.misp-project.org/"),
+        ("AlienVault OTX", "https://otx.alienvault.com/"),
+        ("abuse.ch", "https://abuse.ch/"),
+        ("Sigma rules", "https://github.com/SigmaHQ/sigma"),
+        ("YARA documentation", "https://yara.readthedocs.io/"),
+    ),
+    "CPSS": (
+        ("NIST SP 800-82 Rev. 3 (OT security)",
+         "https://csrc.nist.gov/pubs/sp/800/82/r3/final"),
+        ("MITRE ATT&CK for ICS", "https://attack.mitre.org/matrices/ics/"),
+        ("CISA Industrial Control Systems",
+         "https://www.cisa.gov/topics/industrial-control-systems"),
+        ("Modbus specifications", "https://modbus.org/specs.php"),
+        ("MQTT specification", "https://mqtt.org/mqtt-specification/"),
+    ),
+    "Secure Coding & SQL": (
+        ("OWASP Top 10", "https://owasp.org/www-project-top-ten/"),
+        ("OWASP Cheat Sheet Series", "https://cheatsheetseries.owasp.org/"),
+        ("OWASP ASVS",
+         "https://owasp.org/www-project-application-security-verification-"
+         "standard/"),
+        ("CWE (Common Weakness Enumeration)", "https://cwe.mitre.org/"),
+    ),
+    "Penetration Testing": (
+        ("OWASP Web Security Testing Guide",
+         "https://owasp.org/www-project-web-security-testing-guide/"),
+        ("NIST SP 800-115",
+         "https://csrc.nist.gov/pubs/sp/800/115/final"),
+        ("PortSwigger Web Security Academy",
+         "https://portswigger.net/web-security"),
+        ("Exploit-DB", "https://www.exploit-db.com/"),
+    ),
+    "Malware Analysis": (
+        ("Malpedia", "https://malpedia.caad.fkie.fraunhofer.de/"),
+        ("MalwareBazaar", "https://bazaar.abuse.ch/"),
+        ("VirusTotal", "https://www.virustotal.com/"),
+        ("Microsoft PE format",
+         "https://learn.microsoft.com/en-us/windows/win32/debug/pe-format"),
+        ("FLARE-VM", "https://github.com/mandiant/flare-vm"),
+    ),
+    "Forensics & IR": (
+        ("NIST SP 800-61 Rev. 3 (incident response)",
+         "https://csrc.nist.gov/pubs/sp/800/61/r3/final"),
+        ("NIST SP 800-86 (forensics in IR)",
+         "https://csrc.nist.gov/pubs/sp/800/86/final"),
+        ("The DFIR Report", "https://thedfirreport.com/"),
+        ("Volatility Foundation", "https://volatilityfoundation.org/"),
+    ),
+    "Network Security": (
+        ("Wireshark documentation", "https://www.wireshark.org/docs/"),
+        ("Suricata documentation", "https://docs.suricata.io/"),
+        ("Zeek documentation", "https://docs.zeek.org/"),
+        ("NIST SP 800-41 (firewalls)",
+         "https://csrc.nist.gov/pubs/sp/800/41/r1/final"),
+        ("RFC Editor", "https://www.rfc-editor.org/"),
+    ),
+    "Cloud Security": (
+        ("CIS Benchmarks", "https://www.cisecurity.org/cis-benchmarks"),
+        ("AWS Security Pillar",
+         "https://docs.aws.amazon.com/wellarchitected/latest/"
+         "security-pillar/welcome.html"),
+        ("Microsoft Azure security",
+         "https://learn.microsoft.com/en-us/azure/security/"),
+        ("Cloud Controls Matrix (CSA)",
+         "https://cloudsecurityalliance.org/research/cloud-controls-matrix"),
+        ("Kubernetes security",
+         "https://kubernetes.io/docs/concepts/security/"),
+        ("NIST SP 800-190 (containers)",
+         "https://csrc.nist.gov/pubs/sp/800/190/final"),
+    ),
+    MODE_SOC: (
+        ("NIST SP 800-61 Rev. 3 (incident response)",
+         "https://csrc.nist.gov/pubs/sp/800/61/r3/final"),
+        ("Sigma rules", "https://github.com/SigmaHQ/sigma"),
+        ("VirusTotal", "https://www.virustotal.com/"),
     ),
 }
 
-QUICK_ACTIONS = {
-    MODE_CHAT: (),
-    MODE_SECURITY: (
-        (
-            "Pandas Security Data Lab",
-            "Explain and write Python code that uses Pandas to read a "
-            "security dataset and detect anomalous behavior (Anomaly "
-            "Detection) as part of a Security Intelligence lab.",
-        ),
-        (
-            "Threat Intel (OSINT) Script",
-            "Write Python code that pulls threat intelligence for "
-            "suspicious IP addresses and domains and classifies them in a "
-            "table.",
-        ),
-        (
-            "AI Attack Detection Model",
-            "Write simple Python code using scikit-learn to build a "
-            "classifier that distinguishes normal traffic from attack "
-            "traffic for a Security Intelligence lab, with an explanation "
-            "of every step.",
-        ),
-    ),
-    MODE_CPSS: (
-        (
-            "CPSS Project Ideas",
-            "Suggest 3 strong, practical project ideas for a Cyber-Physical "
-            "Security Systems (CPSS) course that can be implemented and "
-            "simulated with Python, and explain each project idea.",
-        ),
-        (
-            "Modbus / IoT Attack Simulation",
-            "Write Python code that simulates an industrial system or IoT "
-            "sensors (such as MQTT or Modbus) along with a script that "
-            "detects sensor spoofing.",
-        ),
-        (
-            "CPS Intrusion Detection (IDS)",
-            "How do I build a simple Python monitoring system that watches "
-            "physical sensor readings (temperature/pressure/power) and "
-            "detects Replay Attacks or False Data Injection?",
-        ),
-    ),
-    MODE_CODE: (
-        (
-            "SQL Injection Defense Code",
-            "Explain how a SQL Injection vulnerability happens in code, and "
-            "write Python and SQL code comparing a vulnerable query with a "
-            "secure one.",
-        ),
-        (
-            "Network Port Scanner Script",
-            "Write an educational Python script that scans open ports on my "
-            "local machine to verify service security, with an explanation "
-            "of every line.",
-        ),
-        (
-            "Brute Force Detection Script",
-            "Write a Python script that reads log files and detects "
-            "repeated failed login attempts.",
-        ),
-    ),
+# Track names used by older versions, so saved chats keep working.
+LEGACY_TRACK_NAMES = {
+    "General Chat": MODE_CHAT,
+    "Security Intelligence Labs": "Security Intelligence",
+    "CPSS Projects (Cyber-Physical Systems)": "CPSS",
+    "General Code Lab and SQL": "Secure Coding & SQL",
+    "SOC Log Analyzer (File Upload)": MODE_SOC,
 }
 
 SYSTEM_PROMPT_TEMPLATE = """\
@@ -272,6 +674,7 @@ Your name is "Nashmi". You are a Jordanian cybersecurity expert and a \
 specialized academic and technical assistant.
 You speak in a professional, direct technical style with a friendly tone.
 The track currently selected by the student is: {mode}
+Focus of this track: {focus}
 
 Language guidelines:
 - Reply in the language used by the user.
@@ -286,16 +689,34 @@ or full projects unless the user clearly asks for code or a full solution.
 - If the message is a greeting, very short, or unclear, reply briefly and \
 ask what they need.
 
-Rules by track:
-1. Security Intelligence: focus on writing and explaining Python code for \
-threat analysis (Threat Intel APIs, OSINT, Pandas log analysis, machine \
-learning anomaly detection, YARA/Sigma rules).
-2. CPSS (Cyber-Physical Security Systems): focus on industrial and IoT \
-security (SCADA, ICS, PLC, Modbus, MQTT, sensor spoofing, intrusion \
-detection in CPS) and suggest practical project ideas with Python \
-simulation code.
-3. General Code Lab and SQL: provide complete code explained line by line, \
-comparing vulnerable code with secure code."""
+Code and languages:
+- Write code in the language the user asks for, or the one that best fits \
+the task (Python, Bash, PowerShell, SQL, C, JavaScript, YARA, Sigma, ...). \
+Never default to Python when the user names another language or another \
+one is the better tool.
+- Put every piece of code in a fenced block with its language tag, so it \
+can be copied or saved as a file.
+- For attack chains, network layouts or flows you may draw a diagram with a \
+```mermaid block.
+
+Expert standards:
+- Behave like a senior practitioner. Accuracy comes first: separate facts \
+from assumptions, and say plainly when you are unsure or when something \
+depends on versions or dates.
+- Prefer primary sources: MITRE ATT&CK (technique IDs such as T1059), NIST \
+(SP 800-61, 800-53, CSF), OWASP (Top 10, ASVS, Cheat Sheets), CIS \
+Benchmarks, CWE/CVE/NVD, CISA advisories, RFCs and vendor documentation.
+- End substantial technical answers with a short "References" list of real \
+sources (title, publisher and identifier). Add a URL only when it is a \
+well-known stable address. Never invent CVE numbers, URLs, paper titles, \
+tool options or quotes; if you cannot name a real source, say so and tell \
+the user how to verify.
+
+Safety:
+- Assume educational, defensive or authorized use (labs, CTFs, your own \
+systems). Stress scope and permission where it matters.
+- Do not write ready-to-deploy malware or help attack systems the user does \
+not own or have permission to test."""
 
 CHAT_SYSTEM_PROMPT = """\
 Your name is "Nashmi". You are a friendly, smart assistant who can talk \
@@ -306,31 +727,21 @@ with a friendly Jordanian touch, and keep technical terms, commands and \
 code in English.
 - Match the length of the answer to the question. For greetings or short \
 messages, reply briefly. Give code or long explanations only when asked.
+- Write code in the language the user asks for or the one that fits the \
+task, not always Python. Use fenced code blocks with a language tag.
 - Be honest when you do not know something."""
 
-EXPERT_TEMPLATES = {
-    MODE_SECURITY: (
-        "Context: Security Intelligence Labs (threat intel, OSINT, Pandas "
-        "log analysis, anomaly detection, Sigma/YARA). "
-        "The student wrote: '{user_text}'. {style}"
-    ),
-    MODE_CPSS: (
-        "Context: Cyber-Physical Systems (CPSS) Lab (SCADA, Modbus, MQTT, "
-        "PLC, IoT security). The student wrote: '{user_text}'. {style}"
-    ),
-    MODE_CODE: (
-        "Context: Secure Coding & SQL Lab (vulnerable vs secure code). "
-        "The student wrote: '{user_text}'. {style}"
-    ),
-}
-EXPERT_FALLBACK = (
-    "Context: {mode}. The student wrote: '{user_text}'. {style}"
+EXPERT_TEMPLATE = (
+    "Context: {context}. The student wrote: '{user_text}'. {style}"
 )
 RESPONSE_STYLE = (
     "Answer exactly what was asked, at a length that matches the message. "
     "For greetings, short, unclear or off-topic messages, reply in one or "
     "two short sentences and ask what they need. Only give code, long "
-    "explanations or full solutions when the student clearly asks for them."
+    "explanations or full solutions when the student clearly asks for them. "
+    "Use the programming language that fits the request, not always "
+    "Python. For substantial technical answers end with a short References "
+    "list of real primary sources."
 )
 
 SOC_PROMPT_TEMPLATE = """\
@@ -349,19 +760,22 @@ def build_system_prompt(mode: str) -> str:
     """Return the system prompt for the selected track."""
     if mode == MODE_CHAT:
         return CHAT_SYSTEM_PROMPT
-    return SYSTEM_PROMPT_TEMPLATE.format(mode=mode)
+    track = TRACKS_BY_NAME.get(mode)
+    return SYSTEM_PROMPT_TEMPLATE.format(
+        mode=mode, focus=track.focus if track else "cybersecurity."
+    )
 
 
 def wrap_prompt_as_security_expert(user_text: str, mode: str) -> str:
     """Turn a plain question into an expert prompt for the chosen track."""
     if mode == MODE_CHAT:
         return user_text  # normal chat: send the message as written
-    template = EXPERT_TEMPLATES.get(mode)
-    if template is None:
-        return EXPERT_FALLBACK.format(
-            mode=mode, user_text=user_text, style=RESPONSE_STYLE
-        )
-    return template.format(user_text=user_text, style=RESPONSE_STYLE)
+    track = TRACKS_BY_NAME.get(mode)
+    return EXPERT_TEMPLATE.format(
+        context=track.context if track and track.context else mode,
+        user_text=user_text,
+        style=RESPONSE_STYLE,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -372,6 +786,8 @@ def get_secret(*names: str) -> str:
 
     The value is only used server-side; it is never rendered in the page.
     """
+    if is_public():
+        return ""
     for name in names:
         value = os.getenv(name, "").strip()
         if value:
@@ -414,9 +830,20 @@ def is_env_file(name: str) -> bool:
     return lowered.startswith(".env") or lowered.endswith(".env")
 
 
+MAX_REDACT_LINE = 2000
+
+
 def redact_secrets(text: str) -> str:
-    """Mask values of KEY/TOKEN/SECRET/PASSWORD lines in env-style files."""
-    return SECRET_LINE_RE.sub(r"\1[REDACTED]", text)
+    """Mask values of KEY/TOKEN/SECRET/PASSWORD lines in env-style files.
+
+    The pattern is only run on short lines: on one enormous line it could
+    backtrack for minutes and hang the server.
+    """
+    return "\n".join(
+        SECRET_LINE_RE.sub(r"\1[REDACTED]", line)
+        if len(line) <= MAX_REDACT_LINE else "[line too long, removed]"
+        for line in text.split("\n")
+    )
 
 
 def prepare_attachments(uploaded_files, provider: Provider) -> PreparedFiles:
@@ -509,6 +936,14 @@ def describe_http_error(name: str, status: int | None, body: str) -> str:
     if detail:
         message += f" Details: {detail[:700]}"
     return message
+
+
+def show_internal_error(prefix: str, exc: Exception) -> None:
+    """Technical detail only on a private computer; visitors get a calm note."""
+    if is_public():
+        st.error(f"{prefix} Please try again.")
+    else:
+        st.error(f"{prefix} {exc}")
 
 
 def show_provider_error(exc: Exception) -> None:
@@ -673,7 +1108,7 @@ def _stream_anthropic(provider, api_key, model, system_prompt, msgs, files):
         },
         {
             "model": model,
-            "max_tokens": 4096,
+            "max_tokens": 8192,
             "system": system_prompt,
             "messages": messages,
             "temperature": TEMPERATURE,
@@ -706,11 +1141,8 @@ def _stream_openai_compatible(provider, api_key, model, system_prompt, msgs,
             })
         messages[-1]["content"] = content
 
-    # GLM Flash models "think" first, which looks like an empty reply for a
-    # long time. Turn the thinking phase off so the answer starts at once.
-    payload_extra = (
-        {"thinking": {"type": "disabled"}} if provider.id == "glm" else {}
-    )
+    # OpenAI's newer models only accept their default temperature.
+    sampling = {} if provider.id == "openai" else {"temperature": TEMPERATURE}
     resp = _open_stream(
         provider,
         f"{provider.base_url}/chat/completions",
@@ -721,9 +1153,8 @@ def _stream_openai_compatible(provider, api_key, model, system_prompt, msgs,
         {
             "model": model,
             "messages": messages,
-            "temperature": TEMPERATURE,
             "stream": True,
-            **payload_extra,
+            **sampling,
         },
     )
     thinking = ""
@@ -790,7 +1221,7 @@ def openrouter_free_models() -> list[str]:
 
 @st.cache_data(ttl=600, show_spinner=False)
 def live_models(provider_id: str, api_key: str) -> list[str]:
-    """Ask Gemini or Groq which chat models this key can really use."""
+    """Ask the provider which chat models this key can really use."""
     if not api_key:
         return []
     try:
@@ -825,6 +1256,34 @@ def live_models(provider_id: str, api_key: str) -> list[str]:
                 if m.get("active", True)
                 and not any(x in m["id"] for x in skip)
             )
+        if provider_id == "openai":
+            resp = requests.get(
+                "https://api.openai.com/v1/models",
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            keep = ("gpt-", "chatgpt-", "o1", "o3", "o4")
+            skip = ("audio", "realtime", "transcribe", "tts", "image",
+                    "embedding", "moderation", "search", "instruct",
+                    "whisper", "dall", "codex", "computer", "preview-")
+            return sorted(
+                (m["id"] for m in resp.json().get("data", [])
+                 if m["id"].startswith(keep)
+                 and not any(x in m["id"] for x in skip)),
+                reverse=True,
+            )
+        if provider_id == "anthropic":
+            resp = requests.get(
+                "https://api.anthropic.com/v1/models",
+                headers={"x-api-key": api_key,
+                         "anthropic-version": "2023-06-01"},
+                params={"limit": 100},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            return [m["id"] for m in resp.json().get("data", [])
+                    if str(m.get("id", "")).startswith("claude")]
     except (requests.exceptions.RequestException, KeyError, ValueError) as exc:
         LOGGER.warning("Could not load %s models: %s", provider_id, exc)
     return []
@@ -1048,6 +1507,8 @@ def _usage_day(provider_id: str) -> str:
 
 
 def _load_usage() -> dict:
+    if is_public():
+        return st.session_state.setdefault("usage_counter", {})
     try:
         data = json.loads(USAGE_FILE.read_text(encoding="utf-8"))
         if isinstance(data, dict):
@@ -1058,6 +1519,9 @@ def _load_usage() -> dict:
 
 
 def _save_usage(data: dict) -> None:
+    if is_public():
+        st.session_state["usage_counter"] = data
+        return
     try:
         USAGE_FILE.write_text(json.dumps(data), encoding="utf-8")
     except OSError as exc:
@@ -1073,6 +1537,15 @@ def record_usage(provider: Provider, model: str) -> None:
     used = entry.get("used", 0) if entry.get("day") == day else 0
     data[key] = {"day": day, "used": used + 1}
     _save_usage(data)
+    user_id = account_id()
+    if user_id:
+        try:
+            get_db().add_usage(
+                user_id, datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                provider.id, model,
+            )
+        except Exception:  # noqa: BLE001 - counting must never break a reply
+            LOGGER.exception("Could not record the usage")
 
 
 def note_quota_error(provider: Provider, model: str, text: str) -> None:
@@ -1109,7 +1582,7 @@ def _fmt_num(value) -> str:
     try:
         return f"{int(float(value)):,}"
     except (TypeError, ValueError):
-        return str(value)
+        return html.escape(str(value))
 
 
 def limit_widget_html(settings) -> str:
@@ -1180,12 +1653,17 @@ def extract_indicators(text: str) -> Indicators:
 # ---------------------------------------------------------------------------
 # Chat history (stored in session and, optionally, on disk)
 # ---------------------------------------------------------------------------
-def new_chat_record(mode: str) -> dict:
-    """Create an empty chat that starts with the track's welcome message."""
-    return {
-        "title": NEW_CHAT_TITLE,
-        "messages": [{"role": "assistant", "content": WELCOME[mode]}],
-    }
+def new_chat_record(project: str = "") -> dict:
+    """Create an empty chat; the track's start screen shows until it is used."""
+    return {"id": uuid.uuid4().hex, "title": NEW_CHAT_TITLE, "messages": [],
+            "project": project}
+
+
+def _is_old_welcome(msg: dict) -> bool:
+    """Old versions stored a greeting as the first message of every chat."""
+    return msg.get("role") == "assistant" and str(
+        msg.get("content", "")
+    ).startswith("Hi there!")
 
 
 def _sanitize_history(data) -> dict[str, list[dict]]:
@@ -1206,19 +1684,24 @@ def _sanitize_history(data) -> dict[str, list[dict]]:
                 and m.get("role") in ("user", "assistant")
                 and isinstance(m.get("content"), str)
             ]
+            if msgs and _is_old_welcome(msgs[0]):
+                msgs = msgs[1:]
             if msgs:
                 valid.append({
+                    "id": str(chat.get("id") or uuid.uuid4().hex)[:36],
                     "title": str(chat.get("title") or NEW_CHAT_TITLE),
                     "messages": msgs,
+                    "project": str(chat.get("project") or ""),
                 })
         if valid:
-            clean[mode] = valid
+            name = LEGACY_TRACK_NAMES.get(mode, mode)
+            clean.setdefault(name, []).extend(valid)
     return clean
 
 
 def load_history(path: Path = HISTORY_FILE) -> dict[str, list[dict]]:
     """Load saved chats, backing up a corrupt file instead of losing it."""
-    if not PERSIST_HISTORY or not path.exists():
+    if not persistence_enabled() or not path.exists():
         return {}
     try:
         return _sanitize_history(json.loads(path.read_text("utf-8")))
@@ -1231,10 +1714,8 @@ def load_history(path: Path = HISTORY_FILE) -> dict[str, list[dict]]:
         return {}
 
 
-def save_history(history: dict, path: Path = HISTORY_FILE) -> bool:
-    """Write chats atomically so a crash never leaves a half-written file."""
-    if not PERSIST_HISTORY:
-        return True
+def _atomic_write_json(data, path: Path) -> bool:
+    """Write JSON atomically so a crash never leaves a half-written file."""
     tmp_name = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -1243,28 +1724,411 @@ def save_history(history: dict, path: Path = HISTORY_FILE) -> bool:
             delete=False,
         ) as tmp:
             tmp_name = tmp.name
-            json.dump(history, tmp, ensure_ascii=False, indent=2)
+            json.dump(data, tmp, ensure_ascii=False, indent=2)
         os.replace(tmp_name, path)
         try:
             os.chmod(path, 0o600)
         except OSError:
-            LOGGER.debug("Could not restrict history file permissions")
+            LOGGER.debug("Could not restrict file permissions")
         return True
     except OSError as exc:
-        LOGGER.warning("Could not save chat history: %s", exc)
+        LOGGER.warning("Could not save %s: %s", path.name, exc)
         if tmp_name and os.path.exists(tmp_name):
             os.unlink(tmp_name)
         return False
 
 
+def save_history(history: dict, path: Path = HISTORY_FILE) -> bool:
+    """Write chats to disk (nothing is written in public demo mode)."""
+    if not persistence_enabled():
+        return True
+    return _atomic_write_json(history, path)
+
+
 def persist(history: dict) -> None:
     """Save history and tell the user (once per call) if that fails."""
-    if not save_history(history):
+    user_id = account_id()
+    if user_id:
+        sync_db_history(user_id, history)
+    elif not save_history(history):
         st.toast("Could not save the chat history to disk.")
+
+
+# ---------------------------------------------------------------------------
+# Accounts: sign-in with Google or Apple, and one database for every user
+# ---------------------------------------------------------------------------
+def server_setting(*names: str) -> str:
+    """Read server-side configuration (database URL, encryption key).
+
+    Unlike API keys these are always read, also in public demo mode.
+    """
+    for name in names:
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    try:
+        for name in names:
+            value = str(st.secrets.get(name, "")).strip()
+            if value:
+                return value
+    except Exception:  # noqa: BLE001 - no secrets.toml configured
+        LOGGER.debug("No Streamlit secrets available")
+    return ""
+
+
+@st.cache_resource(show_spinner=False)
+def _open_db(url: str, keys: tuple):
+    """Open the database once per server. Failures are raised, not cached."""
+    return nashmi_db.Database(url, keys)
+
+
+def get_db():
+    """The shared database, or None when accounts are not configured."""
+    url = server_setting("NASHMI_DATABASE_URL", "DATABASE_URL")
+    if not url or nashmi_db is None:
+        return None
+    if time.time() - st.session_state.get("_db_failed", 0) < 30:
+        return None  # do not hammer a database that just failed
+    keys = tuple(k.strip() for k in
+                 server_setting("NASHMI_SECRET_KEY").split(",") if k.strip())
+    try:
+        return _open_db(url, keys)
+    except Exception as exc:  # noqa: BLE001 - never crash the whole app
+        st.session_state["_db_failed"] = time.time()
+        LOGGER.error("Accounts are disabled: %s", type(exc).__name__)
+        return None
+
+
+def auth_providers() -> list[str]:
+    """Sign-in options set up in the Streamlit secrets ([auth.google] ...)."""
+    try:
+        auth = st.secrets.get("auth")
+    except Exception:  # noqa: BLE001 - no secrets.toml configured
+        return []
+    if not auth:
+        return []
+    named = [
+        name for name in ("google", "apple")
+        if hasattr(auth.get(name), "get")
+    ]
+    if named:
+        return named
+    return ["default"] if auth.get("client_id") else []
+
+
+def accounts_enabled() -> bool:
+    return bool(auth_providers()) and get_db() is not None
+
+
+LOGIN_LABELS = {
+    "google": "Continue with Google",
+    "apple": "Continue with Apple",
+    "default": "Sign in",
+}
+
+
+def start_login(provider: str) -> None:
+    st.login(None if provider == "default" else provider)
+
+
+def current_user() -> dict | None:
+    """The signed-in user from the sign-in provider, or None for guests.
+
+    The identity key is ``provider:sub``, never the e-mail address, and
+    accounts from different providers are never merged automatically.
+    """
+    try:
+        user = st.user
+        if not getattr(user, "is_logged_in", False):
+            return None
+        issuer = str(user.get("iss") or "")
+        if "appleid.apple.com" in issuer:
+            provider = "apple"
+        elif "accounts.google.com" in issuer:
+            provider = "google"
+        else:
+            provider = (urllib.parse.urlparse(issuer).hostname or "oidc")[:20]
+        sub = str(user.get("sub") or "")
+        if not sub:
+            return None
+        email = str(user.get("email") or "")
+        return {
+            "sub": f"{provider}:{sub}",
+            "provider": provider,
+            "email": email,
+            "name": str(user.get("name") or email.split("@")[0] or "Account"),
+            "picture": str(user.get("picture") or ""),
+        }
+    except Exception:  # noqa: BLE001 - sign-in not configured
+        return None
+
+
+ACCOUNT_SESSION_KEYS = ("saved_history", "store", "_digests", "saved_keys")
+
+
+def _forget_account_data() -> None:
+    for key in ACCOUNT_SESSION_KEYS:
+        st.session_state.pop(key, None)
+    for key in list(st.session_state.keys()):
+        if str(key).startswith(("chat_radio_", "chat_search_", "opened_")):
+            del st.session_state[key]
+    st.session_state["project"] = ""
+
+
+def account_id() -> int | None:
+    """Database id of the signed-in user (None for guests and local mode).
+
+    When the person signs out, or somebody else signs in, everything that
+    belonged to the previous identity is dropped from the session.
+    """
+    user, db = current_user(), get_db()
+    if not (user and db) or st.session_state.get("_account_deleted"):
+        if not user:
+            st.session_state.pop("_account_deleted", None)
+        if st.session_state.pop("_account_sub", None) is not None:
+            st.session_state.pop("_account_id", None)
+            _forget_account_data()
+        return None
+    if st.session_state.get("_account_sub") != user["sub"]:
+        _forget_account_data()
+        st.session_state["_account_sub"] = user["sub"]
+        try:
+            st.session_state["_account_id"] = db.upsert_user(
+                user["sub"], user["email"], user["name"]
+            )
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("Could not open the account")
+            st.session_state["_account_id"] = None
+    return st.session_state.get("_account_id")
+
+
+def _chat_digest(track: str, chat: dict) -> str:
+    raw = json.dumps(
+        [track, chat.get("title"), chat.get("project"), chat.get("messages")],
+        ensure_ascii=False, sort_keys=True,
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def load_user_history() -> dict:
+    """Chats of the signed-in user, or the local file for everybody else."""
+    user_id = account_id()
+    if not user_id:
+        return load_history()
+    try:
+        history = get_db().load_history(user_id)
+    except Exception:  # noqa: BLE001
+        LOGGER.exception("Could not load the chats")
+        st.toast("Could not load your saved chats.")
+        history = {}
+    st.session_state["_digests"] = {
+        chat["id"]: _chat_digest(track, chat)
+        for track, chats in history.items() for chat in chats
+    }
+    return history
+
+
+def sync_db_history(user_id: int, history: dict) -> None:
+    """Write only the chats that changed since the last save."""
+    db = get_db()
+    digests = st.session_state.setdefault("_digests", {})
+    seen: set[str] = set()
+    failed = 0
+    for track, chats in history.items():
+        for chat in chats:
+            if not chat["messages"]:  # empty chats live in the session only
+                continue
+            chat_id = chat.setdefault("id", uuid.uuid4().hex)
+            seen.add(chat_id)
+            digest = _chat_digest(track, chat)
+            if digests.get(chat_id) == digest:
+                continue
+            try:
+                saved = db.save_chat(user_id, track, chat)
+            except Exception:  # noqa: BLE001
+                LOGGER.exception("Could not save a chat")
+                saved = False
+            if saved:
+                digests[chat_id] = digest
+            else:
+                failed += 1
+    for chat_id in [c for c in digests if c not in seen]:
+        try:
+            db.delete_chat(user_id, chat_id)
+            digests.pop(chat_id, None)
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("Could not delete a chat")
+    if failed:
+        st.toast("Some chats could not be saved (limit reached or database "
+                 "problem).")
+
+
+def load_user_store() -> dict:
+    user_id = account_id()
+    if not user_id:
+        return load_store()
+    try:
+        return _sanitize_store(get_db().load_store(user_id))
+    except Exception:  # noqa: BLE001
+        LOGGER.exception("Could not load the settings")
+        return _sanitize_store(None)
+
+
+def saved_keys() -> dict[str, str]:
+    """API keys the signed-in user chose to save (decrypted, session only)."""
+    user_id, db = account_id(), get_db()
+    if not (user_id and db and db.cipher.enabled):
+        return {}
+    if "saved_keys" not in st.session_state:
+        try:
+            st.session_state["saved_keys"] = db.get_keys(user_id)
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("Could not load the saved keys")
+            st.session_state["saved_keys"] = {}
+    return st.session_state["saved_keys"]
+
+
+def on_save_key(provider_id: str) -> None:
+    user_id, db = account_id(), get_db()
+    key = str(st.session_state.get(f"acct_key_{provider_id}", "")).strip()
+    if not (user_id and db and key):
+        return
+    try:
+        db.set_key(user_id, provider_id, key)
+    except Exception:  # noqa: BLE001
+        LOGGER.exception("Could not save the key")
+        st.toast("Could not save the key.")
+        return
+    saved_keys()[provider_id] = key
+    st.session_state[f"acct_key_{provider_id}"] = ""
+    st.toast("Key saved, encrypted.")
+
+
+def on_remove_key(provider_id: str) -> None:
+    user_id, db = account_id(), get_db()
+    if not (user_id and db):
+        return
+    db.delete_key(user_id, provider_id)
+    saved_keys().pop(provider_id, None)
+    st.toast("Saved key removed.")
+
+
+def on_delete_account() -> None:
+    user_id, db = st.session_state.get("_account_id"), get_db()
+    if user_id and db:
+        db.delete_user(user_id)
+    st.session_state["_account_deleted"] = True
+    _forget_account_data()
+
+
+def open_account() -> None:
+    st.session_state["view"] = "account"
+
+
+def close_account() -> None:
+    st.session_state["view"] = "chat"
+
+
+def _sanitize_store(data) -> dict:
+    """Projects and preferences, keeping only well-formed entries."""
+    store = {"prefs": dict(DEFAULT_PREFS), "projects": []}
+    if not isinstance(data, dict):
+        return store
+    prefs = data.get("prefs")
+    if isinstance(prefs, dict):
+        if prefs.get("detail") in DETAIL_CHOICES:
+            store["prefs"]["detail"] = prefs["detail"]
+        if prefs.get("language") in LANGUAGE_CHOICES:
+            store["prefs"]["language"] = prefs["language"]
+    projects = data.get("projects")
+    seen: set[str] = set()
+    for item in projects if isinstance(projects, list) else []:
+        if (
+            isinstance(item, dict)
+            and isinstance(item.get("id"), str)
+            and isinstance(item.get("name"), str)
+            and item["name"].strip()
+            and item["id"] not in seen
+        ):
+            seen.add(item["id"])
+            store["projects"].append({
+                "id": item["id"],
+                "name": item["name"].strip()[:60],
+                "instructions": str(item.get("instructions", ""))[:2000],
+            })
+    return store
+
+
+def load_store(path: Path = SETTINGS_FILE) -> dict:
+    if not persistence_enabled() or not path.exists():
+        return _sanitize_store(None)
+    try:
+        return _sanitize_store(json.loads(path.read_text("utf-8")))
+    except (OSError, ValueError) as exc:
+        LOGGER.warning("Could not read %s: %s", path, exc)
+        return _sanitize_store(None)
+
+
+def get_store() -> dict:
+    if "store" not in st.session_state:
+        st.session_state["store"] = load_user_store()
+    return st.session_state["store"]
+
+
+def persist_store() -> None:
+    user_id = account_id()
+    if user_id:
+        try:
+            get_db().save_store(user_id, get_store())
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("Could not save the settings")
+            st.toast("Could not save your settings.")
+    elif persistence_enabled() and not _atomic_write_json(get_store(), SETTINGS_FILE):
+        st.toast("Could not save your settings to disk.")
+
+
+def prefs_prompt(project_id: str = "") -> str:
+    """Extra system-prompt lines from the user's preferences and project."""
+    store = get_store()
+    prefs = store["prefs"]
+    lines = []
+    if prefs["detail"] == "Concise":
+        lines.append("Keep answers short and to the point.")
+    elif prefs["detail"] == "Detailed":
+        lines.append("Give thorough, step-by-step answers with examples.")
+    if prefs["language"] == "Arabic":
+        lines.append("Always answer in Arabic; keep technical terms and "
+                     "code in English.")
+    elif prefs["language"] == "English":
+        lines.append("Always answer in English.")
+    project = next(
+        (p for p in store["projects"] if p["id"] == project_id), None
+    )
+    if project and project["instructions"].strip():
+        lines.append(
+            f"Instructions from the user for the project "
+            f"'{project['name']}' (follow them): "
+            f"{project['instructions'].strip()}"
+        )
+    return ("\n\nUser preferences:\n- " + "\n- ".join(lines)) if lines else ""
+
+
+def full_system_prompt(mode: str, project_id: str = "") -> str:
+    return build_system_prompt(mode) + prefs_prompt(project_id)
+
+
+def current_mode() -> str:
+    """The track picked in the sidebar (also valid inside callbacks)."""
+    mode = st.session_state.get("track")
+    return mode if mode in TRACKS_BY_NAME else MODES[0]
 
 
 def radio_key(mode: str) -> str:
     return f"chat_radio_{mode}"
+
+
+def search_key(mode: str) -> str:
+    return f"chat_search_{mode}"
 
 
 def active_index(mode: str, count: int) -> int:
@@ -1278,32 +2142,164 @@ def make_title(text: str, limit: int = 32) -> str:
     return text[:limit] + ("..." if len(text) > limit else "")
 
 
-def on_new_chat(mode: str) -> None:
-    history = st.session_state.saved_history
-    history[mode].insert(0, new_chat_record(mode))
+def search_chats(chats: list[dict], query: str) -> list[tuple[int, int]]:
+    """Return (chat index, matching messages) for chats that match a query.
+
+    An empty query matches every chat.
+    """
+    needle = query.strip().lower()
+    if not needle:
+        return [(i, 0) for i in range(len(chats))]
+    found = []
+    for i, chat in enumerate(chats):
+        hits = sum(needle in m["content"].lower() for m in chat["messages"])
+        if hits or needle in chat["title"].lower():
+            found.append((i, hits))
+    return found
+
+
+def message_snippets(chat: dict, query: str, limit: int = 6) -> list[str]:
+    """Short excerpts around the query inside one chat."""
+    needle = query.strip().lower()
+    snippets: list[str] = []
+    if not needle:
+        return snippets
+    for msg in chat["messages"]:
+        text = " ".join(msg["content"].split())
+        pos = text.lower().find(needle)
+        if pos < 0:
+            continue
+        start = max(pos - 30, 0)
+        end = start + 90
+        who = "You" if msg["role"] == "user" else "Nashmi"
+        snippets.append(
+            f"{who}: {'...' if start else ''}{text[start:end]}"
+            f"{'...' if end < len(text) else ''}"
+        )
+        if len(snippets) >= limit:
+            break
+    return snippets
+
+
+def on_new_chat() -> None:
+    mode = current_mode()
+    chats = ensure_history(mode)
+    project = st.session_state.get("project", "")
+    if not chats or chats[0]["messages"]:  # reuse an untouched empty chat
+        chats.insert(0, new_chat_record(project))
+    else:
+        chats[0]["project"] = project
     st.session_state[radio_key(mode)] = 0
-    persist(history)
+    st.session_state[search_key(mode)] = ""
+    persist(st.session_state.saved_history)
 
 
-def on_delete_chat(mode: str) -> None:
-    history = st.session_state.saved_history
-    chats = history[mode]
+def on_delete_chat() -> None:
+    mode = current_mode()
+    chats = ensure_history(mode)
     chats.pop(active_index(mode, len(chats)))
     if not chats:
-        chats.append(new_chat_record(mode))
+        chats.append(new_chat_record())
     st.session_state[radio_key(mode)] = 0
-    persist(history)
+    persist(st.session_state.saved_history)
 
 
 def ensure_history(mode: str) -> list[dict]:
     """Make sure the session has at least one chat for this track."""
     if "saved_history" not in st.session_state:
-        st.session_state.saved_history = load_history()
+        st.session_state.saved_history = load_user_history()
     history = st.session_state.saved_history
     if not history.get(mode):
-        history[mode] = [new_chat_record(mode)]
+        history[mode] = [new_chat_record(st.session_state.get("project", ""))]
         persist(history)
+    flag = f"opened_{mode}"
+    if not st.session_state.get(flag):
+        # Like ChatGPT or Claude: entering a track starts a fresh chat and
+        # the earlier ones stay saved in the list.
+        st.session_state[flag] = True
+        if history[mode][0]["messages"]:
+            history[mode].insert(
+                0, new_chat_record(st.session_state.get("project", ""))
+            )
+            persist(history)
+        st.session_state[radio_key(mode)] = 0
     return history[mode]
+
+
+def on_create_project() -> None:
+    name = str(st.session_state.get("new_project_name", "")).strip()
+    if not name:
+        return
+    project_id = uuid.uuid4().hex[:8]
+    get_store()["projects"].append({
+        "id": project_id,
+        "name": name[:60],
+        "instructions": str(st.session_state.get("new_project_instr", ""))[:2000],
+    })
+    st.session_state["project"] = project_id
+    st.session_state["new_project_name"] = ""
+    st.session_state["new_project_instr"] = ""
+    persist_store()
+
+
+def on_delete_project() -> None:
+    project_id = st.session_state.get("project", "")
+    store = get_store()
+    store["projects"] = [p for p in store["projects"] if p["id"] != project_id]
+    history = st.session_state.get("saved_history", {})
+    for chats in history.values():
+        for chat in chats:
+            if chat.get("project") == project_id:
+                chat["project"] = ""
+    st.session_state["project"] = ""
+    persist_store()
+    persist(history)
+
+
+def on_import_data() -> None:
+    upload = st.session_state.get("import_data")
+    if upload is None:
+        return
+    if upload.size > 20 * 1024 * 1024:
+        st.toast("That file is too large to import.")
+        return
+    try:
+        data = json.loads(upload.getvalue().decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        st.toast("That file is not a valid Nashmi export.")
+        return
+    if not isinstance(data, dict):
+        st.toast("That file is not a valid Nashmi export.")
+        return
+    if "saved_history" not in st.session_state:
+        st.session_state.saved_history = load_user_history()
+    history = st.session_state.saved_history
+    added = 0
+    for mode, chats in _sanitize_history(data.get("history", {})).items():
+        for chat in chats:
+            chat["id"] = uuid.uuid4().hex  # an import never overwrites a chat
+        history.setdefault(mode, []).extend(chats)
+        added += len(chats)
+    store = get_store()
+    known = {p["id"] for p in store["projects"]}
+    for project in _sanitize_store(data.get("store"))["projects"]:
+        if project["id"] not in known:
+            store["projects"].append(project)
+    persist(history)
+    persist_store()
+    st.toast(f"Imported {added} chats.")
+
+
+def on_wipe_all() -> None:
+    st.session_state.saved_history = {}
+    st.session_state["store"] = _sanitize_store(None)
+    for key in list(st.session_state.keys()):
+        if str(key).startswith(("chat_radio_", "chat_search_", "opened_")):
+            del st.session_state[key]
+    st.session_state["project"] = ""
+    st.session_state["confirm_wipe"] = False
+    persist({})
+    persist_store()
 
 
 # ---------------------------------------------------------------------------
@@ -1336,8 +2332,8 @@ def get_user_avatar() -> Image.Image:
 # ---------------------------------------------------------------------------
 FONT_IMPORT = (
     "@import url('https://fonts.googleapis.com/css2?"
-    "family=Inter:wght@400;500;600;800&"
-    "family=JetBrains+Mono:wght@400;600;800&display=swap');\n"
+    "family=Inter:wght@400;500;600;700&"
+    "family=JetBrains+Mono:wght@400;500;700&display=swap');\n"
 )
 
 THEME_CSS = """
@@ -1348,10 +2344,16 @@ THEME_CSS = """
     --panel-2: #0f1724;
     --accent: #E5383B;
     --accent-dim: rgba(229, 56, 59, 0.35);
+    --accent-soft: rgba(229, 56, 59, 0.12);
+    --line: rgba(164, 177, 205, 0.14);
     --grid-line: rgba(139, 20, 30, 0.20);  /* dark wine-red grid */
     --text: #A4B1CD;
+    --muted: #6f7c98;
     --white: #FFFFFF;
+    --ok: #4cc38a;
     --warn: #FFB020;
+    --mono: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+    --sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
     --safe-top: env(safe-area-inset-top, 0px);
     --safe-bottom: env(safe-area-inset-bottom, 0px);
     --safe-left: env(safe-area-inset-left, 0px);
@@ -1382,7 +2384,7 @@ header[data-testid="stHeader"] {
 [data-testid="stSidebarCollapsedControl"] button,
 [data-testid="stExpandSidebarButton"],
 [data-testid="stSidebarCollapseButton"] button {
-    color: var(--accent) !important;
+    color: var(--text) !important;
     min-width: 44px;
     min-height: 44px;
 }
@@ -1394,7 +2396,7 @@ button, [role="button"], label { touch-action: manipulation; }
 
 .stApp {
     color: var(--text);
-    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    font-family: var(--sans);
     overflow-x: hidden;
     background:
         radial-gradient(900px 420px at 50% -10%,
@@ -1411,37 +2413,108 @@ button, [role="button"], label { touch-action: manipulation; }
     background-attachment: fixed;
 }
 .block-container {
-    max-width: 1080px;
-    padding: 1rem 1rem 4rem;
-    padding-left: max(1rem, var(--safe-left));
-    padding-right: max(1rem, var(--safe-right));
+    max-width: 1000px;
+    padding: 1rem 1.25rem 3rem;
+    padding-left: max(1.25rem, var(--safe-left));
+    padding-right: max(1.25rem, var(--safe-right));
 }
 h1, h2, h3, h4 {
-    font-family: 'JetBrains Mono', monospace !important;
+    font-family: var(--sans) !important;
     color: var(--white) !important;
     overflow-wrap: anywhere;
 }
 img, video, canvas, iframe { max-width: 100%; }
 a { color: var(--accent) !important; }
-hr { border-color: var(--accent-dim); }
+hr { border-color: var(--line); }
+[data-testid="stCaptionContainer"], .stCaption { color: var(--muted); }
 
 /* ---- Sidebar ---- */
 [data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #0f1724 0%, #0b111c 100%);
-    border-right: 1px solid var(--accent-dim);
+    background: var(--panel-2);
+    border-right: 1px solid var(--line);
 }
-[data-testid="stSidebar"] h2 {
-    font-size: 0.9rem;
-    letter-spacing: 2px;
-    text-transform: uppercase;
-    color: var(--accent) !important;
+[data-testid="stSidebar"] [data-testid="stSidebarHeader"] { padding-bottom: 0; }
+[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {
+    padding-top: 0.25rem;
 }
-label, .stSelectbox label, .stTextInput label {
-    font-family: 'JetBrains Mono', monospace !important;
-    font-size: 0.75rem !important;
-    letter-spacing: 1.5px;
+.side-label {
+    font-family: var(--mono);
+    font-size: 0.66rem;
+    letter-spacing: 1.6px;
     text-transform: uppercase;
-    color: var(--text) !important;
+    color: var(--muted);
+    margin: 0.9rem 0 0.2rem;
+}
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0 0 0.6rem;
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: 1.02rem;
+    color: var(--white);
+}
+.brand img {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+}
+.brand .prompt { color: var(--accent); }
+
+/* Track list and chat list look like menu rows, not radio buttons */
+[data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] {
+    gap: 1px;
+}
+[data-testid="stSidebar"] [data-testid="stRadio"] [data-testid="stWidgetLabel"] {
+    display: none;
+}
+[data-testid="stSidebar"] [data-testid="stRadio"],
+[data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] {
+    width: 100%;
+}
+[data-testid="stSidebar"] [data-testid="stRadioOption"] {
+    display: flex;
+    box-sizing: border-box;
+    width: 100%;
+    margin: 0;
+    padding: 5px 10px;
+    border-radius: 8px;
+    border-left: 2px solid transparent;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+[data-testid="stSidebar"] [data-testid="stRadioOption"] > div > div:first-child {
+    display: none;
+}
+[data-testid="stSidebar"] [data-testid="stRadioOption"]:hover {
+    background: rgba(164, 177, 205, 0.08);
+}
+[data-testid="stSidebar"] [data-testid="stRadioOption"][data-selected="true"] {
+    background: var(--accent-soft);
+    border-left-color: var(--accent);
+}
+[data-testid="stSidebar"] [data-testid="stRadioOption"] p {
+    font-family: var(--sans);
+    font-size: 0.88rem;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+[data-testid="stSidebar"] [data-testid="stRadioOption"][data-selected="true"] p {
+    color: var(--white);
+}
+
+[data-testid="stWidgetLabel"] p, [data-testid="stWidgetLabel"] label {
+    font-family: var(--mono);
+    font-size: 0.7rem !important;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: var(--muted) !important;
 }
 
 /* ---- Inputs ---- */
@@ -1449,33 +2522,34 @@ label, .stSelectbox label, .stTextInput label {
 .stSelectbox div[data-baseweb="select"] > div {
     background-color: var(--panel) !important;
     color: var(--white) !important;
-    border: 1px solid var(--accent-dim) !important;
-    border-radius: 8px !important;
-    font-family: 'JetBrains Mono', monospace;
-    min-height: 44px;
+    border: 1px solid var(--line) !important;
+    border-radius: 10px !important;
+    min-height: 40px;
 }
 .stTextInput input:focus {
     border-color: var(--accent) !important;
-    box-shadow: 0 0 0 1px var(--accent);
+    box-shadow: none;
 }
 
 /* ---- Buttons ---- */
 .stButton, .stDownloadButton { width: 100%; }
-.stButton > button, .stDownloadButton > button {
+.stButton > button, .stDownloadButton > button,
+.stFormSubmitButton > button {
     width: 100%;
-    min-height: 44px;
+    min-height: 40px;
     height: auto;
-    padding: 0.5rem 0.9rem;
-    background: linear-gradient(180deg, var(--panel), var(--panel-2));
-    color: var(--accent);
-    border: 1px solid var(--accent-dim);
-    border-radius: 12px;
-    font-family: 'Inter', system-ui, sans-serif;
+    padding: 0.45rem 0.9rem;
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    font-family: var(--sans);
     font-weight: 500;
     font-size: 0.9rem;
     white-space: normal;
     overflow-wrap: anywhere;
-    transition: background 0.2s ease, box-shadow 0.2s ease;
+    transition: background 0.15s ease, border-color 0.15s ease,
+        color 0.15s ease;
 }
 .stButton > button:active, .stDownloadButton > button:active {
     background: var(--accent);
@@ -1484,109 +2558,130 @@ label, .stSelectbox label, .stTextInput label {
 }
 @media (hover: hover) and (pointer: fine) {
     .stButton > button:hover, .stDownloadButton > button:hover {
-        background: var(--accent);
-        color: #ffffff;
-        border-color: var(--accent);
-        box-shadow: 0 0 22px rgba(229, 56, 59, 0.55);
-        transform: translateY(-2px);
+        background: var(--accent-soft);
+        color: var(--white);
+        border-color: var(--accent-dim);
     }
 }
-
-/* ---- Track header and chips ---- */
-.track-head {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px 12px;
-    margin: 2px 0 12px;
-    padding: 10px 16px;
-    border-radius: 14px;
-    background: linear-gradient(90deg, rgba(229, 56, 59, 0.10),
-        rgba(19, 28, 43, 0.2));
-    border: 1px solid var(--accent-dim);
-    border-left: 4px solid var(--accent);
-}
-.track-head .tag {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.62rem;
-    letter-spacing: 2px;
-    color: #ffffff;
+.st-key-new_chat, [class*="st-key-quick_"] { width: 100% !important; }
+.st-key-new_chat button {
     background: var(--accent);
-    padding: 4px 10px;
-    border-radius: 4px;
-    font-weight: 800;
-}
-.track-head .name {
-    flex: 1 1 12rem;
-    min-width: 0;
-    font-size: 1.05rem;
+    border-color: var(--accent);
+    color: #ffffff;
     font-weight: 600;
-    color: var(--white);
-    overflow-wrap: anywhere;
 }
+@media (hover: hover) and (pointer: fine) {
+    .st-key-new_chat button:hover {
+        background: #cf2e31;
+        border-color: #cf2e31;
+    }
+}
+.st-key-new_chat button:disabled {
+    opacity: 0.4;
+}
+/* Suggestion rows on the start screen */
+[class*="st-key-quick_"] button {
+    justify-content: flex-start;
+    text-align: left;
+    background: var(--panel);
+    padding: 0.7rem 1rem;
+}
+[class*="st-key-quick_"] button > div { width: 100%; justify-content: flex-start; }
+[class*="st-key-quick_"] button p { text-align: left; }
+/* Small text buttons (delete chat) */
+[data-testid="stSidebar"] button[kind="tertiary"] {
+    color: var(--muted);
+    border: none;
+    min-height: 32px;
+    font-size: 0.82rem;
+    justify-content: flex-start;
+}
+[data-testid="stSidebar"] button[kind="tertiary"]:hover {
+    color: var(--accent);
+    background: transparent;
+}
+
+/* ---- Usage line (sidebar footer) ---- */
 .limit-widget {
-    margin-left: auto;
-    min-width: 150px;
-    max-width: 260px;
-    font-family: 'JetBrains Mono', monospace;
+    margin: 0.4rem 0 0;
+    font-family: var(--mono);
     font-size: 0.66rem;
-    color: var(--text);
+    color: var(--muted);
     line-height: 1.5;
 }
 .limit-widget .lw-bar {
     position: relative;
-    height: 5px;
-    margin-top: 5px;
+    height: 4px;
+    margin-top: 6px;
     border-radius: 3px;
     background: linear-gradient(90deg, #4cc38a, #f0c24b, #E5383B);
 }
-.limit-widget .lw-bar.unknown { opacity: 0.35; }
+.limit-widget .lw-bar.unknown { opacity: 0.3; }
 .limit-widget .lw-mark {
     position: absolute;
     top: -3px;
     width: 3px;
-    height: 11px;
+    height: 10px;
     border-radius: 2px;
     background: #ffffff;
     transform: translateX(-50%);
-    box-shadow: 0 0 6px rgba(255, 255, 255, 0.8);
 }
 .limit-widget .lw-extra { opacity: 0.8; margin-top: 2px; }
-.chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
-.chip {
-    max-width: 100%;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.68rem;
-    letter-spacing: 0.5px;
-    padding: 4px 10px;
-    border-radius: 999px;
-    border: 1px solid var(--accent-dim);
-    background: var(--panel-2);
-    color: var(--text);
-    overflow-wrap: anywhere;
+
+/* ---- Top line and start screen ---- */
+.topline {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 10px;
+    margin: 0 0 0.9rem;
+    padding-bottom: 0.7rem;
+    border-bottom: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--muted);
 }
-.chip b { color: var(--accent); font-weight: 600; }
-.chip.bad b { color: var(--warn); }
-.dot {
+.topline .t-track { color: var(--white); font-weight: 700; }
+.topline .t-sep { opacity: 0.5; }
+.topline .t-model { overflow-wrap: anywhere; }
+.topline .t-key { margin-left: auto; }
+.topline .t-key::before {
+    content: "";
     display: inline-block;
     width: 7px;
     height: 7px;
+    margin-right: 6px;
     border-radius: 50%;
-    background: #ffffff;
-    box-shadow: 0 0 6px #ffffff;
-    margin-right: 7px;
+    background: var(--ok);
 }
-.chip.bad .dot { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
+.topline .t-key.bad { color: var(--warn); }
+.topline .t-key.bad::before { background: var(--warn); }
+.empty-title {
+    margin: 0.9rem 0 0.15rem;
+    font-size: 1.45rem;
+    font-weight: 700;
+    color: var(--white);
+}
+.empty-blurb { margin: 0 0 1rem; color: var(--text); font-size: 0.95rem; }
 
 /* ---- Chat ---- */
 [data-testid="stChatMessage"] {
+    background: transparent;
+    border: none;
+    padding: 0.35rem 0;
+    gap: 0.75rem;
+}
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {
     background: var(--panel);
-    border: 1px solid rgba(164, 177, 205, 0.12);
-    border-left: 3px solid var(--accent);
-    border-radius: 14px;
-    padding: 10px 14px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 0.55rem 0.9rem;
 }
 [data-testid="stChatMessage"] > div { min-width: 0; }
+[data-testid^="stChatMessageAvatar"] {
+    border-radius: 8px;
+    overflow: hidden;
+}
 [data-testid="stChatMessageContent"],
 [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] {
     min-width: 0;
@@ -1621,8 +2716,9 @@ pre, [data-testid="stCode"] {
     -webkit-overflow-scrolling: touch;
 }
 [data-testid="stChatMessage"] pre {
-    border: 1px solid var(--accent-dim);
-    border-radius: 8px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 10px;
 }
 [data-testid="stChatMessage"] table {
     display: block;
@@ -1631,48 +2727,276 @@ pre, [data-testid="stCode"] {
     -webkit-overflow-scrolling: touch;
 }
 [data-testid="stChatMessage"] img { border-radius: 6px; height: auto; }
+[data-testid="stChatMessage"] iframe { display: block; border: 0; }
+[class*="st-key-actions_"] [data-testid="stHorizontalBlock"] {
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 0.25rem;
+}
+[class*="st-key-actions_"] [data-testid="stColumn"] {
+    flex: 0 0 auto;
+    width: auto;
+    min-width: 0;
+}
+[class*="st-key-actions_"] [data-testid="stColumn"]:first-child {
+    flex: 0 0 104px;
+    width: 104px;
+}
+[class*="st-key-actions_"] [data-testid="stPopover"] button {
+    min-height: 30px;
+    padding: 0.15rem 0.6rem;
+    border-color: transparent;
+    background: transparent;
+    color: var(--muted);
+    font-size: 0.8rem;
+}
+[class*="st-key-actions_"] [data-testid="stPopover"] button:hover {
+    color: var(--white);
+    background: rgba(164, 177, 205, 0.12);
+}
 
-[data-testid="stBottom"] > div { background: var(--bg) !important; }
+/* ---- Composer ---- */
+[data-testid="stBottom"] > div {
+    background: linear-gradient(to top, var(--bg) 55%, transparent) !important;
+}
 [data-testid="stChatInput"] {
-    background: var(--panel);
-    border: 1px solid var(--accent-dim);
-    border-radius: 12px;
     max-width: 100%;
+    background: var(--panel);
+    border: 1px solid rgba(164, 177, 205, 0.20);
+    border-radius: 22px;
+    box-shadow: 0 10px 34px rgba(0, 0, 0, 0.50),
+        0 2px 8px rgba(0, 0, 0, 0.35),
+        inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    transition: box-shadow 0.2s ease, border-color 0.2s ease;
+    cursor: text;
+}
+[data-testid="stChatInput"] > div {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
 }
 [data-testid="stChatInput"]:focus-within {
-    border-color: var(--accent);
-    box-shadow: 0 0 18px rgba(229, 56, 59, 0.25);
+    border-color: rgba(229, 56, 59, 0.45);
+    box-shadow: 0 10px 34px rgba(0, 0, 0, 0.50),
+        0 0 0 3px rgba(229, 56, 59, 0.10),
+        0 0 26px rgba(91, 124, 255, 0.16);
 }
 [data-testid="stChatInput"] textarea {
     color: var(--white) !important;
     caret-color: var(--accent);
+    min-height: 3rem;
+    max-height: 40vh !important;
+    line-height: 1.5;
 }
-/* Empty chat input: hide any placeholder text */
 [data-testid="stChatInput"] textarea::placeholder {
-    color: transparent !important;
-    opacity: 0 !important;
+    color: var(--muted) !important;
+    opacity: 1 !important;
 }
+[data-testid="stChatInput"] button { color: var(--text); cursor: pointer; }
+/* The "+" sits on the right, next to the microphone and the send button */
+[data-testid="stChatInput"] > div > div > div:has(> [data-testid="stChatInputFileUploadButton"]) {
+    order: 1 !important;
+}
+[data-testid="stChatInput"] > div > div > div:has([data-testid="stChatInputSubmitButton"]) {
+    order: 2 !important;
+}
+[data-testid="stChatInput"] button:hover { color: var(--accent); }
 
-/* ---- Uploader ---- */
+/* ---- Expanders, uploader, metrics ---- */
+[data-testid="stExpander"] details {
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+}
+[data-testid="stExpander"] summary p {
+    font-family: var(--sans);
+    font-size: 0.88rem;
+    color: var(--text);
+}
 [data-testid="stFileUploader"] section,
 [data-testid="stFileUploaderDropzone"] {
     background: var(--panel-2);
-    border: 1px dashed var(--accent);
+    border: 1px dashed var(--line);
     border-radius: 12px;
     flex-wrap: wrap;
     gap: 0.5rem;
 }
 [data-testid="stFileUploader"] { max-width: 100%; }
 [data-testid="stFileUploaderFile"] { min-width: 0; overflow-wrap: anywhere; }
+[data-testid="stMetric"] {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 0.6rem 0.9rem;
+}
+
+/* ---- Frames: a soft red-to-blue sheen ---- */
+:root {
+    --accent-2: #5b7cff;
+    --frame: linear-gradient(135deg, rgba(229, 56, 59, 0.62),
+        rgba(91, 124, 255, 0.42) 55%, rgba(229, 56, 59, 0.20));
+    --frame-hover: linear-gradient(135deg, rgba(229, 56, 59, 0.95),
+        rgba(91, 124, 255, 0.75) 55%, rgba(229, 56, 59, 0.40));
+    --sheen: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+[data-testid="stSidebar"] {
+    border-right: none;
+    background: linear-gradient(180deg, #101a2b 0%, #0b111c 100%);
+    box-shadow: inset -1px 0 0 rgba(229, 56, 59, 0.30),
+        8px 0 28px rgba(91, 124, 255, 0.07);
+}
+[data-testid="stSidebar"] [data-baseweb="select"] > div,
+[data-testid="stSidebar"] [data-baseweb="input"],
+[data-testid="stExpander"] details,
+[data-testid="stMetric"],
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]),
+[class*="st-key-quick_"] button {
+    border: 1px solid transparent !important;
+    background: linear-gradient(var(--panel), var(--panel)) padding-box,
+        var(--frame) border-box !important;
+    box-shadow: var(--sheen);
+    transition: box-shadow 0.2s ease;
+}
+[data-testid="stSidebar"] [data-baseweb="select"] > div:hover,
+[data-testid="stSidebar"] [data-baseweb="input"]:hover,
+[data-testid="stSidebar"] [data-baseweb="input"]:focus-within,
+[data-testid="stExpander"] details:hover,
+[class*="st-key-quick_"] button:hover {
+    background: linear-gradient(var(--panel), var(--panel)) padding-box,
+        var(--frame-hover) border-box !important;
+    box-shadow: var(--sheen), 0 0 18px rgba(91, 124, 255, 0.18),
+        0 0 14px rgba(229, 56, 59, 0.14);
+}
+[data-testid="stSidebar"] [data-baseweb="base-input"],
+[data-testid="stSidebar"] .stTextInput input {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+[data-testid="stSidebar"] [data-testid="stRadioOption"][data-selected="true"] {
+    background: linear-gradient(90deg, rgba(229, 56, 59, 0.20),
+        rgba(91, 124, 255, 0.08));
+}
+.st-key-new_chat button {
+    background: linear-gradient(135deg, #E5383B 0%, #d2325a 100%);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28),
+        0 0 16px rgba(229, 56, 59, 0.25);
+}
+
+/* ---- Account card and link buttons ---- */
+.user-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0 0 0.5rem;
+    padding: 8px 10px;
+    border-radius: 12px;
+    border: 1px solid var(--line);
+    background: rgba(164, 177, 205, 0.05);
+    font-size: 0.82rem;
+    color: var(--white);
+    min-width: 0;
+}
+.user-card img, .user-card .avatar-fallback {
+    flex: 0 0 34px;
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+}
+.user-card .avatar-fallback {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #E5383B, #5b7cff);
+    font-weight: 700;
+}
+.user-card div { min-width: 0; overflow-wrap: anywhere; }
+.user-card span { color: var(--muted); font-size: 0.74rem; }
+.stLinkButton a {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    color: var(--text) !important;
+    background: transparent;
+}
+.stLinkButton a:hover {
+    border-color: var(--accent-dim);
+    background: var(--accent-soft);
+    color: var(--white) !important;
+}
+
+/* ---- Exam timer ---- */
+.exam-timer {
+    margin-top: 0.9rem;
+    text-align: right;
+    font-family: var(--mono);
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--white);
+}
+.exam-timer.low { color: var(--accent); }
+
+/* ---- Sidebar: calm and compact ---- */
+[data-testid="stSidebar"] [data-testid="stVerticalBlock"] { gap: 0.5rem; }
+[data-testid="stSidebar"] [data-baseweb="select"] > div,
+[data-testid="stSidebar"] [data-baseweb="input"] { min-height: 38px; }
+.st-key-side_chats { margin-top: 0.2rem; }
+.st-key-side_chats [data-testid="stRadio"] [role="radiogroup"] {
+    max-height: 34vh;
+    overflow-y: auto;
+    padding-right: 2px;
+}
+[data-testid="stSidebar"] [data-testid="stRadioOption"] { padding: 4px 10px; }
+.st-key-chat_head [data-testid="stHorizontalBlock"] {
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 0;
+}
+.st-key-chat_head [data-testid="stColumn"] {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+}
+.st-key-chat_head [data-testid="stColumn"]:last-child {
+    flex: 0 0 34px;
+    width: 34px;
+}
+.st-key-chat_head .side-label { margin: 0.1rem 0 0; }
+.st-key-chat_head [data-testid="stPopover"] button {
+    width: 32px;
+    min-height: 28px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+}
+.st-key-chat_head [data-testid="stPopover"] button:hover {
+    color: var(--white);
+    background: rgba(164, 177, 205, 0.12);
+}
+.st-key-side_settings {
+    margin-top: 0.5rem;
+    padding-top: 0.8rem;
+    border-top: 1px solid var(--line);
+}
+.st-key-user_actions [data-testid="stHorizontalBlock"] {
+    flex-wrap: nowrap;
+    gap: 0.4rem;
+}
+.st-key-user_actions [data-testid="stColumn"] {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+.st-key-side_user { margin-top: 0.6rem; }
 
 /* ---- Scrollbar (desktop) ---- */
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-    background: var(--accent-dim);
+    background: rgba(164, 177, 205, 0.2);
     border-radius: 6px;
 }
-::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+::-webkit-scrollbar-thumb:hover { background: var(--accent-dim); }
 
 /* ---- Columns wrap instead of overflowing ---- */
 [data-testid="stHorizontalBlock"] { flex-wrap: wrap; gap: 0.5rem; }
@@ -1684,9 +3008,9 @@ pre, [data-testid="stCode"] {
 /* ---- Tablets and phones ---- */
 @media (max-width: 768px) {
     .block-container {
-        padding: calc(3.25rem + var(--safe-top)) 0.75rem 5rem;
-        padding-left: max(0.75rem, var(--safe-left));
-        padding-right: max(0.75rem, var(--safe-right));
+        padding: calc(3.25rem + var(--safe-top)) 0.9rem 4rem;
+        padding-left: max(0.9rem, var(--safe-left));
+        padding-right: max(0.9rem, var(--safe-right));
     }
     [data-testid="stSidebar"] {
         width: min(88vw, 21rem) !important;
@@ -1701,20 +3025,11 @@ pre, [data-testid="stCode"] {
     [data-testid="stChatInput"] textarea {
         font-size: 16px !important;
     }
-    label, .stSelectbox label, .stTextInput label {
-        letter-spacing: 0.8px;
-    }
-    [data-testid="stChatMessage"] {
-        padding: 8px 10px;
-        gap: 0.5rem;
-    }
     [data-testid^="stChatMessageAvatar"] { width: 1.9rem; height: 1.9rem; }
-    .track-head { padding: 8px 12px; }
-    .track-head .name { font-size: 0.98rem; }
+    .empty-title { font-size: 1.25rem; }
 }
 @media (max-width: 400px) {
-    .block-container { padding-left: 0.5rem; padding-right: 0.5rem; }
-    .chip { font-size: 0.64rem; padding: 3px 8px; }
+    .block-container { padding-left: 0.6rem; padding-right: 0.6rem; }
 }
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
@@ -1947,6 +3262,583 @@ def render_hero() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Expert helpers: NVD lookups, code files, IOC extraction, encoders
+# ---------------------------------------------------------------------------
+CVE_RE = re.compile(r"\bCVE-\d{4}-\d{4,7}\b", re.IGNORECASE)
+NVD_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
+CVSS_KEYS = (
+    ("cvssMetricV40", "4.0"), ("cvssMetricV31", "3.1"),
+    ("cvssMetricV30", "3.0"), ("cvssMetricV2", "2.0"),
+)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _nvd_record(cve_id: str) -> dict:
+    """Read one CVE from the NVD. Network errors are raised, so a failed
+    lookup is never cached."""
+    resp = requests.get(NVD_URL, params={"cveId": cve_id}, timeout=(5, 15))
+    resp.raise_for_status()
+    items = resp.json().get("vulnerabilities", [])
+    if not items:
+        return {"id": cve_id, "found": False}
+    cve = items[0].get("cve", {})
+    description = next(
+        (d.get("value", "") for d in cve.get("descriptions", [])
+         if d.get("lang") == "en"), "",
+    )
+    score, severity, vector, version = "", "", "", ""
+    metrics = cve.get("metrics", {})
+    for key, ver in CVSS_KEYS:
+        if metrics.get(key):
+            entry = metrics[key][0]
+            data = entry.get("cvssData", {})
+            score = data.get("baseScore", "")
+            severity = data.get("baseSeverity") or entry.get("baseSeverity", "")
+            vector = data.get("vectorString", "")
+            version = ver
+            break
+    cwes = sorted({
+        d.get("value", "")
+        for w in cve.get("weaknesses", []) for d in w.get("description", [])
+        if str(d.get("value", "")).startswith("CWE-")
+    })
+    return {
+        "id": cve.get("id", cve_id),
+        "found": True,
+        "published": str(cve.get("published", ""))[:10],
+        "modified": str(cve.get("lastModified", ""))[:10],
+        "description": description,
+        "score": score,
+        "severity": severity,
+        "vector": vector,
+        "cvss_version": version,
+        "cwes": cwes,
+        "refs": [r.get("url", "") for r in cve.get("references", [])][:8],
+        "kev": bool(cve.get("cisaExploitAdd")),
+        "kev_due": cve.get("cisaActionDue", ""),
+    }
+
+
+def nvd_allowed() -> bool:
+    """At most 10 NVD lookups per session and minute."""
+    now = time.time()
+    stamps = [t for t in st.session_state.get("_nvd_calls", [])
+              if now - t < 60]
+    allowed = len(stamps) < 10
+    if allowed:
+        stamps.append(now)
+    st.session_state["_nvd_calls"] = stamps
+    return allowed
+
+
+def fetch_cve(cve_id: str) -> dict | None:
+    """NVD record for a CVE id, or None when it cannot be reached."""
+    if not nvd_allowed():
+        return None
+    try:
+        return _nvd_record(cve_id.upper())
+    except (requests.exceptions.RequestException, ValueError) as exc:
+        LOGGER.warning("NVD lookup failed for %s: %s", cve_id, exc)
+        return None
+
+
+def cve_facts_text(records: list[dict]) -> str:
+    """Verified NVD facts, written so the model treats them as ground truth."""
+    lines = ["Verified data from the official NVD (treat it as ground truth "
+             "and cite NVD):"]
+    for rec in records:
+        if rec.get("found") is None:
+            lines.append(
+                f"- {rec['id']}: the NVD could not be reached. Do not invent "
+                "details; tell the user to verify on nvd.nist.gov."
+            )
+        elif not rec["found"]:
+            lines.append(
+                f"- {rec['id']}: not found in the NVD. Say so and do not "
+                "invent details."
+            )
+        else:
+            cwes = ", ".join(rec["cwes"]) or "none listed"
+            lines.append(
+                f"- {rec['id']}: CVSS v{rec['cvss_version'] or '?'} "
+                f"{rec['score'] or 'n/a'} {rec['severity']} "
+                f"({rec['vector'] or 'no vector'}); published "
+                f"{rec['published']}; CWE: {cwes}; CISA KEV: "
+                f"{'yes' if rec['kev'] else 'no'}; description: "
+                f"{rec['description'][:700]}"
+            )
+    return "\n".join(lines)
+
+
+def gather_cve_facts(text: str) -> str:
+    """Look up CVE ids in the question and show the steps as they happen."""
+    ids = list(dict.fromkeys(c.upper() for c in CVE_RE.findall(text)))[:3]
+    if not ids:
+        return ""
+    records: list[dict] = []
+    with st.status(
+        f"Checking the official NVD for {', '.join(ids)}...", expanded=True
+    ) as status:
+        for cve_id in ids:
+            rec = fetch_cve(cve_id)
+            if rec is None:
+                records.append({"id": cve_id, "found": None})
+                st.write(f"{cve_id}: NVD could not be reached")
+            elif not rec["found"]:
+                records.append(rec)
+                st.write(f"{cve_id}: not found in the NVD")
+            else:
+                records.append(rec)
+                st.write(
+                    f"{cve_id}: CVSS {rec['score'] or 'n/a'} "
+                    f"{rec['severity']}"
+                )
+        status.update(label="NVD check finished", state="complete",
+                      expanded=False)
+    return cve_facts_text(records)
+
+
+CODE_BLOCK_RE = re.compile(r"```([\w+#.-]*)[^\n]*\n(.*?)```", re.DOTALL)
+CODE_EXTENSIONS = {
+    "python": "py", "py": "py", "bash": "sh", "sh": "sh", "shell": "sh",
+    "zsh": "sh", "powershell": "ps1", "ps1": "ps1", "bat": "bat",
+    "batch": "bat", "cmd": "bat", "sql": "sql", "javascript": "js",
+    "js": "js", "typescript": "ts", "ts": "ts", "json": "json",
+    "yaml": "yml", "yml": "yml", "toml": "toml", "ini": "ini",
+    "html": "html", "css": "css", "xml": "xml", "c": "c", "cpp": "cpp",
+    "c++": "cpp", "csharp": "cs", "cs": "cs", "java": "java", "go": "go",
+    "rust": "rs", "php": "php", "ruby": "rb", "yara": "yar", "svg": "svg",
+    "mermaid": "mmd", "markdown": "md", "md": "md", "dockerfile": "Dockerfile",
+}
+
+
+def extract_code_blocks(text: str) -> list[tuple[str, str]]:
+    """Fenced code blocks of an answer as (file name, content) pairs."""
+    files: list[tuple[str, str]] = []
+    for match in CODE_BLOCK_RE.finditer(text):
+        code = match.group(2).rstrip("\n")
+        if not code.strip():
+            continue
+        ext = CODE_EXTENSIONS.get(match.group(1).lower(), "txt")
+        files.append((f"nashmi_snippet_{len(files) + 1}.{ext}", code + "\n"))
+    return files
+
+
+def zip_files(files: list[tuple[str, str]]) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, content in files:
+            archive.writestr(name, content)
+    return buf.getvalue()
+
+
+def pdf_available() -> bool:
+    try:
+        import fpdf  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def answer_pdf(text: str) -> bytes:
+    return markdown_to_pdf(text, "Nashmi Answer") or b""
+
+
+URL_RE = re.compile(r"https?://[^\s<>\"')\]]+", re.IGNORECASE)
+EMAIL_RE = re.compile(
+    r"\b[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Za-z]{2,24}\b"
+)
+MAX_IOC_CHARS = 200_000
+DOMAIN_RE = re.compile(
+    r"\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}\b",
+    re.IGNORECASE,
+)
+MD5_RE = re.compile(r"\b[a-fA-F0-9]{32}\b")
+SHA1_RE = re.compile(r"\b[a-fA-F0-9]{40}\b")
+FILE_LIKE_TLDS = frozenset({
+    "txt", "py", "js", "exe", "dll", "log", "json", "png", "jpg", "jpeg",
+    "gif", "pdf", "doc", "docx", "xls", "xlsx", "zip", "sh", "bat", "ps1",
+    "html", "css", "md", "csv", "xml", "yml", "yaml", "ini", "cfg", "conf",
+    "tmp", "bin", "jar", "php", "rb", "go", "rs", "cpp", "sys", "dat",
+})
+DEFANG_PAIRS = (
+    ("hxxp", "http"), ("[.]", "."), ("(.)", "."), ("[dot]", "."),
+    ("[:]", ":"), ("[@]", "@"), ("[at]", "@"),
+)
+
+
+def extract_all_iocs(text: str, refang: bool = True) -> dict[str, list[str]]:
+    """Pull IPs, domains, URLs, e-mails, hashes and CVE ids out of any text."""
+    text = text[:MAX_IOC_CHARS]
+    if refang:
+        for old, new in DEFANG_PAIRS:
+            text = re.sub(re.escape(old), new, text, flags=re.IGNORECASE)
+    domains = {
+        d.lower() for d in DOMAIN_RE.findall(text)
+        if d.rsplit(".", 1)[-1].lower() not in FILE_LIKE_TLDS
+    }
+    found = {
+        "IPv4": list(extract_indicators(text).ips),
+        "Domains": sorted(domains),
+        "URLs": sorted(set(URL_RE.findall(text))),
+        "E-mails": sorted({e.lower() for e in EMAIL_RE.findall(text)}),
+        "MD5": sorted({h.lower() for h in MD5_RE.findall(text)}),
+        "SHA-1": sorted({h.lower() for h in SHA1_RE.findall(text)}),
+        "SHA-256": sorted({h.lower() for h in SHA256_RE.findall(text)}),
+        "CVE": sorted({c.upper() for c in CVE_RE.findall(text)}),
+    }
+    return {kind: items for kind, items in found.items() if items}
+
+
+def iocs_to_csv(iocs: dict[str, list[str]]) -> str:
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["type", "value"])
+    for kind, items in iocs.items():
+        for item in items:
+            writer.writerow([kind, item])
+    return buf.getvalue()
+
+
+def _hex_decode(text: str) -> str:
+    return bytes.fromhex("".join(text.split())).decode("utf-8", "replace")
+
+
+CODECS = {
+    "Base64 encode": lambda t: base64.b64encode(t.encode()).decode(),
+    "Base64 decode": lambda t: base64.b64decode(
+        t.strip() + "=" * (-len(t.strip()) % 4)).decode("utf-8", "replace"),
+    "URL encode": lambda t: urllib.parse.quote(t, safe=""),
+    "URL decode": urllib.parse.unquote,
+    "Hex encode": lambda t: t.encode().hex(),
+    "Hex decode": _hex_decode,
+    "ROT13": lambda t: codecs.encode(t, "rot13"),
+}
+
+
+# ---------------------------------------------------------------------------
+# Diagrams (```mermaid blocks are drawn instead of shown as code)
+# ---------------------------------------------------------------------------
+MERMAID_RE = re.compile(r"```mermaid[^\n]*\n(.*?)```", re.DOTALL)
+MERMAID_TEMPLATE = r"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src https://cdn.jsdelivr.net 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:">
+<style>
+    html, body { margin: 0; background: transparent; color: #A4B1CD;
+                 font: 13px Inter, system-ui, sans-serif; }
+    #box { padding: 6px; overflow: auto; text-align: center; }
+    #box svg { max-width: 100%; height: auto; }
+    pre { white-space: pre-wrap; text-align: left; color: #FFB020;
+          font: 12px monospace; }
+</style>
+</head>
+<body>
+<div id="box">Drawing the diagram...</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.0/dist/mermaid.min.js"
+        integrity="sha384-Wm9qzEgq4j1jEnuFK2FxKTlwuhbV2QqtGhcchvjDoKxeJ7WWAW7fysBq+1s6myfX" crossorigin="anonymous"></script>
+<script>
+(async () => {
+    const SRC = __SRC__;
+    const box = document.getElementById('box');
+    const fail = (why) => {
+        const pre = document.createElement('pre');
+        pre.textContent = 'Could not draw this diagram (' + why + ').\n\n' + SRC;
+        box.replaceChildren(pre);
+    };
+    if (typeof mermaid === 'undefined') { fail('drawing library not loaded'); return; }
+    try {
+        mermaid.initialize({
+            startOnLoad: false, securityLevel: 'strict', theme: 'dark',
+            themeVariables: {
+                background: 'transparent', primaryColor: '#131c2b',
+                primaryBorderColor: '#E5383B', primaryTextColor: '#ffffff',
+                lineColor: '#A4B1CD', secondaryColor: '#0f1724',
+                tertiaryColor: '#0b111c', fontFamily: 'Inter, sans-serif'
+            }
+        });
+        const out = await mermaid.render('nashmi_diagram', SRC);
+        box.innerHTML = out.svg;
+    } catch (e) {
+        fail(String((e && e.message) || e).slice(0, 120));
+    }
+})();
+</script>
+</body>
+</html>
+"""
+
+
+def render_mermaid(source: str) -> None:
+    """Draw one Mermaid diagram, with its source underneath."""
+    lines = source.count("\n") + 1
+    wide = re.search(r"\b(?:flowchart|graph)\s+(?:LR|RL)\b", source)
+    height = 110 + 10 * lines if wide else 90 + 34 * lines
+    height = max(130, min(640, height))
+    payload = json.dumps(source).replace("</", "<\\/")
+    embed_html(MERMAID_TEMPLATE.replace("__SRC__", payload), height)
+    with st.expander("Diagram source"):
+        st.code(source, language="text")
+
+
+def render_rich(text: str) -> None:
+    """Show Markdown, drawing any Mermaid blocks as diagrams."""
+    position = 0
+    for match in MERMAID_RE.finditer(text):
+        before = text[position:match.start()]
+        if before.strip():
+            st.markdown(before)
+        render_mermaid(match.group(1).strip())
+        position = match.end()
+    rest = text[position:]
+    if rest.strip() or position == 0:
+        st.markdown(rest)
+
+
+# ---------------------------------------------------------------------------
+# Copy button (one tiny iframe under every answer)
+# ---------------------------------------------------------------------------
+COPY_BUTTON_TEMPLATE = """<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+    html, body { margin: 0; background: transparent; }
+    button {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 5px 9px; border: 0; border-radius: 8px; cursor: pointer;
+        background: transparent; color: #6f7c98;
+        font: 500 12px Inter, system-ui, sans-serif;
+    }
+    button:hover { background: rgba(164, 177, 205, 0.12); color: #ffffff; }
+    button.done { color: #4cc38a; }
+    svg { width: 14px; height: 14px; fill: none; stroke: currentColor;
+          stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+</style>
+</head>
+<body>
+<button id="b" type="button" title="Copy answer">
+    <svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/>
+    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+    <span id="t">Copy</span>
+</button>
+<script>
+(() => {
+    const TEXT = __TEXT__;
+    const btn = document.getElementById('b');
+    const label = document.getElementById('t');
+    async function copy() {
+        for (const nav of [navigator, window.parent.navigator]) {
+            try { await nav.clipboard.writeText(TEXT); return true; }
+            catch (_) { /* try the next way */ }
+        }
+        const box = document.createElement('textarea');
+        box.value = TEXT;
+        box.style.cssText = 'position:fixed;opacity:0';
+        document.body.appendChild(box);
+        box.select();
+        let ok = false;
+        try { ok = document.execCommand('copy'); } catch (_) {}
+        box.remove();
+        return ok;
+    }
+    btn.addEventListener('click', async () => {
+        const ok = await copy();
+        label.textContent = ok ? 'Copied' : 'Copy failed';
+        btn.classList.toggle('done', ok);
+        setTimeout(() => {
+            label.textContent = 'Copy';
+            btn.classList.remove('done');
+        }, 1600);
+    });
+})();
+</script>
+</body>
+</html>
+"""
+
+
+COMPOSER_PLACEHOLDER = "Nashmi is waiting for you..."
+
+# Runs once inside a 1px iframe. It reaches the page (same origin) to
+#   * focus the writing box when any empty part of the composer is clicked, and
+#   * turn the "+" button into a menu of file types before the file dialog.
+COMPOSER_FOCUS_TEMPLATE = r"""<!DOCTYPE html>
+<html><body><script>
+(() => {
+    try {
+        const doc = window.parent.document;
+        if (doc.__nashmiComposer) return;
+        doc.__nashmiComposer = true;
+
+        const KINDS = [
+            ['Image', 'image/*'],
+            ['Audio clip', 'audio/*'],
+            ['Video clip', 'video/*'],
+            ['Markdown or text', '.md,.markdown,.txt'],
+            ['PDF or document', '.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.odt,.rtf'],
+            ['Code, logs or data', '.py,.js,.ts,.sh,.ps1,.sql,.json,.csv,.log,.yaml,.yml,.xml,.html,.css,.c,.cpp,.java,.go,.rs,.php,.ini,.conf'],
+            ['Any file', '']
+        ];
+
+        const style = doc.createElement('style');
+        style.textContent = `
+            .nashmi-attach { position: fixed; z-index: 1000001; min-width: 210px;
+                padding: 6px; border-radius: 14px; background: #131c2b;
+                border: 1px solid rgba(164,177,205,0.25);
+                box-shadow: 0 14px 40px rgba(0,0,0,0.55); }
+            .nashmi-attach button { display: block; width: 100%; text-align: start;
+                padding: 9px 12px; border: 0; border-radius: 9px; cursor: pointer;
+                background: transparent; color: #A4B1CD; font: 500 14px Inter, system-ui, sans-serif; }
+            .nashmi-attach button:hover, .nashmi-attach button:focus-visible {
+                background: rgba(229,56,59,0.14); color: #fff; outline: none; }
+            .nashmi-attach .title { padding: 6px 12px 4px; font: 11px 'JetBrains Mono', monospace;
+                letter-spacing: 1.4px; text-transform: uppercase; color: #6f7c98; }`;
+        doc.head.appendChild(style);
+
+        let menu = null, opener = null;
+        const closeMenu = () => {
+            if (menu) { menu.remove(); menu = null; }
+        };
+
+        const openMenu = (button) => {
+            closeMenu();
+            opener = button;
+            const wrap = button.closest('[data-testid="stChatInputFileUploadButton"]');
+            const input = wrap && wrap.querySelector('input[type="file"]');
+            if (!input) return;
+            menu = doc.createElement('div');
+            menu.className = 'nashmi-attach';
+            menu.setAttribute('role', 'menu');
+            const title = doc.createElement('div');
+            title.className = 'title';
+            title.textContent = 'Attach';
+            menu.appendChild(title);
+            KINDS.forEach(([label, accept]) => {
+                const item = doc.createElement('button');
+                item.type = 'button';
+                item.setAttribute('role', 'menuitem');
+                item.textContent = label;
+                item.addEventListener('click', () => {
+                    if (accept) input.setAttribute('accept', accept);
+                    else input.removeAttribute('accept');
+                    closeMenu();
+                    input.click();
+                });
+                menu.appendChild(item);
+            });
+            doc.body.appendChild(menu);
+            const rect = button.getBoundingClientRect();
+            const width = menu.offsetWidth;
+            const left = Math.max(8, Math.min(rect.right - width, window.parent.innerWidth - width - 8));
+            menu.style.left = left + 'px';
+            menu.style.bottom = (window.parent.innerHeight - rect.top + 10) + 'px';
+            menu.querySelector('button').focus();
+        };
+
+        doc.addEventListener('click', (e) => {
+            const target = e.target;
+            if (!target || !target.closest) return;
+            const attach = target.closest('[data-testid="stChatInputFileUploadButton"] button');
+            if (attach) {
+                e.preventDefault();
+                e.stopImmediatePropagation();      // no file dialog yet
+                if (menu) closeMenu(); else openMenu(attach);
+                return;
+            }
+            if (menu && !target.closest('.nashmi-attach')) closeMenu();
+            const box = target.closest('[data-testid="stChatInput"]');
+            if (box && !target.closest('button, textarea, input, label')) {
+                const area = box.querySelector('textarea');
+                if (area) area.focus();
+            }
+        }, true);
+        doc.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && menu) {
+                closeMenu();
+                if (opener) opener.focus();
+            }
+        }, true);
+    } catch (_) { /* cross-origin: the normal attach button keeps working */ }
+})();
+</script></body></html>
+"""
+
+
+def copy_button(text: str) -> None:
+    """Show a Copy button that puts the answer on the clipboard."""
+    payload = json.dumps(text).replace("</", "<\\/")
+    embed_html(COPY_BUTTON_TEMPLATE.replace("__TEXT__", payload), 34)
+
+
+# ---------------------------------------------------------------------------
+# Voice notes (speech to text)
+# ---------------------------------------------------------------------------
+GROQ_STT_MODEL = "whisper-large-v3-turbo"
+STT_PROMPT = (
+    "Transcribe this voice note exactly as it was spoken, in its original "
+    "language (Arabic, English or a mix). Reply with the transcript only."
+)
+
+
+def key_for(provider: Provider) -> str:
+    """Key typed in Settings, else the one from .env or Streamlit secrets."""
+    typed = str(st.session_state.get(f"key_{provider.id}", "")).strip()
+    return typed or get_secret(*provider.env_keys) or saved_keys().get(
+        provider.id, ""
+    )
+
+
+def transcribe_audio(data: bytes, mime: str = "audio/wav") -> str:
+    """Turn a voice note into text with Groq Whisper, or Gemini as backup."""
+    groq_key = key_for(PROVIDERS_BY_ID["groq"])
+    gemini = PROVIDERS_BY_ID["gemini"]
+    gemini_key = key_for(gemini)
+    try:
+        if groq_key:
+            resp = requests.post(
+                "https://api.groq.com/openai/v1/audio/transcriptions",
+                headers={"Authorization": f"Bearer {groq_key}"},
+                files={"file": ("voice-note.wav", data, mime)},
+                data={"model": GROQ_STT_MODEL, "response_format": "json"},
+                timeout=REQUEST_TIMEOUT,
+            )
+            if not resp.ok:
+                raise ProviderError(
+                    describe_http_error("Groq", resp.status_code, resp.text)
+                )
+            return str(resp.json().get("text", "")).strip()
+        if gemini_key:
+            model = gemini.models[0]
+            resp = requests.post(
+                "https://generativelanguage.googleapis.com/v1beta/models/"
+                f"{model}:generateContent",
+                headers={"x-goog-api-key": gemini_key},
+                json={"contents": [{"parts": [
+                    {"inline_data": {"mime_type": mime, "data": _b64(data)}},
+                    {"text": STT_PROMPT},
+                ]}]},
+                timeout=REQUEST_TIMEOUT,
+            )
+            if not resp.ok:
+                raise ProviderError(
+                    describe_http_error("Gemini", resp.status_code, resp.text)
+                )
+            record_usage(gemini, model)
+            parts = resp.json()["candidates"][0]["content"]["parts"]
+            return "".join(p.get("text", "") for p in parts).strip()
+    except (requests.exceptions.RequestException, KeyError, IndexError,
+            ValueError) as exc:
+        raise ProviderError(f"Voice transcription failed: {exc}") from exc
+    raise ProviderError(
+        "Voice notes need a Groq or Gemini API key. Add one in Settings or "
+        "in your .env file."
+    )
+
+
+# ---------------------------------------------------------------------------
 # UI
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
@@ -1959,140 +3851,610 @@ class Settings:
     mode: str
 
 
-def render_sidebar() -> Settings:
-    """Draw provider, key, model and track controls."""
-    with st.sidebar:
-        st.header("Control Panel")
-        label = st.selectbox("AI provider", list(PROVIDERS))
-        provider = PROVIDERS[label]
+@st.cache_resource
+def avatar_data_uri() -> str:
+    """Small cat head as a data URI for the sidebar logo."""
+    buf = io.BytesIO()
+    get_assistant_avatar().resize((64, 64), Image.Resampling.LANCZOS).save(
+        buf, "PNG"
+    )
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
-        typed_key = st.text_input(
-            f"{provider.short} API key",
-            type="password",
-            key=f"key_{provider.id}",
+
+def md_escape(text: str) -> str:
+    """Stop user text from turning into markdown in widget labels."""
+    return re.sub(r"([\\`*_{}\[\]()#+!~|<>])", r"\\\1", text)
+
+
+def render_nav(box) -> str:
+    """Logo, New chat button and the track list; returns the active track."""
+    mode = current_mode()
+    with box:
+        st.markdown(
+            f'<div class="brand"><img src="{avatar_data_uri()}" alt="">'
+            f'<span><span class="prompt">&gt;</span> Nashmi</span></div>',
+            unsafe_allow_html=True,
         )
-        env_key = get_secret(*provider.env_keys)
-        api_key = typed_key.strip() or env_key
-        if env_key and not typed_key.strip():
-            st.caption("Key loaded from .env. Type here to override it.")
-
-        if provider.id == "openrouter":
-            options = openrouter_free_models() or list(OPENROUTER_FALLBACK)
-        elif provider.id in ("gemini", "groq"):
-            options = live_models(provider.id, api_key) or list(
-                provider.models
-            )
-        else:
-            options = list(provider.models)
-        chosen = st.selectbox("Model", options, key=f"model_{provider.id}")
-        custom = st.text_input(
-            "Custom model name (optional)", key=f"custom_{provider.id}"
+        st.button(
+            "New chat", key="new_chat", icon=":material/add:",
+            on_click=on_new_chat, disabled=mode in (MODE_SOC, MODE_TOOLS, MODE_EXAM),
         )
-        st.caption(provider.note)
-        st.markdown(f"[Get your {provider.short} API key]({provider.key_url})")
+        return st.selectbox(
+            "Track", MODES, key="track", label_visibility="collapsed",
+            on_change=close_account,
+        )
 
+
+def render_projects_panel() -> None:
+    """Create projects and edit the instructions of the selected one."""
+    st.text_input("Project name", key="new_project_name",
+                  placeholder="e.g. Final-year thesis")
+    st.text_area(
+        "Instructions (optional)", key="new_project_instr", height=80,
+        placeholder="e.g. Always use Bash, cite NIST, keep answers short",
+    )
+    st.button("Create project", key="create_project",
+              on_click=on_create_project)
+    project_id = st.session_state.get("project", "")
+    project = next(
+        (p for p in get_store()["projects"] if p["id"] == project_id), None
+    )
+    if project:
         st.divider()
-        mode = st.selectbox("Track", list(MODES))
+        st.caption(f"Selected project: {project['name']}")
+        text = st.text_area(
+            "Instructions of this project", value=project["instructions"],
+            key=f"edit_instr_{project_id}", height=100,
+        )
+        if text != project["instructions"]:
+            project["instructions"] = text[:2000]
+            persist_store()
+        st.button("Delete project", key="delete_project",
+                  on_click=on_delete_project, icon=":material/delete:")
 
-    return Settings(provider, api_key, custom.strip() or chosen, mode)
+
+def render_prefs_form() -> None:
+    """Answer length and language."""
+    store = get_store()
+    prefs = store["prefs"]
+    st.selectbox(
+        "Answer length", DETAIL_CHOICES, key="pref_detail",
+        index=DETAIL_CHOICES.index(prefs["detail"]),
+    )
+    st.selectbox(
+        "Answer language", LANGUAGE_CHOICES, key="pref_language",
+        index=LANGUAGE_CHOICES.index(prefs["language"]),
+    )
+    chosen = {
+        "detail": st.session_state["pref_detail"],
+        "language": st.session_state["pref_language"],
+    }
+    if chosen != prefs:
+        store["prefs"] = chosen
+        persist_store()
 
 
-def render_status_header(settings: Settings) -> None:
-    """Show the track title and the key/model/provider chips."""
-    ok = bool(settings.api_key)
-    mode = html.escape(settings.mode)
-    model = html.escape(settings.model)
-    provider = html.escape(settings.provider.short)
+def render_login_buttons(key_prefix: str) -> None:
+    """One button per sign-in provider that is set up."""
+    for provider in auth_providers():
+        st.button(
+            LOGIN_LABELS.get(provider, "Sign in"),
+            key=f"{key_prefix}_login_{provider}",
+            on_click=start_login, args=(provider,),
+            icon=":material/login:",
+        )
+
+
+def key_label(provider: Provider) -> str:
+    return (f"Get your free {provider.short} key" if provider.free
+            else f"Get your {provider.short} API key")
+
+
+def render_key_help(provider: Provider) -> None:
+    """Explain the bring-your-own-key model and link to the key page."""
+    saving = (
+        " Signed-in accounts can also save it, encrypted."
+        if accounts_enabled() else ""
+    )
+    st.info(
+        "**Bring your own API key.** Nashmi runs on your own key, so your "
+        "chats never use anybody else's quota. Gemini and Groq have free "
+        "keys; OpenAI and Claude are billed to your own account.\n\n"
+        f"1. Create a {'free ' if provider.free else ''}{provider.short} "
+        "API key with the button below.\n"
+        "2. Open **Model and API key** in the sidebar, pick the provider "
+        "and paste it.\n"
+        f"3. Start chatting.{saving}",
+        icon=":material/key:",
+    )
+    st.link_button(
+        key_label(provider), provider.key_url,
+        icon=":material/open_in_new:",
+    )
+
+
+def render_user_card(box) -> None:
+    """Profile card at the bottom of the sidebar."""
+    with box:
+        user = current_user() if account_id() else None
+        if user:
+            picture = user["picture"]
+            avatar = (
+                f'<img src="{html.escape(picture, quote=True)}" alt="" '
+                'referrerpolicy="no-referrer">'
+                if picture.startswith("https://") else
+                f'<span class="avatar-fallback">'
+                f'{html.escape(user["name"][:1].upper())}</span>'
+            )
+            st.markdown(
+                f'<div class="user-card">{avatar}<div><b>'
+                f'{html.escape(user["name"])}</b><br><span>'
+                f'{html.escape(user["email"])}</span></div></div>',
+                unsafe_allow_html=True,
+            )
+            with st.container(key="user_actions"):
+                first, second = st.columns(2)
+                first.button("Account", key="open_account",
+                             on_click=open_account,
+                             icon=":material/account_circle:")
+                second.button("Sign out", key="sign_out", on_click=st.logout,
+                              icon=":material/logout:", type="tertiary")
+        elif accounts_enabled():
+            st.caption("Guest: chats are not saved. Sign in to keep them.")
+            render_login_buttons("side")
+            st.button("Usage and settings", key="open_account",
+                      on_click=open_account,
+                      icon=":material/account_circle:", type="tertiary")
+        else:
+            st.button("Usage and settings", key="open_account",
+                      on_click=open_account,
+                      icon=":material/account_circle:", type="tertiary")
+
+
+def render_keys_panel(user_id: int | None) -> None:
+    """Saved API keys, one row per provider."""
+    db = get_db()
+    st.subheader("API keys")
+    st.caption(
+        "Nashmi never uses a key of ours. Paste your own: it is used only to "
+        "call the provider you pick."
+    )
+    can_save = bool(user_id and db and db.cipher.enabled)
+    saved = saved_keys()
+    for provider in PROVIDER_LIST:
+        with st.container(border=True):
+            st.markdown(f"**{provider.short}**")
+            if provider.id in saved:
+                st.success("Saved in your account (encrypted)",
+                           icon=":material/lock:")
+                st.button("Remove saved key", key=f"rm_key_{provider.id}",
+                          on_click=on_remove_key, args=(provider.id,),
+                          icon=":material/delete:")
+            elif can_save:
+                st.text_input(
+                    f"{provider.short} API key", type="password",
+                    key=f"acct_key_{provider.id}",
+                    label_visibility="collapsed",
+                    placeholder=f"Paste your {provider.short} key",
+                )
+                st.button("Save encrypted", key=f"save_key_{provider.id}",
+                          on_click=on_save_key, args=(provider.id,),
+                          icon=":material/lock:")
+            st.link_button(
+                key_label(provider), provider.key_url,
+                icon=":material/open_in_new:",
+            )
+    if not can_save:
+        st.info(
+            "Sign in to save keys in your account, or paste a key in the "
+            "sidebar for this session only."
+            if not user_id else
+            "Saving keys is off because the server has no encryption key."
+        )
+
+
+def render_usage_panel(user_id: int | None) -> None:
+    """Request counts: today, last 14 days, and totals."""
+    import pandas as pd
+
+    history = st.session_state.get("saved_history", {})
+    chats = [c for items in history.values() for c in items if c["messages"]]
+    messages = sum(len(c["messages"]) for c in chats)
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if user_id:
+        rows = get_db().usage_summary(user_id, 14)
+    else:
+        rows = []
+        for key, entry in _load_usage().items():
+            if isinstance(entry, dict) and entry.get("day") and ":" in key:
+                provider_id, model = key.split(":", 1)
+                rows.append({
+                    "day": entry["day"], "provider": provider_id,
+                    "model": model, "requests": entry.get("used", 0),
+                })
+    today_total = sum(r["requests"] for r in rows if r["day"] == today)
+    first, second, third, fourth = st.columns(4)
+    first.metric("Requests today", today_total)
+    second.metric("Last 14 days", sum(r["requests"] for r in rows))
+    third.metric("Chats", len(chats))
+    fourth.metric("Messages", messages)
+    if not rows:
+        st.info("No requests yet. Your usage will show up here.")
+        return
+    frame = pd.DataFrame(rows)
+    chart = frame.pivot_table(
+        index="day", columns="provider", values="requests", aggfunc="sum"
+    ).fillna(0)
+    st.markdown("**Requests per day**")
+    st.bar_chart(chart)
+    st.markdown("**By model**")
+    st.dataframe(
+        frame[["day", "provider", "model", "requests"]],
+        hide_index=True,
+    )
+    if not user_id:
+        st.caption("Guest usage is counted for this session only. Sign in to "
+                   "keep a history.")
+
+
+def render_data_panel(user_id: int | None, user: dict | None) -> None:
+    """Export, import and delete."""
+    db = get_db()
+    st.caption(
+        "Public demo: your chats live only in this browser session. Export "
+        "them to keep a copy." if is_public() and not user_id
+        else "Your chats and projects are saved in your account." if user_id
+        else "Your chats and projects are saved on this computer."
+    )
+    if user_id:
+        try:
+            payload = json.dumps(db.export_all(user_id), ensure_ascii=False,
+                                 indent=2, default=str)
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("Could not build the export")
+            payload = "{}"
+    else:
+        payload = json.dumps(
+            {"history": st.session_state.get("saved_history", {}),
+             "store": get_store()},
+            ensure_ascii=False, indent=2,
+        )
+    st.download_button(
+        "Export my data (.json)", payload, "nashmi_data.json",
+        "application/json", on_click="ignore", key="dl_all_data",
+        icon=":material/download:",
+    )
+    upload = st.file_uploader("Import data (.json)", type="json",
+                              key="import_data")
+    st.button("Import now", key="do_import", on_click=on_import_data,
+              disabled=upload is None)
+    st.divider()
+    confirm = st.checkbox("I want to delete all my chats and projects",
+                          key="confirm_wipe")
+    st.button("Delete all chats and projects", key="wipe_all",
+              on_click=on_wipe_all, disabled=not confirm,
+              icon=":material/delete_forever:")
+    if user_id and user:
+        st.divider()
+        st.markdown("**Delete my account**")
+        st.caption("Removes your profile, chats, projects, usage history and "
+                   "saved keys from the database. This cannot be undone.")
+        typed = st.text_input("Type your e-mail to confirm",
+                              key="confirm_delete_email")
+        st.button(
+            "Delete my account", key="delete_account",
+            on_click=on_delete_account, icon=":material/person_remove:",
+            disabled=not user["email"]
+            or typed.strip().lower() != user["email"].lower(),
+        )
+
+
+def render_security_notes(user_id: int | None) -> None:
+    db = get_db()
+    encrypted = bool(db and db.cipher.enabled)
     st.markdown(
-        f"""
-<div class="track-head">
-    <span class="tag">TRACK</span><span class="name">{mode}</span>\
-{limit_widget_html(settings)}
-</div>
-<div class="chips">
-    <span class="chip {'ok' if ok else 'bad'}"><span class="dot"></span>\
-API KEY <b>{'LOADED' if ok else 'MISSING'}</b></span>
-    <span class="chip">MODEL <b>{model}</b></span>
-    <span class="chip">PROVIDER <b>{provider}</b></span>
-</div>
-""",
+        "**How your data is protected**\n"
+        "- Sign-in is handled by Google or Apple. Nashmi never sees or "
+        "stores a password, and any verification code (2-step, passkey, "
+        "SMS) is done by them.\n"
+        f"- Chats, project instructions and saved keys are encrypted in the "
+        f"database: **{'on' if encrypted else 'off on this server'}**.\n"
+        "- Each account only ever reads and writes its own rows.\n"
+        "- Your API key is never shown again, never logged, and never "
+        "written to the chat history.\n"
+        "- You can export everything, or delete it, at any time."
+    )
+
+
+def render_account(settings: Settings) -> None:
+    """Account page: profile, settings, usage, data and security."""
+    user_id = account_id()
+    user = current_user() if user_id else None
+    st.button("Back to chat", key="close_account", on_click=close_account,
+              icon=":material/arrow_back:")
+    st.markdown('<div class="empty-title">Account</div>',
+                unsafe_allow_html=True)
+    if st.session_state.get("_account_deleted"):
+        st.success("Your account and data were deleted. Sign out to finish.")
+        st.button("Sign out", key="sign_out_deleted", on_click=st.logout,
+                  icon=":material/logout:")
+        return
+    profile, prefs_tab, usage_tab, data_tab = st.tabs(
+        ["Profile", "Settings", "Usage", "Data and security"]
+    )
+    with profile:
+        if user:
+            record = get_db().get_user(user_id) or {}
+            st.markdown(f"### {html.escape(user['name'])}")
+            st.write(user["email"] or "No e-mail shared by the provider")
+            since = str(record.get("created_at", ""))[:10]
+            st.caption(
+                f"Signed in with {user['provider'].title()}"
+                + (f" - member since {since}" if since else "")
+            )
+            st.button("Sign out", key="sign_out_page", on_click=st.logout,
+                      icon=":material/logout:")
+        else:
+            st.markdown("### Guest")
+            if accounts_enabled():
+                st.write("Sign in to keep your chats, projects, usage "
+                         "history and saved keys.")
+                render_login_buttons("page")
+            else:
+                st.write("Accounts are not set up on this server. Your chats "
+                         "are kept on this computer.")
+    with prefs_tab:
+        render_prefs_form()
+        st.divider()
+        st.subheader("Projects")
+        st.caption("Group chats and give them standing instructions. Once "
+                   "you have a project, a picker appears in the sidebar.")
+        render_projects_panel()
+        st.divider()
+        render_keys_panel(user_id)
+    with usage_tab:
+        render_usage_panel(user_id)
+    with data_tab:
+        render_data_panel(user_id, user)
+        st.divider()
+        render_security_notes(user_id)
+
+
+def render_settings(box, mode: str):
+    """Provider, key and model controls tucked into one collapsed panel."""
+    with box:
+        with st.expander("Model and API key", expanded=is_public()):
+            if is_public():
+                st.caption(
+                    "Public demo: paste your own API key below. It "
+                    "stays in your browser session and is never stored."
+                )
+            label = st.selectbox("Provider", list(PROVIDERS))
+            provider = PROVIDERS[label]
+
+            typed_key = st.text_input(
+                f"{provider.short} API key",
+                type="password",
+                key=f"key_{provider.id}",
+            )
+            env_key = get_secret(*provider.env_keys)
+            stored_key = saved_keys().get(provider.id, "")
+            api_key = typed_key.strip() or env_key or stored_key
+            if env_key and not typed_key.strip():
+                st.caption("Key loaded from .env. Type here to override it.")
+            elif stored_key and not typed_key.strip():
+                st.caption("Using the key saved in your account.")
+
+            if provider.id == "openrouter":
+                options = openrouter_free_models() or list(OPENROUTER_FALLBACK)
+            elif provider.id in ("gemini", "groq", "openai", "anthropic"):
+                options = live_models(provider.id, api_key) or list(
+                    provider.models
+                )
+            else:
+                options = list(provider.models)
+            chosen = st.selectbox("Model", options, key=f"model_{provider.id}")
+            custom = st.text_input(
+                "Custom model (optional)", key=f"custom_{provider.id}"
+            )
+            st.caption(provider.note)
+            st.link_button(
+                key_label(provider), provider.key_url,
+                icon=":material/key:",
+            )
+        usage_slot = st.empty()
+    return Settings(provider, api_key, custom.strip() or chosen, mode), usage_slot
+
+
+def render_topline(settings: Settings) -> None:
+    """One quiet line: current track, model and whether a key is loaded."""
+    ok = bool(settings.api_key)
+    st.markdown(
+        f'<div class="topline"><span class="t-track">'
+        f'{html.escape(settings.mode)}</span><span class="t-sep">/</span>'
+        f'<span class="t-model">{html.escape(settings.model)}</span>'
+        f'<span class="t-key {"ok" if ok else "bad"}">'
+        f'{"key loaded" if ok else "no API key"}</span></div>',
         unsafe_allow_html=True,
     )
 
 
-def render_chat_sidebar(mode: str, chats: list[dict]) -> int:
-    """Draw the saved-chat list in the sidebar; return the active index."""
-    with st.sidebar:
-        st.divider()
-        st.subheader("Track Chats")
-        st.button(
-            "New Chat", key=f"new_chat_{mode}", use_container_width=True,
-            on_click=on_new_chat, args=(mode,),
+def render_chat_sidebar(box, mode: str, chats: list[dict]) -> int:
+    """Search and recent chats for this track; returns the active index."""
+    key = radio_key(mode)
+    store = get_store()
+    ids = [""] + [p["id"] for p in store["projects"]]
+    names = {p["id"]: p["name"] for p in store["projects"]}
+    if st.session_state.get("project", "") not in ids:
+        st.session_state["project"] = ""
+    with box:
+        project = st.session_state.get("project", "")
+        if len(ids) > 1:  # the picker only appears once a project exists
+            project = st.selectbox(
+                "Project", ids, key="project", label_visibility="collapsed",
+                format_func=lambda i: names.get(i, "All chats"),
+            )
+        if project and not any(c.get("project") == project for c in chats):
+            chats.insert(0, new_chat_record(project))
+            st.session_state[key] = 0
+            persist(st.session_state.saved_history)
+        query = st.text_input(
+            "Search chats",
+            key=search_key(mode),
+            placeholder="Search chats",
+            label_visibility="collapsed",
         )
-        labels = [f"{i + 1}. {c['title']}" for i, c in enumerate(chats)]
+        found = search_chats(chats, query)
+        if project:
+            found = [(i, h) for i, h in found
+                     if chats[i].get("project") == project]
+        with st.container(key="chat_head"):
+            title, more = st.columns([4, 1])
+            title.markdown(
+                f'<div class="side-label">'
+                f'{"Results" if query.strip() else "Recent"}</div>',
+                unsafe_allow_html=True,
+            )
+            with more:
+                with st.popover(" ", icon=":material/more_horiz:"):
+                    st.button(
+                        "Delete this chat", key=f"delete_chat_{mode}",
+                        icon=":material/delete:", on_click=on_delete_chat,
+                    )
+        if not found:
+            st.caption("No chats match your search.")
+            return active_index(mode, len(chats))
+
+        indices = [i for i, _ in found]
+        hits = dict(found)
+        if st.session_state.get(key) not in indices:
+            st.session_state[key] = indices[0]
+
+        def chat_label(i: int) -> str:
+            label = md_escape(chats[i]["title"])
+            if query.strip() and hits[i]:
+                label += f"  ({hits[i]})"
+            return label
+
         index = st.radio(
-            "Saved conversations",
-            options=list(range(len(chats))),
-            format_func=lambda i: labels[i],
-            key=radio_key(mode),
+            "Chats", indices, key=key, format_func=chat_label,
+            label_visibility="collapsed",
         )
-        questions = [
-            m["content"] for m in chats[index]["messages"]
-            if m["role"] == "user"
-        ]
-        if questions:
-            with st.expander("Questions in this chat", expanded=False):
-                for number, question in enumerate(questions, 1):
-                    st.caption(f"{number}. {make_title(question, 45)}")
-        st.button(
-            "Delete Current Chat", key=f"delete_chat_{mode}",
-            use_container_width=True, on_click=on_delete_chat, args=(mode,),
-        )
+        snippets = message_snippets(chats[index], query)
+        if snippets:
+            with st.expander(f"Matches in this chat ({len(snippets)})",
+                             expanded=True):
+                for snippet in snippets:
+                    st.caption(snippet)
     return index
 
 
-def render_quick_actions(mode: str) -> str | None:
-    """Show the three quick-action buttons; return the chosen prompt."""
+def render_references(name: str) -> None:
+    """Collapsed list of trusted primary sources for the track."""
+    if name == MODE_CHAT:
+        return
+    refs = TRACK_REFS.get(name, ()) + COMMON_REFS
+    with st.expander("Trusted references", icon=":material/menu_book:"):
+        st.markdown("\n".join(f"- [{title}]({url})" for title, url in refs))
+
+
+def render_empty_state(track: Track) -> str | None:
+    """Start screen of a fresh chat; returns a clicked suggestion's prompt."""
+    st.markdown(
+        f'<div class="empty-title">{html.escape(track.name)}</div>'
+        f'<div class="empty-blurb">{html.escape(track.blurb)}</div>',
+        unsafe_allow_html=True,
+    )
     selected = None
-    if not QUICK_ACTIONS.get(mode):
-        return None
-    columns = st.columns(3)
-    for number, (column, (label, prompt)) in enumerate(
-        zip(columns, QUICK_ACTIONS[mode])
-    ):
-        if column.button(label, key=f"quick_{mode}_{number}"):
+    for number, (label, prompt) in enumerate(track.actions):
+        if st.button(label, key=f"quick_{track.name}_{number}"):
             selected = prompt
+    render_references(track.name)
     return selected
 
 
-def render_messages(messages: list[dict]) -> None:
-    for msg in messages:
-        avatar = (
-            get_assistant_avatar()
-            if msg["role"] == "assistant"
-            else get_user_avatar()
+def export_menu(text: str, uid: str) -> None:
+    """Download buttons for one answer: Markdown, text, PDF and code files."""
+    st.download_button(
+        "Markdown (.md)", text, "nashmi_answer.md", "text/markdown",
+        key=f"dl_md_{uid}", on_click="ignore", icon=":material/description:",
+    )
+    st.download_button(
+        "Plain text (.txt)", text, "nashmi_answer.txt", "text/plain",
+        key=f"dl_txt_{uid}", on_click="ignore", icon=":material/notes:",
+    )
+    if pdf_available():
+        st.download_button(
+            "PDF (.pdf)", data=lambda: answer_pdf(text),
+            file_name="nashmi_answer.pdf", mime="application/pdf",
+            key=f"dl_pdf_{uid}", on_click="ignore",
+            icon=":material/picture_as_pdf:",
         )
+    files = extract_code_blocks(text)
+    for number, (name, code) in enumerate(files):
+        st.download_button(
+            name, code, name, "text/plain", key=f"dl_code_{uid}_{number}",
+            on_click="ignore", icon=":material/code:",
+        )
+    if len(files) > 1:
+        st.download_button(
+            "All code files (.zip)", zip_files(files), "nashmi_code.zip",
+            "application/zip", key=f"dl_zip_{uid}", on_click="ignore",
+            icon=":material/folder_zip:",
+        )
+
+
+def render_answer_actions(text: str, uid: str) -> None:
+    """Copy button and Export menu under an answer."""
+    with st.container(key=f"actions_{uid}"):
+        copy_col, export_col = st.columns(2)
+        with copy_col:
+            copy_button(text)
+        with export_col:
+            with st.popover("Export", icon=":material/download:"):
+                export_menu(text, uid)
+
+
+def render_messages(messages: list[dict]) -> None:
+    for number, msg in enumerate(messages):
+        assistant = msg["role"] == "assistant"
+        avatar = get_assistant_avatar() if assistant else get_user_avatar()
         with st.chat_message(msg["role"], avatar=avatar):
-            st.markdown(msg["content"])
+            if assistant:
+                render_rich(msg["content"])
+            else:
+                st.markdown(msg["content"])
             if msg.get("files"):
                 st.caption("Attached: " + ", ".join(msg["files"]))
+            if assistant:
+                render_answer_actions(msg["content"], f"m{number}")
 
 
-def read_chat_input() -> tuple[str, list]:
-    """Read the chat box (text plus attachments) in a version-safe way."""
+def read_chat_input(placeholder: str):
+    """Read the composer (text, attachments, voice note) in a version-safe way.
+
+    Returns ``(text, files, audio)``.
+    """
     try:
-        value = st.chat_input("", accept_file="multiple", file_type=None)
-    except TypeError:  # Streamlit older than 1.43 has no attachments
-        value = st.chat_input("")
+        value = st.chat_input(
+            placeholder, accept_file="multiple", file_type=None,
+            accept_audio=True, max_chars=MAX_PROMPT_CHARS,
+        )
+    except TypeError:  # Streamlit without voice notes
+        try:
+            value = st.chat_input(
+                placeholder, accept_file="multiple", file_type=None,
+                max_chars=MAX_PROMPT_CHARS,
+            )
+        except TypeError:  # Streamlit older than 1.43 has no attachments
+            value = st.chat_input(placeholder)
     if not value:
-        return "", []
+        return "", [], None
     if isinstance(value, str):
-        return value.strip(), []
+        return value.strip(), [], None
     text = (getattr(value, "text", "") or "").strip()
     files = list(getattr(value, "files", []) or [])
-    if files and not text:
-        text = "Analyze the attached file(s)."
-    return text, files
+    return text, files, getattr(value, "audio", None)
 
 
 def warn_skipped(prepared: PreparedFiles) -> None:
@@ -2124,20 +4486,18 @@ def stream_to_text(stream: Iterator[str]) -> str:
 
 
 def handle_submission(
-    settings: Settings, chat: dict, prompt: str, files: list
+    settings: Settings, chat: dict, prompt: str, files: list,
+    extra_names: tuple[str, ...] = (),
 ) -> None:
     """Send one user message and stream the answer into the chat."""
     if not settings.api_key:
-        st.error(
-            f"Please enter your {settings.provider.short} API key in the "
-            "sidebar or put it in your .env file."
-        )
+        render_key_help(settings.provider)
         return
 
     prepared = prepare_attachments(files, settings.provider)
     warn_skipped(prepared)
     messages = chat["messages"]
-    names = [f.name for f in files]
+    names = [f.name for f in files] + list(extra_names)
     messages.append({"role": "user", "content": prompt, "files": names})
     if chat.get("title") == NEW_CHAT_TITLE:
         chat["title"] = make_title(prompt)
@@ -2148,19 +4508,19 @@ def handle_submission(
         if names:
             st.caption("Attached: " + ", ".join(names))
 
+    reply = ""
     with st.chat_message("assistant", avatar=get_assistant_avatar()):
-        reply = ""
         failed = False
         try:
-            outgoing = messages[:-1] + [{
-                "role": "user",
-                "content": wrap_prompt_as_security_expert(
-                    prompt, settings.mode
-                ),
-            }]
+            content = wrap_prompt_as_security_expert(prompt, settings.mode)
+            facts = gather_cve_facts(prompt)
+            if facts:
+                content += "\n\n" + facts
+            outgoing = messages[:-1] + [{"role": "user", "content": content}]
             reply = stream_to_text(with_wait_notice(generate_stream(
                 settings.provider, settings.api_key, settings.model,
-                build_system_prompt(settings.mode), outgoing, prepared,
+                full_system_prompt(settings.mode, chat.get("project", "")),
+                outgoing, prepared,
             )))
         except ProviderError as exc:
             failed = True
@@ -2169,10 +4529,11 @@ def handle_submission(
         except Exception as exc:  # noqa: BLE001 - keep the app alive
             failed = True
             LOGGER.exception("Unexpected error while generating a reply")
-            st.error(f"Request failed: {exc}")
+            show_internal_error("Request failed.", exc)
 
         if reply.strip():
             messages.append({"role": "assistant", "content": reply})
+            render_answer_actions(reply, f"m{len(messages) - 1}")
         else:
             messages.pop()  # remove the unanswered question so it can retry
             if not failed:
@@ -2181,46 +4542,84 @@ def handle_submission(
                 )
         persist(st.session_state.saved_history)
 
+    if reply.strip() and MERMAID_RE.search(reply):
+        st.rerun()  # redraw the finished answer with its diagrams
 
-def render_chat_track(settings: Settings) -> None:
+
+def render_chat_track(settings: Settings, chats_box) -> None:
     mode = settings.mode
+    track = TRACKS_BY_NAME[mode]
     chats = ensure_history(mode)
-    index = render_chat_sidebar(mode, chats)
+    index = render_chat_sidebar(chats_box, mode, chats)
     chat = chats[index]
 
-    quick_prompt = render_quick_actions(mode)
-    render_messages(chat["messages"])
-    typed_prompt, files = read_chat_input()
+    start_screen = st.empty()
+    quick_prompt = None
+    if chat["messages"]:
+        render_messages(chat["messages"])
+    else:
+        with start_screen.container():
+            quick_prompt = render_empty_state(track)
+            if not settings.api_key:
+                render_key_help(settings.provider)
 
-    prompt = quick_prompt or typed_prompt
+    typed, files, audio = read_chat_input(COMPOSER_PLACEHOLDER)
+    voice_text = ""
+    if audio is not None:
+        with st.spinner("Transcribing your voice note..."):
+            try:
+                voice_text = transcribe_audio(
+                    audio.getvalue(), getattr(audio, "type", "") or "audio/wav"
+                )
+            except ProviderError as exc:
+                st.error(str(exc))
+            except Exception as exc:  # noqa: BLE001 - keep the app alive
+                LOGGER.exception("Voice transcription failed")
+                show_internal_error("Could not transcribe the voice note.", exc)
+        if not voice_text and not typed and not files:
+            return
+
+    prompt = quick_prompt or "\n\n".join(p for p in (typed, voice_text) if p)
+    if not prompt and files:
+        prompt = "Analyze the attached file(s)."
     if prompt:
-        attachments = [] if quick_prompt else files
-        handle_submission(settings, chat, prompt, attachments)
+        start_screen.empty()
+        handle_submission(
+            settings, chat, prompt, [] if quick_prompt else files,
+            extra_names=("voice note",) if voice_text and not quick_prompt
+            else (),
+        )
 
 
 def render_soc_track(settings: Settings) -> None:
     """Upload logs/media and stream a SOC report."""
     provider = settings.provider
+    track = TRACKS_BY_NAME[MODE_SOC]
+    st.markdown(
+        f'<div class="empty-title">{html.escape(track.name)}</div>'
+        f'<div class="empty-blurb">{html.escape(track.blurb)}</div>',
+        unsafe_allow_html=True,
+    )
+    render_references(MODE_SOC)
     uploads = st.file_uploader(
-        "Upload logs, images, screenshots, videos, PCAP/CSV/JSON, or any "
-        "file for SOC analysis",
+        "Logs, screenshots, videos, PCAP/CSV/JSON or any file",
         type=None,
         accept_multiple_files=True,
         key="soc_multi_uploader",
     )
     notes = st.text_input(
-        "Optional notes or specific question about the uploaded files:", ""
+        "Notes or a specific question about the files (optional)", ""
     )
-    vt_typed = st.text_input(
-        "VirusTotal API key (optional, free)", type="password",
-        key="vt_key_input",
-    )
+    with st.expander("VirusTotal scan (optional, free key)"):
+        vt_typed = st.text_input(
+            "VirusTotal API key", type="password", key="vt_key_input",
+        )
+        allow_upload = st.checkbox(
+            "Upload files VirusTotal does not know yet (they become visible "
+            "to the VirusTotal community)",
+            value=False,
+        )
     vt_key = vt_typed.strip() or get_secret("VT_API_KEY", "VIRUSTOTAL_API_KEY")
-    allow_upload = st.checkbox(
-        "Upload files VirusTotal does not know yet (they become visible to "
-        "the VirusTotal community)",
-        value=False,
-    )
     if not vt_key:
         st.caption(
             "Add VT_API_KEY to .env (free key from virustotal.com) to scan "
@@ -2238,8 +4637,8 @@ def render_soc_track(settings: Settings) -> None:
         return
     if not settings.api_key:
         st.error(
-            f"Please enter your {provider.short} API key in the sidebar or "
-            "put it in your .env file."
+            f"Please enter your {provider.short} API key in the sidebar "
+            "Settings or put it in your .env file."
         )
         return
 
@@ -2276,7 +4675,7 @@ def render_soc_track(settings: Settings) -> None:
                         "writing the report..."):
             report = stream_to_text(generate_stream(
                 provider, settings.api_key, settings.model,
-                build_system_prompt(settings.mode),
+                full_system_prompt(settings.mode),
                 [{"role": "user", "content": prompt}], prepared,
             ))
     except ProviderError as exc:
@@ -2284,9 +4683,10 @@ def render_soc_track(settings: Settings) -> None:
         show_provider_error(exc)
     except Exception as exc:  # noqa: BLE001 - keep the app alive
         LOGGER.exception("Unexpected error while writing the SOC report")
-        st.error(f"Request failed: {exc}")
+        show_internal_error("Request failed.", exc)
 
     if report.strip():
+        render_answer_actions(report, "soc_report")
         st.success("Your security report is ready.")
         pdf_bytes = markdown_to_pdf(report, "Nashmi SOC Report")
         if pdf_bytes:
@@ -2306,6 +4706,898 @@ def render_soc_track(settings: Settings) -> None:
             )
 
 
+def show_cve(rec: dict) -> None:
+    """Display one NVD record."""
+    st.subheader(rec["id"])
+    score, severity, kev = st.columns(3)
+    score.metric(f"CVSS v{rec['cvss_version'] or '?'}", rec["score"] or "n/a")
+    severity.metric("Severity", rec["severity"] or "n/a")
+    kev.metric("CISA KEV", "Yes" if rec["kev"] else "No")
+    st.markdown(rec["description"] or "_No description._")
+    if rec["vector"]:
+        st.code(rec["vector"], language=None)
+    st.caption(
+        f"Published {rec['published']} - last modified {rec['modified']}"
+        + (f" - CWE: {', '.join(rec['cwes'])}" if rec["cwes"] else "")
+    )
+    if rec["kev"] and rec["kev_due"]:
+        st.warning(f"Listed as exploited in the wild. CISA due date: "
+                   f"{rec['kev_due'][:10]}")
+    if rec["refs"]:
+        st.markdown("**References**\n" + "\n".join(
+            f"- {url}" for url in rec["refs"] if url
+        ))
+    st.markdown(
+        f"Source: [NVD](https://nvd.nist.gov/vuln/detail/{rec['id']})"
+    )
+    st.download_button(
+        "Download record (.json)", json.dumps(rec, indent=2),
+        f"{rec['id']}.json", "application/json", on_click="ignore",
+        key="dl_cve_json", icon=":material/download:",
+    )
+
+
+def render_toolbox() -> None:
+    """Non-AI helpers an analyst needs all day: CVE, hashes, encoders, IOCs."""
+    track = TRACKS_BY_NAME[MODE_TOOLS]
+    st.markdown(
+        f'<div class="empty-title">{html.escape(track.name)}</div>'
+        f'<div class="empty-blurb">{html.escape(track.blurb)}</div>',
+        unsafe_allow_html=True,
+    )
+    tab_cve, tab_hash, tab_ioc = st.tabs(
+        ["CVE lookup", "Hash and encode", "IOC extractor"]
+    )
+
+    with tab_cve:
+        with st.form("cve_form", border=False):
+            cve_id = st.text_input("CVE ID", placeholder="CVE-2021-44228")
+            go = st.form_submit_button("Look up in the NVD")
+        if go:
+            cve_id = cve_id.strip().upper()
+            if not CVE_RE.fullmatch(cve_id):
+                st.session_state.pop("cve_result", None)
+                st.error("Enter an ID like CVE-2021-44228.")
+            else:
+                with st.spinner("Asking the NVD..."):
+                    rec = fetch_cve(cve_id)
+                if rec is None:
+                    st.session_state.pop("cve_result", None)
+                    st.error("The NVD could not be reached (network or rate "
+                             "limit). Try again in a minute.")
+                else:
+                    st.session_state["cve_result"] = rec
+        result = st.session_state.get("cve_result")
+        if result is not None:
+            if result["found"]:
+                show_cve(result)
+            else:
+                st.warning(f"{result['id']} was not found in the NVD.")
+
+    with tab_hash:
+        text = st.text_area("Text", height=110, key="tool_text")
+        upload = st.file_uploader("...or a file", key="tool_file")
+        data = upload.getvalue() if upload else text.encode("utf-8")
+        if data:
+            for algo in ("md5", "sha1", "sha256", "sha512"):
+                st.markdown(f"**{algo.upper()}**")
+                st.code(hashlib.new(algo, data).hexdigest(), language=None)
+        st.divider()
+        operation = st.selectbox("Encode or decode the text above",
+                                 list(CODECS))
+        if text:
+            try:
+                st.code(CODECS[operation](text), language=None)
+            except (ValueError, UnicodeError) as exc:
+                st.error(f"Could not do that: {exc}")
+
+    with tab_ioc:
+        pasted = st.text_area(
+            "Paste logs, alerts, an e-mail or a report", height=180,
+            key="ioc_text", max_chars=MAX_IOC_CHARS,
+        )
+        refang = st.checkbox("Undo defanging (hxxp, [.], [at])", value=True)
+        if pasted.strip():
+            iocs = extract_all_iocs(pasted, refang)
+            if not iocs:
+                st.info("No indicators found.")
+            else:
+                total = sum(len(v) for v in iocs.values())
+                st.caption(f"{total} indicators in {len(iocs)} groups")
+                for kind, items in iocs.items():
+                    with st.expander(f"{kind} ({len(items)})", expanded=True):
+                        st.code("\n".join(items), language=None)
+                left, right = st.columns(2)
+                left.download_button(
+                    "Download (.csv)", iocs_to_csv(iocs), "iocs.csv",
+                    "text/csv", on_click="ignore", key="dl_ioc_csv",
+                    icon=":material/table:",
+                )
+                right.download_button(
+                    "Download (.json)", json.dumps(iocs, indent=2),
+                    "iocs.json", "application/json", on_click="ignore",
+                    key="dl_ioc_json", icon=":material/data_object:",
+                )
+    render_references(MODE_SOC)
+
+
+# ---------------------------------------------------------------------------
+# Practice Exam: generate a full exam from a subject or study files, take it
+# on screen (with drag and drop), get it graded, and export everything.
+# ---------------------------------------------------------------------------
+EXAM_UPLOAD_TYPES = ["pdf", "pptx", "docx", "txt", "md", "png", "jpg", "jpeg",
+                     "webp"]
+EXAM_MAX_FILE_BYTES = 30 * 1024 * 1024
+EXAM_MAX_IMAGES = 6
+EXAM_FORMAT = "nashmi-exam-1"
+EXAM_SECTION_BATCH = 8
+
+_DND_DIR = Path(__file__).resolve().parent / "components" / "dnd"
+_dnd_component = (
+    components.declare_component("nashmi_dnd", path=str(_DND_DIR))
+    if (_DND_DIR / "index.html").exists() else None
+)
+
+
+def exam_state() -> dict:
+    return st.session_state.setdefault("exam", {"stage": "setup"})
+
+
+def _clear_exam_widgets() -> None:
+    for key in list(st.session_state.keys()):
+        if str(key).startswith(("ex_", "exv_", "exdnd_")):
+            del st.session_state[key]
+
+
+def on_new_exam() -> None:
+    _clear_exam_widgets()
+    st.session_state["exam"] = {"stage": "setup"}
+
+
+def on_start_exam() -> None:
+    exam = exam_state()
+    exam["started"] = time.time()
+    exam["stage"] = "taking"
+
+
+def on_retake_exam() -> None:
+    _clear_exam_widgets()
+    exam = exam_state()
+    for key in ("answers", "results"):
+        exam.pop(key, None)
+    exam["started"] = time.time()
+    exam["stage"] = "taking"
+
+
+def exam_questions(exam: dict) -> list[dict]:
+    return [q for s in exam["data"]["sections"] for q in s["questions"]]
+
+
+def read_exam_answer(q: dict):
+    """The answer currently given to a question (None when untouched)."""
+    qid, qtype = q["id"], q["type"]
+    if qtype in ("order", "match", "image_label"):
+        return st.session_state.get(f"exv_{qid}")
+    if qtype == "fill":
+        return [st.session_state.get(f"ex_{qid}_{i}", "")
+                for i in range(len(q["answers"]))]
+    return st.session_state.get(f"ex_{qid}")
+
+
+def exam_answered(q: dict, answer) -> bool:
+    if answer in (None, "", [], {}):
+        return False
+    if q["type"] in ("fill", "match"):
+        return any(str(a).strip() for a in answer)
+    return True
+
+
+def finish_exam() -> None:
+    exam = exam_state()
+    exam["answers"] = {q["id"]: read_exam_answer(q)
+                       for q in exam_questions(exam)}
+    exam["stage"] = "grading"
+
+
+def ask_model(settings: Settings, system: str, user: str,
+              media: list | None = None) -> str:
+    """One non-streamed call to the chosen provider."""
+    prepared = PreparedFiles(media=list(media or []))
+    stream = generate_stream(
+        settings.provider, settings.api_key, settings.model, system,
+        [{"role": "user", "content": user}], prepared,
+    )
+    return "".join(stream)
+
+
+def ask_json(settings: Settings, system: str, user: str,
+             media: list | None = None):
+    """Ask for JSON; if the reply is not JSON, ask once more."""
+    data = nashmi_exam.extract_json(ask_model(settings, system, user, media))
+    if data is None:
+        data = nashmi_exam.extract_json(ask_model(
+            settings, system,
+            user + "\n\nYour previous reply was not valid JSON. Reply with "
+                   "ONLY the JSON, nothing else.", media,
+        ))
+    return data
+
+
+def load_exam_material(uploads) -> tuple[str, list[dict], list[str]]:
+    """Text and pictures of the uploaded study files (cached per session)."""
+    cache = st.session_state.setdefault("exam_material", {})
+    texts: list[str] = []
+    images: list[dict] = []
+    warnings: list[str] = []
+    for upload in uploads or []:
+        data = upload.getvalue()
+        if len(data) > EXAM_MAX_FILE_BYTES:
+            warnings.append(f"{upload.name}: larger than 30 MB, skipped.")
+            continue
+        digest = hashlib.sha256(data).hexdigest()
+        if digest not in cache:
+            if len(cache) >= 8:
+                cache.pop(next(iter(cache)))
+            cache[digest] = nashmi_exam.extract_material(upload.name, data)
+        text, found, warning = cache[digest]
+        texts.append(text)
+        images.extend(found)
+        if warning:
+            warnings.append(warning)
+    return "\n\n".join(texts)[:nashmi_exam.MAX_MATERIAL_CHARS], images, warnings
+
+
+def allowed_exam_types(settings: Settings, chosen: list[str],
+                       has_images: bool) -> list[str]:
+    can_see = has_images and settings.provider.accepts("image/png")
+    pool = chosen or list(nashmi_exam.QUESTION_TYPES)
+    return [t for t in pool
+            if t not in nashmi_exam.IMAGE_TYPES or can_see]
+
+
+def build_exam(settings: Settings, spec, images: dict, allowed: list[str],
+               verify: bool, log) -> dict:
+    """Plan the exam, write every section, then double-check the key."""
+    rng = random.Random()
+    media = [MediaPart(name=i, mime=im["mime"], data=im["data"])
+             for i, im in images.items()]
+    log("Planning the exam")
+    plan = nashmi_exam.clean_plan(
+        ask_json(settings, *nashmi_exam.plan_prompt(spec, allowed)),
+        spec, allowed,
+    )
+    total = sum(s["count"] for s in plan["sections"])
+    log(f"Blueprint: {total} questions in {len(plan['sections'])} sections")
+
+    sections, previous, warnings = [], [], []
+    number = 0
+    for section in plan["sections"]:
+        log(f"Writing: {section['title']}")
+        questions: list[dict] = []
+        attempts = 0
+        while len(questions) < section["count"] and attempts < 3:
+            batch = min(section["count"] - len(questions), EXAM_SECTION_BATCH)
+            data = ask_json(
+                settings,
+                *nashmi_exam.section_prompt(spec, section, batch, previous),
+                media if section["type"] in nashmi_exam.IMAGE_TYPES else None,
+            )
+            items = data.get("questions") if isinstance(data, dict) else data
+            attempts += 1
+            if not isinstance(items, list):
+                continue
+            taken = 0
+            for raw in items:
+                try:
+                    q = nashmi_exam.clean_question(
+                        raw, section["type"], list(images),
+                        section["marks_each"], rng,
+                    )
+                except ValueError as exc:
+                    warnings.append(
+                        f"Dropped one question in '{section['title']}': {exc}.")
+                    continue
+                if nashmi_exam.norm(q["question"]) in {
+                        nashmi_exam.norm(p) for p in previous}:
+                    continue
+                number += 1
+                q["id"] = f"q{number}"
+                questions.append(q)
+                previous.append(q["question"])
+                taken += 1
+                if taken >= batch:
+                    break
+        if len(questions) < section["count"]:
+            warnings.append(f"'{section['title']}' has {len(questions)} of "
+                            f"{section['count']} planned questions.")
+        if questions:
+            sections.append({"title": section["title"],
+                             "type": section["type"],
+                             "questions": questions})
+    if not sections:
+        raise ValueError(
+            "The model did not return any usable question. Try again, pick "
+            "another model, or reduce the number of question types."
+        )
+    exam = {
+        "title": plan["title"],
+        "instructions": plan["instructions"],
+        "duration_minutes": plan["duration_minutes"],
+        "sections": sections,
+    }
+    exam["total_marks"] = sum(
+        q["marks"] for s in sections for q in s["questions"])
+    disputes: dict[str, str] = {}
+    closed = [q for s in sections for q in s["questions"]
+              if q["type"] in nashmi_exam.VERIFIABLE]
+    if verify and closed:
+        log("Double-checking the answer key")
+        try:
+            needs_images = any(q["type"] == "image_mcq" for q in closed)
+            disputes = nashmi_exam.find_disputes(
+                closed,
+                ask_json(settings, *nashmi_exam.verify_prompt(closed),
+                         media if needs_images else None),
+            )
+            if disputes:
+                log(f"{len(disputes)} question(s) flagged for review")
+        except ProviderError as exc:
+            warnings.append(f"The double-check could not run: {exc}")
+    return {"data": exam, "disputes": disputes, "warnings": warnings}
+
+
+def exam_to_json(exam: dict) -> str:
+    images = {
+        image_id: {"mime": im["mime"],
+                   "b64": base64.b64encode(im["data"]).decode("ascii")}
+        for image_id, im in exam.get("images", {}).items()
+    }
+    return json.dumps({"format": EXAM_FORMAT, "exam": exam["data"],
+                       "images": images}, ensure_ascii=False)
+
+
+def exam_from_json(raw: bytes) -> dict:
+    """Rebuild an exam from a saved file, re-checking every field."""
+    if len(raw) > 30 * 1024 * 1024:
+        raise ValueError("This exam file is too large.")
+    try:
+        blob = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise ValueError("This is not a valid exam file.") from exc
+    if not isinstance(blob, dict) or blob.get("format") != EXAM_FORMAT:
+        raise ValueError("This is not a Nashmi exam file.")
+    images: dict[str, dict] = {}
+    for image_id, entry in list((blob.get("images") or {}).items())[
+            :EXAM_MAX_IMAGES]:
+        if (not isinstance(entry, dict)
+                or entry.get("mime") not in ("image/png", "image/jpeg")
+                or not re.fullmatch(r"img\d{1,2}", str(image_id))):
+            continue
+        try:
+            data = base64.b64decode(str(entry.get("b64", "")), validate=True)
+            if len(data) > nashmi_exam.IMAGE_MAX_BYTES:
+                continue
+            with Image.open(io.BytesIO(data)) as img:
+                img.verify()
+        except Exception:  # noqa: BLE001 - a bad picture is skipped
+            continue
+        images[image_id] = {"label": image_id, "mime": entry["mime"],
+                            "data": data}
+    data = nashmi_exam.rebuild_exam(blob.get("exam"), list(images))
+    return {"data": data, "images": images, "disputes": {}, "warnings": []}
+
+
+def annotate_image(data: bytes, points: list[dict]) -> bytes:
+    """The picture with the numbered points drawn on it."""
+    from PIL import ImageFont
+
+    img = Image.open(io.BytesIO(data)).convert("RGB")
+    width, height = img.size
+    draw = ImageDraw.Draw(img)
+    radius = max(12, min(width, height) // 28)
+    try:
+        font = ImageFont.load_default(size=radius)
+    except TypeError:  # older Pillow
+        font = ImageFont.load_default()
+    for point in points:
+        cx, cy = point["x"] / 1000 * width, point["y"] / 1000 * height
+        draw.ellipse([cx - radius, cy - radius, cx + radius, cy + radius],
+                     fill=(229, 56, 59), outline="white", width=2)
+        draw.text((cx, cy), str(point["id"]), fill="white", font=font,
+                  anchor="mm")
+    out = io.BytesIO()
+    img.save(out, "PNG")
+    return out.getvalue()
+
+
+def _blank_safe(text: str) -> str:
+    """Keep ____ blanks from turning into Markdown rules."""
+    return re.sub(r"_{3,}", lambda m: "\\_" * len(m.group()), text)
+
+
+# ------------------------------------------------------------------ setup
+def render_exam_setup(settings: Settings) -> None:
+    track = TRACKS_BY_NAME[MODE_EXAM]
+    st.markdown(
+        f'<div class="empty-title">{html.escape(track.name)}</div>'
+        f'<div class="empty-blurb">{html.escape(track.blurb)}</div>',
+        unsafe_allow_html=True,
+    )
+    if not settings.api_key:
+        render_key_help(settings.provider)
+
+    subject = st.text_input(
+        "Subject or topic",
+        placeholder="e.g. Network security: firewalls, IDS and VPNs",
+    )
+    uploads = st.file_uploader(
+        "Study material (optional): slides, lecture notes, PDFs, pictures",
+        accept_multiple_files=True, type=EXAM_UPLOAD_TYPES, key="exam_files",
+    )
+    material, found, warnings = load_exam_material(uploads)
+    for warning in warnings:
+        st.warning(warning)
+    if uploads and material:
+        st.caption(f"Read {len(material):,} characters from your material.")
+
+    chosen_images: dict[str, dict] = {}
+    if found:
+        st.markdown("**Pictures found in your material.** Tick the ones the "
+                    "exam may use for image questions.")
+        columns = st.columns(4)
+        for number, image in enumerate(found):
+            tag = hashlib.sha1(image["data"]).hexdigest()[:10]
+            with columns[number % 4]:
+                st.image(image["data"], caption=image["label"], width=150)
+                if st.checkbox("Use", value=number < EXAM_MAX_IMAGES,
+                               key=f"exam_img_{tag}") \
+                        and len(chosen_images) < EXAM_MAX_IMAGES:
+                    chosen_images[f"img{len(chosen_images) + 1}"] = image
+        if not settings.provider.accepts("image/png"):
+            st.info(f"{settings.provider.short} cannot look at pictures, so "
+                    "image questions are off. Pick Gemini in the sidebar to "
+                    "get them.")
+
+    left, right = st.columns(2)
+    language = left.selectbox("Exam language", list(nashmi_exam.LANGUAGES))
+    difficulty = right.selectbox("Difficulty", nashmi_exam.DIFFICULTIES,
+                                 index=3)
+    style = st.selectbox("Exam style", list(nashmi_exam.STYLES))
+    first, second, third = st.columns(3)
+    n_questions = first.number_input("Questions (0 = Nashmi decides)", 0,
+                                     nashmi_exam.MAX_QUESTIONS, 0)
+    total_marks = second.number_input("Total marks (0 = Nashmi decides)", 0,
+                                      500, 0, step=5)
+    duration = third.number_input("Minutes (0 = Nashmi decides)", 0, 300, 0,
+                                  step=5)
+    types = st.multiselect(
+        "Question types (leave empty and Nashmi picks the mix)",
+        list(nashmi_exam.QUESTION_TYPES),
+        format_func=nashmi_exam.QUESTION_TYPES.get,
+    )
+    verify = st.checkbox(
+        "Double-check the answer key (one extra request, recommended)",
+        value=True,
+    )
+    allowed = allowed_exam_types(settings, types, bool(chosen_images))
+    estimate = 1 + min(len(types) or 5, 6) + (1 if verify else 0) + 1
+    st.caption(
+        f"An exam uses about {estimate} requests of your "
+        f"{settings.provider.short} key (planning, one per section, the "
+        "double-check and grading)."
+        + ("" if settings.provider.free
+           else " They are billed to your account.")
+    )
+
+    left, right = st.columns([3, 2])
+    ready = bool(settings.api_key and (subject.strip() or material))
+    if left.button("Generate exam", type="primary", disabled=not ready,
+                   key="exam_generate"):
+        spec = nashmi_exam.ExamSpec(
+            subject=subject.strip() or "the uploaded study material",
+            language=language, difficulty=difficulty, style=style,
+            n_questions=int(n_questions), total_marks=int(total_marks),
+            duration=int(duration), types=types, material_text=material,
+            image_ids=list(chosen_images),
+        )
+        try:
+            with st.status("Building your exam...", expanded=True) as status:
+                built = build_exam(settings, spec, chosen_images, allowed,
+                                   verify, st.write)
+                status.update(label="Your exam is ready", state="complete",
+                              expanded=False)
+        except ProviderError as exc:
+            note_quota_error(settings.provider, settings.model, str(exc))
+            show_provider_error(exc)
+            return
+        except ValueError as exc:
+            st.error(str(exc))
+            return
+        except Exception as exc:  # noqa: BLE001 - keep the app alive
+            LOGGER.exception("Exam generation failed")
+            show_internal_error("Could not build the exam.", exc)
+            return
+        built["images"] = {
+            image_id: image for image_id, image in chosen_images.items()
+            if any(q.get("image") == image_id
+                   for q in (x for s in built["data"]["sections"]
+                             for x in s["questions"]))
+        }
+        _clear_exam_widgets()
+        st.session_state["exam"] = {**built, "stage": "ready"}
+        st.rerun()
+
+    with st.expander("Load a saved exam (.json)"):
+        saved = st.file_uploader("Saved exam", type="json",
+                                 key="exam_json_upload")
+        if saved is not None and st.button("Open this exam", key="exam_open"):
+            try:
+                loaded = exam_from_json(saved.getvalue())
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
+                _clear_exam_widgets()
+                st.session_state["exam"] = {**loaded, "stage": "ready"}
+                st.rerun()
+
+
+# ------------------------------------------------------------------ ready
+def render_exam_downloads(exam: dict, results: dict | None = None) -> None:
+    data = exam["data"]
+    first, second, third = st.columns(3)
+    first.download_button(
+        "Exam paper (.md)", nashmi_exam.exam_to_markdown(data),
+        "exam_paper.md", "text/markdown", on_click="ignore",
+        key="dl_exam_md", icon=":material/description:",
+    )
+    if pdf_available():
+        second.download_button(
+            "Exam paper (.pdf)",
+            data=lambda: markdown_to_pdf(
+                nashmi_exam.exam_to_markdown(data), data["title"]) or b"",
+            file_name="exam_paper.pdf", mime="application/pdf",
+            on_click="ignore", key="dl_exam_pdf",
+            icon=":material/picture_as_pdf:",
+        )
+        third.download_button(
+            "Answer key (.pdf)",
+            data=lambda: markdown_to_pdf(
+                nashmi_exam.exam_to_markdown(data, with_key=True),
+                data["title"] + " - answer key") or b"",
+            file_name="answer_key.pdf", mime="application/pdf",
+            on_click="ignore", key="dl_exam_key",
+            icon=":material/key:",
+        )
+    st.download_button(
+        "Save this exam to retake later (.json)", exam_to_json(exam),
+        "nashmi_exam.json", "application/json", on_click="ignore",
+        key="dl_exam_json", icon=":material/save:",
+    )
+    if exam.get("images"):
+        st.caption("PDF and Markdown exports contain the text only. Pictures "
+                   "stay in the saved .json exam.")
+
+
+def render_exam_ready(settings: Settings) -> None:
+    exam = exam_state()
+    data = exam["data"]
+    st.markdown(f'<div class="empty-title">{html.escape(data["title"])}</div>',
+                unsafe_allow_html=True)
+    if data.get("instructions"):
+        st.markdown(data["instructions"])
+    count = len(exam_questions(exam))
+    first, second, third = st.columns(3)
+    first.metric("Questions", count)
+    second.metric("Total marks", f"{data['total_marks']:g}")
+    third.metric("Time", f"{data['duration_minutes']} min")
+    for warning in exam.get("warnings", []):
+        st.warning(warning)
+    if exam.get("disputes"):
+        st.warning(
+            f"{len(exam['disputes'])} question(s) were flagged by the "
+            "double-check. They are marked in your results; review the key "
+            "before trusting them."
+        )
+    left, right = st.columns(2)
+    left.button("Start the exam", type="primary", on_click=on_start_exam,
+                key="exam_start", icon=":material/play_arrow:")
+    right.button("Make another exam", on_click=on_new_exam, key="exam_new1",
+                 icon=":material/refresh:")
+    render_exam_downloads(exam)
+
+
+# ----------------------------------------------------------------- taking
+def render_exam_question(q: dict, number: int, images: dict) -> None:
+    qid, qtype = q["id"], q["type"]
+    key = f"ex_{qid}"
+    with st.container(border=True):
+        st.markdown(f"**Question {number}** · {q['marks']:g} mark"
+                    f"{'s' if q['marks'] != 1 else ''}")
+        if q.get("context"):
+            st.markdown("> " + q["context"].replace("\n", "\n> "))
+        st.markdown(_blank_safe(q["question"]))
+        if q.get("code"):
+            st.code(q["code"], language=q.get("language") or None)
+        if qtype == "image_mcq" and q["image"] in images:
+            st.image(images[q["image"]]["data"], width=420)
+
+        if qtype in ("mcq", "image_mcq", "code"):
+            st.radio("Answer", range(len(q["options"])), index=None, key=key,
+                     format_func=lambda i, o=q["options"]: o[i],
+                     label_visibility="collapsed")
+        elif qtype == "multi":
+            st.multiselect("Select all that apply", range(len(q["options"])),
+                           key=key,
+                           format_func=lambda i, o=q["options"]: o[i],
+                           placeholder="Choose one or more")
+        elif qtype == "truefalse":
+            st.radio("Answer", [True, False], index=None, key=key,
+                     horizontal=True, label_visibility="collapsed",
+                     format_func=lambda v: "True" if v else "False")
+        elif qtype == "fill":
+            for i in range(len(q["answers"])):
+                st.text_input(f"Blank {i + 1}", key=f"{key}_{i}")
+        elif qtype == "numeric":
+            unit = f" ({q['unit']})" if q.get("unit") else ""
+            st.text_input(f"Your answer{unit}", key=key)
+        elif qtype in ("short", "essay"):
+            st.text_area("Your answer", key=key, max_chars=8000,
+                         height=100 if qtype == "short" else 220)
+        elif _dnd_component is None:
+            st.error("The drag-and-drop component is missing "
+                     "(components/dnd/index.html).")
+        elif qtype == "order":
+            st.session_state[f"exv_{qid}"] = dnd(
+                "order", f"exdnd_{qid}", items=q["shuffled"],
+                initial=st.session_state.get(f"exv_{qid}"),
+            )
+        elif qtype == "match":
+            st.session_state[f"exv_{qid}"] = dnd(
+                "match", f"exdnd_{qid}",
+                left=[p["left"] for p in q["pairs"]], bank=q["bank"],
+                initial=st.session_state.get(f"exv_{qid}"),
+            )
+        elif qtype == "image_label":
+            image = images[q["image"]]
+            if "uri" not in image:
+                image["uri"] = (f"data:{image['mime']};base64,"
+                                + base64.b64encode(image["data"]).decode())
+            st.session_state[f"exv_{qid}"] = dnd(
+                "label", f"exdnd_{qid}", image=image["uri"],
+                image_id=q["image"],
+                points=[{"id": p["id"], "x": p["x"], "y": p["y"]}
+                        for p in q["points"]],
+                bank=q["bank"], initial=st.session_state.get(f"exv_{qid}"),
+            )
+
+
+def dnd(mode: str, key: str, **kwargs):
+    """Draw one drag-and-drop widget; returns its value (None until used)."""
+    return _dnd_component(mode=mode, key=key, default=None, **kwargs)
+
+
+@st.fragment(run_every="1s")
+def exam_timer(deadline: float) -> None:
+    remaining = int(deadline - time.time())
+    if remaining <= 0:
+        st.session_state["exam_time_up"] = True
+        st.rerun()
+    minutes, seconds = divmod(remaining, 60)
+    st.markdown(
+        f'<div class="exam-timer{" low" if remaining < 300 else ""}">'
+        f'{minutes:02d}:{seconds:02d}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_exam_taking(settings: Settings) -> None:
+    exam = exam_state()
+    data = exam["data"]
+    images = exam.get("images", {})
+    questions = exam_questions(exam)
+    minutes = int(data["duration_minutes"] or 0)
+    deadline = exam["started"] + minutes * 60 if minutes else 0
+    if deadline and (time.time() >= deadline
+                     or st.session_state.pop("exam_time_up", False)):
+        st.warning("Time is up. Your answers were submitted.")
+        finish_exam()
+        st.rerun()
+
+    head, clock = st.columns([4, 1])
+    head.markdown(f'<div class="empty-title">{html.escape(data["title"])}'
+                  '</div>', unsafe_allow_html=True)
+    with clock:
+        if deadline:
+            exam_timer(deadline)
+    if data.get("instructions"):
+        st.markdown(data["instructions"])
+    answered = sum(exam_answered(q, read_exam_answer(q)) for q in questions)
+    st.progress(answered / len(questions),
+                text=f"{answered} of {len(questions)} answered")
+
+    tabs = st.tabs([s["title"] for s in data["sections"]])
+    number = 0
+    for tab, section in zip(tabs, data["sections"]):
+        with tab:
+            for q in section["questions"]:
+                number += 1
+                render_exam_question(q, number, images)
+    st.divider()
+    unanswered = len(questions) - answered
+    if unanswered:
+        st.caption(f"{unanswered} question(s) still unanswered.")
+    st.button("Submit exam", type="primary", on_click=finish_exam,
+              key="exam_submit", icon=":material/task_alt:")
+
+
+# ---------------------------------------------------------------- grading
+def grade_exam(settings: Settings, exam: dict) -> dict:
+    """Closed questions are graded here; written ones by the model."""
+    answers = exam["answers"]
+    per_question: dict[str, dict] = {}
+    pending = []
+    for q in exam_questions(exam):
+        answer = answers.get(q["id"])
+        given = nashmi_exam.answer_text(q, answer)
+        if q["type"] in nashmi_exam.SUBJECTIVE:
+            per_question[q["id"]] = {"score": 0.0, "given": given,
+                                     "note": "Not graded"}
+            if given != "(no answer)":
+                pending.append({
+                    "id": q["id"], "question": q["question"],
+                    "marks": q["marks"], "model_answer": q["model_answer"],
+                    "rubric": q.get("rubric", []), "student_answer": given,
+                })
+            continue
+        fraction, note = nashmi_exam.grade_objective(q, answer)
+        per_question[q["id"]] = {
+            "score": round(fraction * q["marks"], 2),
+            "given": given, "note": note,
+        }
+    if pending:
+        marks = {p["id"]: p["marks"] for p in pending}
+        try:
+            grades = nashmi_exam.parse_grades(
+                ask_json(settings, *nashmi_exam.grading_prompt(pending)),
+                marks,
+            )
+        except ProviderError as exc:
+            LOGGER.warning("Written answers could not be graded: %s", exc)
+            grades = {}
+        for qid, grade in grades.items():
+            full = marks[qid]
+            per_question[qid].update(
+                score=grade["score"], feedback=grade["feedback"],
+                note=("Correct" if grade["score"] >= full else
+                      "Partly correct" if grade["score"] > 0 else "Wrong"),
+            )
+        for qid in marks.keys() - grades.keys():
+            per_question[qid].update(
+                note="Needs your review",
+                feedback="The model could not grade this answer. Compare it "
+                         "with the model answer below.",
+                ungraded=True,
+            )
+    sections = []
+    for section in exam["data"]["sections"]:
+        sections.append({
+            "title": section["title"],
+            "score": sum(per_question[q["id"]]["score"]
+                         for q in section["questions"]),
+            "total": sum(q["marks"] for q in section["questions"]),
+        })
+    score = sum(s["score"] for s in sections)
+    total = sum(s["total"] for s in sections)
+    return {"score": round(score, 2), "total": total,
+            "percent": score / total * 100 if total else 0,
+            "per_question": per_question, "sections": sections}
+
+
+def render_exam_grading(settings: Settings) -> None:
+    exam = exam_state()
+    with st.status("Grading your exam...", expanded=True) as status:
+        st.write("Marking the closed questions")
+        if any(q["type"] in nashmi_exam.SUBJECTIVE
+               for q in exam_questions(exam)):
+            st.write("Asking Nashmi to read your written answers")
+        exam["results"] = grade_exam(settings, exam)
+        status.update(label="Graded", state="complete")
+    exam["stage"] = "results"
+    st.rerun()
+
+
+# ---------------------------------------------------------------- results
+def render_exam_results(settings: Settings) -> None:
+    exam = exam_state()
+    data, results = exam["data"], exam["results"]
+    images = exam.get("images", {})
+    percent = results["percent"]
+    verdict = ("Excellent" if percent >= 85 else "Good" if percent >= 70
+               else "Pass" if percent >= 50 else "Needs more practice")
+    st.markdown(f'<div class="empty-title">{html.escape(data["title"])} - '
+                f'results</div>', unsafe_allow_html=True)
+    first, second, third = st.columns(3)
+    first.metric("Score", f"{results['score']:g} / {results['total']:g}")
+    second.metric("Percent", f"{percent:.0f}%")
+    third.metric("Result", verdict)
+    st.progress(min(percent / 100, 1.0))
+    if any(item.get("ungraded") for item in results["per_question"].values()):
+        st.warning("Some written answers could not be graded automatically "
+                   "and count as 0 until you review them.")
+    st.markdown("**By section**")
+    st.dataframe(
+        [{"Section": s["title"], "Score": f"{s['score']:g} / {s['total']:g}"}
+         for s in results["sections"]], hide_index=True,
+    )
+
+    number = 0
+    for section in data["sections"]:
+        st.markdown(f"#### {section['title']}")
+        for q in section["questions"]:
+            number += 1
+            item = results["per_question"][q["id"]]
+            colour = {"Correct": "green", "Partly correct": "orange"}.get(
+                item["note"], "red")
+            label = (f"Question {number} - :{colour}[{item['note']}] "
+                     f"({item['score']:g}/{q['marks']:g})")
+            with st.expander(label):
+                st.markdown(_blank_safe(q["question"]))
+                if q.get("code"):
+                    st.code(q["code"], language=q.get("language") or None)
+                if q["type"] == "image_label":
+                    st.image(annotate_image(images[q["image"]]["data"],
+                                            q["points"]), width=480)
+                elif q["type"] == "image_mcq" and q["image"] in images:
+                    st.image(images[q["image"]]["data"], width=420)
+                st.markdown(f"**Your answer:** {item['given']}")
+                st.markdown(f"**Correct answer:** "
+                            f"{nashmi_exam.correct_answer_text(q)}")
+                if item.get("feedback"):
+                    st.info(item["feedback"])
+                if q.get("explanation"):
+                    st.markdown(f"**Why:** {q['explanation']}")
+                if q.get("reference"):
+                    st.caption(f"Source: {q['reference']}")
+                if q["id"] in exam.get("disputes", {}):
+                    st.warning(exam["disputes"][q["id"]])
+
+    st.divider()
+    left, right = st.columns(2)
+    left.button("Retake this exam", on_click=on_retake_exam, key="exam_retake",
+                icon=":material/replay:")
+    right.button("Make another exam", on_click=on_new_exam, key="exam_new2",
+                 icon=":material/refresh:", type="primary")
+    pdf_data = nashmi_exam.exam_to_markdown(data, results=results)
+    if pdf_available():
+        st.download_button(
+            "Results with answers (.pdf)",
+            data=lambda: markdown_to_pdf(pdf_data, data["title"]) or b"",
+            file_name="exam_results.pdf", mime="application/pdf",
+            on_click="ignore", key="dl_exam_results",
+            icon=":material/picture_as_pdf:",
+        )
+    render_exam_downloads(exam, results)
+
+
+def render_exam_track(settings: Settings) -> None:
+    """Router for the Practice Exam track."""
+    if nashmi_exam is None:
+        st.error("The exam engine (nashmi_exam.py) is missing.")
+        return
+    stage = exam_state().get("stage", "setup")
+    if stage == "ready":
+        render_exam_ready(settings)
+    elif stage == "taking":
+        render_exam_taking(settings)
+    elif stage == "grading":
+        render_exam_grading(settings)
+    elif stage == "results":
+        render_exam_results(settings)
+    else:
+        render_exam_setup(settings)
+    render_references("Practice Exam")
+
+
 def main() -> None:
     """Entry point executed on every Streamlit rerun."""
     st.set_page_config(
@@ -2315,17 +5607,33 @@ def main() -> None:
         initial_sidebar_state="auto",  # collapsed on phones, open on desktop
     )
     inject_theme()
+    nav_box = st.sidebar.container(key="side_nav")
+    chats_box = st.sidebar.container(key="side_chats")
+    settings_box = st.sidebar.container(key="side_settings")
+    user_box = st.sidebar.container(key="side_user")
+
+    account_id()  # settle who is signed in before anything is loaded
+    mode = render_nav(nav_box)
+    settings, usage_slot = render_settings(settings_box, mode)
+    usage_slot.markdown(limit_widget_html(settings), unsafe_allow_html=True)
+    render_user_card(user_box)
+    if st.session_state.get("view") == "account":
+        render_account(settings)
+        return
     render_hero()
-    settings = render_sidebar()
-    header_slot = st.empty()
-    with header_slot.container():
-        render_status_header(settings)
-    if settings.mode == MODE_SOC:
+    render_topline(settings)
+    if mode == MODE_SOC:
         render_soc_track(settings)
+    elif mode == MODE_TOOLS:
+        render_toolbox()
+    elif mode == MODE_EXAM:
+        render_exam_track(settings)
     else:
-        render_chat_track(settings)
-    with header_slot.container():  # refresh the limit bar after the reply
-        render_status_header(settings)
+        render_chat_track(settings, chats_box)
+    usage_slot.markdown(  # refresh the usage line after the reply
+        limit_widget_html(settings), unsafe_allow_html=True
+    )
+    embed_html(COMPOSER_FOCUS_TEMPLATE, 1)
 
 
 # ---------------------------------------------------------------------------

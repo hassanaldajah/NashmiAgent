@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- The page can only draw, and talk to Streamlit through postMessage. -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<style>
+    :root {
+        --bg: #0b111c; --panel: #131c2b; --line: rgba(164, 177, 205, 0.22);
+        --text: #A4B1CD; --white: #ffffff; --accent: #E5383B; --blue: #5b7cff;
+        --ok: #4cc38a;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: transparent; color: var(--text);
+                 font: 14px/1.45 Inter, system-ui, -apple-system, sans-serif; }
+    body { padding: 2px 2px 6px; }
+    .hint { font-size: 12px; color: #6f7c98; margin: 0 0 8px; }
+    button { font: inherit; color: inherit; cursor: pointer; }
+    .list { display: flex; flex-direction: column; gap: 6px; }
+    .row { display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+           background: var(--panel); border: 1px solid var(--line);
+           border-radius: 10px; color: var(--white); }
+    .row.dragging { opacity: 0.4; }
+    .row.over { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(229, 56, 59, 0.25); }
+    .grip { color: #6f7c98; cursor: grab; user-select: none; letter-spacing: -2px; }
+    .num { min-width: 22px; text-align: center; color: #6f7c98; font-size: 12px; }
+    .txt { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    .mini { width: 28px; height: 28px; border-radius: 8px; border: 1px solid var(--line);
+            background: transparent; }
+    .mini:hover:not(:disabled) { border-color: var(--accent); color: var(--white); }
+    .mini:disabled { opacity: 0.3; cursor: default; }
+    .match-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+                 gap: 10px; align-items: stretch; margin-bottom: 6px; }
+    .left { padding: 8px 10px; background: var(--panel); border: 1px solid var(--line);
+            border-radius: 10px; color: var(--white); overflow-wrap: anywhere; }
+    .slot { min-height: 40px; padding: 8px 10px; text-align: start; border-radius: 10px;
+            border: 1px dashed var(--line); background: transparent; color: #6f7c98;
+            overflow-wrap: anywhere; }
+    .slot.over { border-color: var(--accent); background: rgba(229, 56, 59, 0.10); }
+    .slot.filled { border-style: solid; border-color: var(--blue); background: rgba(91, 124, 255, 0.12);
+                   color: var(--white); }
+    .slot.target { border-color: var(--accent); }
+    .bank { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; padding: 10px;
+            border: 1px solid var(--line); border-radius: 12px; min-height: 48px; }
+    .bank-title { width: 100%; font-size: 12px; color: #6f7c98; margin: 0 0 2px; }
+    .chip { padding: 6px 12px; border-radius: 999px; background: var(--panel);
+            border: 1px solid var(--line); color: var(--white); overflow-wrap: anywhere;
+            text-align: start; }
+    .chip:hover { border-color: var(--blue); }
+    .chip.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(229, 56, 59, 0.3); }
+    .stage { position: relative; display: inline-block; max-width: 100%; line-height: 0;
+             border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+    .stage img { display: block; max-width: 100%; height: auto; }
+    .marker { position: absolute; transform: translate(-50%, -50%); display: flex;
+              align-items: center; gap: 4px; padding: 2px; border-radius: 999px;
+              background: rgba(11, 17, 28, 0.78); border: 2px solid var(--accent);
+              line-height: 1.2; max-width: 60%; }
+    .marker.over { background: rgba(229, 56, 59, 0.45); }
+    .marker.filled { border-color: var(--blue); }
+    .marker.target { box-shadow: 0 0 0 3px rgba(229, 56, 59, 0.45); }
+    .dot { flex: 0 0 22px; width: 22px; height: 22px; border-radius: 50%;
+           background: var(--accent); color: #fff; font-weight: 700; font-size: 12px;
+           display: flex; align-items: center; justify-content: center; }
+    .marker.filled .dot { background: var(--blue); }
+    .tag { padding: 0 8px 0 2px; font-size: 12px; color: #fff; white-space: nowrap;
+           overflow: hidden; text-overflow: ellipsis; }
+    .reset { margin-top: 10px; padding: 4px 12px; border-radius: 8px; background: transparent;
+             border: 1px solid var(--line); font-size: 12px; }
+    .reset:hover { border-color: var(--accent); color: var(--white); }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+(() => {
+    'use strict';
+    const root = document.getElementById('root');
+    const send = (type, data) => window.parent.postMessage(
+        Object.assign({ isStreamlitMessage: true, type: type }, data || {}), '*');
+    const setHeight = () => send('streamlit:setFrameHeight',
+        { height: Math.ceil(document.body.getBoundingClientRect().height) + 12 });
+    const emit = (value) => send('streamlit:setComponentValue',
+        { value: value, dataType: 'json' });
+
+    let args = {}, argsKey = null;
+    let mode = '', order = [], place = {}, bank = [], selected = null, drag = null;
+
+    const el = (tag, cls, text) => {
+        const node = document.createElement(tag);
+        if (cls) node.className = cls;
+        if (text !== undefined) node.textContent = text;   // never innerHTML
+        return node;
+    };
+    const button = (cls, text) => {
+        const node = el('button', cls, text);
+        node.type = 'button';
+        return node;
+    };
+
+    // ---------------------------------------------------------- start
+    function init() {
+        mode = String(args.mode || '');
+        selected = null;
+        drag = null;
+        bank = Array.isArray(args.bank) ? args.bank.map(String) : [];
+        const initial = args.initial;
+        if (mode === 'order') {
+            const items = (args.items || []).map(String);
+            const valid = Array.isArray(initial) && initial.length === items.length
+                && items.every((item) => initial.indexOf(item) !== -1);
+            order = valid ? initial.map(String) : items.slice();
+        } else if (mode === 'match') {
+            place = {};
+            if (Array.isArray(initial)) {
+                initial.forEach((chip, i) => {
+                    if (chip && bank.indexOf(String(chip)) !== -1) place[i] = String(chip);
+                });
+            }
+        } else if (mode === 'label') {
+            place = {};
+            if (initial && typeof initial === 'object') {
+                (args.points || []).forEach((p) => {
+                    const chip = initial[String(p.id)];
+                    if (chip && bank.indexOf(String(chip)) !== -1) place[p.id] = String(chip);
+                });
+            }
+        }
+        draw();
+    }
+
+    function draw() {
+        root.replaceChildren();
+        if (mode === 'order') drawOrder();
+        else if (mode === 'match' || mode === 'label') drawSlots();
+        setHeight();
+    }
+
+    // ---------------------------------------------------------- order
+    function move(from, to) {
+        if (to < 0 || to >= order.length || from === to) return;
+        const item = order.splice(from, 1)[0];
+        order.splice(to, 0, item);
+        emit(order.slice());
+        draw();
+    }
+
+    function drawOrder() {
+        root.append(el('p', 'hint', 'Drag the steps into order, or use the arrows.'));
+        const list = el('div', 'list');
+        order.forEach((text, i) => {
+            const row = el('div', 'row');
+            row.draggable = true;
+            const label = el('span', 'txt', text);
+            label.dir = 'auto';
+            const up = button('mini', '↑');
+            const down = button('mini', '↓');
+            up.setAttribute('aria-label', 'Move up');
+            down.setAttribute('aria-label', 'Move down');
+            up.disabled = i === 0;
+            down.disabled = i === order.length - 1;
+            up.addEventListener('click', () => move(i, i - 1));
+            down.addEventListener('click', () => move(i, i + 1));
+            row.append(el('span', 'grip', '⋮⋮'), el('span', 'num', String(i + 1)),
+                       label, up, down);
+            row.addEventListener('dragstart', (e) => {
+                drag = i;
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', String(i));
+                row.classList.add('dragging');
+            });
+            row.addEventListener('dragend', () => { drag = null; draw(); });
+            row.addEventListener('dragover', (e) => { e.preventDefault(); row.classList.add('over'); });
+            row.addEventListener('dragleave', () => row.classList.remove('over'));
+            row.addEventListener('drop', (e) => {
+                e.preventDefault();
+                if (drag !== null) move(drag, i);
+                drag = null;
+            });
+            list.append(row);
+        });
+        root.append(list);
+    }
+
+    // ------------------------------------------------- match and label
+    function value() {
+        if (mode === 'match') {
+            return (args.left || []).map((_, i) => place[i] || '');
+        }
+        const out = {};
+        (args.points || []).forEach((p) => { if (place[p.id]) out[String(p.id)] = place[p.id]; });
+        return out;
+    }
+
+    function putChip(key, chip) {
+        if (bank.indexOf(chip) === -1) return;          // only known chips
+        Object.keys(place).forEach((k) => { if (place[k] === chip) delete place[k]; });
+        place[key] = chip;
+        selected = null;
+        emit(value());
+        draw();
+    }
+
+    function clickSlot(key) {
+        if (selected !== null) putChip(key, selected);
+        else if (place[key]) { delete place[key]; emit(value()); draw(); }
+    }
+
+    function dropTarget(node, key) {
+        node.addEventListener('click', () => clickSlot(key));
+        node.addEventListener('dragover', (e) => { e.preventDefault(); node.classList.add('over'); });
+        node.addEventListener('dragleave', () => node.classList.remove('over'));
+        node.addEventListener('drop', (e) => {
+            e.preventDefault();
+            putChip(key, e.dataTransfer.getData('text/plain'));
+        });
+        if (selected !== null) node.classList.add('target');
+    }
+
+    function chipNode(text) {
+        const chip = button('chip' + (selected === text ? ' selected' : ''), text);
+        chip.dir = 'auto';
+        chip.draggable = true;
+        chip.addEventListener('dragstart', (e) => {
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', text);
+        });
+        chip.addEventListener('click', () => {
+            selected = selected === text ? null : text;
+            draw();
+        });
+        return chip;
+    }
+
+    function drawSlots() {
+        root.append(el('p', 'hint', mode === 'label'
+            ? 'Drag a label onto a numbered point, or tap a label and then a point. Tap a placed label to remove it.'
+            : 'Drag each item onto its match, or tap an item and then its place. Tap a placed item to remove it.'));
+        if (mode === 'match') {
+            (args.left || []).forEach((text, i) => {
+                const row = el('div', 'match-row');
+                const left = el('div', 'left', String(text));
+                left.dir = 'auto';
+                const slot = button('slot' + (place[i] ? ' filled' : ''), place[i] || 'Drop here');
+                slot.dir = 'auto';
+                dropTarget(slot, i);
+                row.append(left, slot);
+                root.append(row);
+            });
+        } else {
+            const stage = el('div', 'stage');
+            const img = document.createElement('img');
+            img.alt = 'Exam image';
+            if (typeof args.image === 'string' && /^data:image\/(png|jpeg);base64,/.test(args.image)) {
+                img.src = args.image;
+            }
+            img.addEventListener('load', setHeight);
+            stage.append(img);
+            (args.points || []).forEach((p) => {
+                const marker = button('marker' + (place[p.id] ? ' filled' : ''));
+                marker.style.left = (Number(p.x) / 10) + '%';
+                marker.style.top = (Number(p.y) / 10) + '%';
+                marker.append(el('span', 'dot', String(p.id)));
+                if (place[p.id]) {
+                    const tag = el('span', 'tag', place[p.id]);
+                    tag.dir = 'auto';
+                    marker.append(tag);
+                }
+                marker.setAttribute('aria-label', 'Point ' + p.id);
+                dropTarget(marker, p.id);
+                stage.append(marker);
+            });
+            root.append(stage);
+        }
+        const free = bank.filter((chip) => Object.keys(place).every((k) => place[k] !== chip));
+        const area = el('div', 'bank');
+        area.append(el('p', 'bank-title', free.length ? 'Items' : 'All items placed'));
+        free.forEach((chip) => area.append(chipNode(chip)));
+        area.addEventListener('dragover', (e) => e.preventDefault());
+        area.addEventListener('drop', (e) => {              // drop back = remove
+            e.preventDefault();
+            const chip = e.dataTransfer.getData('text/plain');
+            Object.keys(place).forEach((k) => { if (place[k] === chip) delete place[k]; });
+            emit(value());
+            draw();
+        });
+        root.append(area);
+        const reset = button('reset', 'Reset');
+        reset.addEventListener('click', () => { place = {}; selected = null; emit(value()); draw(); });
+        root.append(reset);
+    }
+
+    // ------------------------------------------------------ Streamlit
+    window.addEventListener('message', (event) => {
+        const data = event.data;
+        if (!data || data.type !== 'streamlit:render') return;
+        args = data.args || {};
+        const key = JSON.stringify([args.mode, args.items, args.left, args.bank,
+                                    args.points, args.image_id]);
+        if (key !== argsKey) { argsKey = key; init(); } else { setHeight(); }
+    });
+    new ResizeObserver(setHeight).observe(document.body);
+    send('streamlit:componentReady', { apiVersion: 1 });
+})();
+</script>
+</body>
+</html>
