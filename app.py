@@ -5974,7 +5974,24 @@ def render_exam_track(settings: Settings) -> None:
 # Shared by the landing banner and the scroll story. makeLook gives a cat eyes
 # that follow the pointer (also the pointer over the rest of the page) and
 # glance around by themselves when nobody is moving one.
-CAT_JS = """function releaseFrameBoxOnExit() {
+CAT_JS = """function sizeFrame(h) {
+    // Streamlit keeps its own height on the wrapper around this frame, so the wrapper
+    // is sized here too, and again after every re-render
+    var fe = null;
+    try { fe = window.frameElement; } catch (err) { }
+    if (!fe) { return; }
+    fe.style.height = h + 'px'; fe.setAttribute('height', h);
+    var bx = fe.parentElement;
+    if (bx) {
+        var hp = h + 'px';
+        bx.style.setProperty('height', hp, 'important');
+        bx.style.setProperty('min-height', '0', 'important');
+        bx.style.setProperty('max-height', hp, 'important');
+        bx.style.setProperty('flex', '0 0 ' + hp, 'important');
+    }
+}
+
+function releaseFrameBoxOnExit() {
     // the page resizes Streamlit's wrapper around this frame; when the frame goes
     // away (another page reuses that wrapper) the wrapper must get its size back
     var boxEl = null;
@@ -6367,22 +6384,11 @@ __CAT_JS__
     // taller banner on wide screens (the page resizes the frame around it)
     var BASE_H = __HEIGHT__, DESK_K = __DESK_K__;
     function fit() {
-        var fe = null;
-        try { fe = window.frameElement; } catch (err) {}
-        if (!fe) { return; }
-        var hh = window.innerWidth >= 900 ? Math.round(BASE_H * DESK_K) : BASE_H;
-        if (parseInt(fe.style.height, 10) === hh) { return; }
-        fe.style.height = hh + 'px'; fe.setAttribute('height', hh);
-        var bx = fe.parentElement;
-        if (bx) {
-            bx.style.setProperty('height', hh + 'px', 'important');
-            bx.style.setProperty('min-height', '0', 'important');
-            bx.style.setProperty('max-height', hh + 'px', 'important');
-            bx.style.setProperty('flex', '0 0 ' + hh + 'px', 'important');
-        }
+        sizeFrame(window.innerWidth >= 900 ? Math.round(BASE_H * DESK_K) : BASE_H);
     }
     window.addEventListener('resize', fit);
     fit();
+    setInterval(fit, 1500);
 
     var saved = null;
     try { saved = JSON.parse(sessionStorage.getItem('nashmi_scene') || 'null'); } catch (err) {}
@@ -6452,7 +6458,9 @@ __CAT_JS__
     var shell = new THREE.LineSegments(
         new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(2.7, 2)),
         new THREE.LineBasicMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0.2 }));
-    group.add(coreWire, shell);
+    var shellWrap = new THREE.Group();     // lets the big mesh stretch to the frame on wide screens
+    shellWrap.add(shell);
+    group.add(coreWire, shellWrap);
 
     var N = 190, positions = new Float32Array(N * 3), colors = new Float32Array(N * 3), pts = [];
     for (var i = 0; i < N; i++) {
@@ -6494,12 +6502,47 @@ __CAT_JS__
 
     var ring = new THREE.Mesh(new THREE.TorusGeometry(3.0, 0.02, 8, 180),
         new THREE.MeshBasicMaterial({ color: BRIGHT, transparent: true, opacity: 0.85 }));
-    ring.rotation.x = 1.25;
+    ring.rotation.x = 1.38;
     var ring2 = new THREE.Mesh(new THREE.TorusGeometry(3.5, 0.015, 8, 180),
         new THREE.MeshBasicMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0.55 }));
-    ring2.rotation.x = 1.9;
-    ring2.rotation.y = 0.5;
+    ring2.rotation.x = 1.72;
+    ring2.rotation.y = 0.1;
     group.add(ring, ring2);
+
+    // glowing planets that fill the sides of the banner
+    function glowTex(rgb) {
+        var cv = document.createElement('canvas'); cv.width = cv.height = 64;
+        var g2 = cv.getContext('2d'), gr = g2.createRadialGradient(32, 32, 1, 32, 32, 32);
+        gr.addColorStop(0, 'rgba(' + rgb + ',0.95)'); gr.addColorStop(0.3, 'rgba(' + rgb + ',0.35)');
+        gr.addColorStop(1, 'rgba(' + rgb + ',0)');
+        g2.fillStyle = gr; g2.fillRect(0, 0, 64, 64);
+        return new THREE.CanvasTexture(cv);
+    }
+    var texRed = glowTex('255,59,63'), texWhite = glowTex('255,255,255');
+    var planets = new THREE.Group(); scene.add(planets);
+    var PL = [
+        { sx: -1, fx: 0.74, fy: 0.30, r: 0.30, red: true,  ring: true,  sp: 0.6, ph: 0 },
+        { sx: -1, fx: 0.90, fy: -0.45, r: 0.13, red: false, ring: false, sp: 0.9, ph: 2 },
+        { sx: -1, fx: 0.52, fy: -0.80, r: 0.09, red: true,  ring: false, sp: 1.1, ph: 4 },
+        { sx: 1,  fx: 0.78, fy: -0.25, r: 0.26, red: false, ring: true,  sp: 0.5, ph: 1 },
+        { sx: 1,  fx: 0.92, fy: 0.55, r: 0.12, red: true,  ring: false, sp: 1.0, ph: 3 },
+        { sx: 1,  fx: 0.50, fy: 0.82, r: 0.09, red: false, ring: false, sp: 0.8, ph: 5 }
+    ];
+    PL.forEach(function (p) {
+        var grp = new THREE.Group();
+        grp.add(new THREE.Mesh(new THREE.SphereGeometry(p.r, 18, 14),
+            new THREE.MeshBasicMaterial({ color: p.red ? 0xFF3B3F : 0xFFFFFF })));
+        var sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: p.red ? texRed : texWhite,
+            transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+        sp.scale.setScalar(p.r * 7); grp.add(sp);
+        if (p.ring) {
+            var rg = new THREE.Mesh(new THREE.TorusGeometry(p.r * 1.9, p.r * 0.05, 6, 48),
+                new THREE.MeshBasicMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0.6 }));
+            rg.rotation.x = 1.2; rg.rotation.y = 0.3; grp.add(rg); p.ringMesh = rg;
+        }
+        p.grp = grp; planets.add(grp);
+    });
+    var halfW = 3, halfH = 3;
     var saved = null;
     try { saved = JSON.parse(sessionStorage.getItem('nashmi_scene') || 'null'); } catch (err) {}
     var phase0 = saved && saved.p ? saved.p : 0, lastSave = 0, baseZ = 8.6;
@@ -6517,6 +6560,16 @@ __CAT_JS__
         var fitK = Math.min(1, (baseZ * 0.4142 * 0.96) / ((3.6 + OFF) * GS));
         group.scale.setScalar(GS * fitK);
         group.position.y = OFF * fitK;
+        // wide screens only: stretch the big mesh sideways so it reaches the frame's edges
+        var asp = w / h, halfView = 0.4142 * baseZ * asp;
+        shellWrap.scale.x = asp >= 1.25 ? Math.max(1, (halfView * 1.04) / (2.7 * GS * fitK)) : 1;
+        shellWrap.scale.y = asp >= 1.25 ? Math.max(1, ((0.4142 * baseZ - OFF * fitK) * 1.03) / (2.7 * GS * fitK)) : 1;
+        // centre the cat (and its glow) on the middle of the rings
+        var ndcY = (OFF * fitK) / (0.4142 * baseZ), cy = ((1 - ndcY) / 2 * h).toFixed(1) + 'px';
+        var cb = document.querySelector('.catbox'), gl = document.querySelector('.glow');
+        if (cb) { cb.style.top = cy; }
+        if (gl) { gl.style.top = cy; }
+        halfH = 0.4142 * (baseZ + 1); halfW = halfH * (w / h);
         camera.updateProjectionMatrix();
     }
     resize();
@@ -6537,8 +6590,8 @@ __CAT_JS__
         var kIn = Math.min(1, (now - start) / 900), ease = 1 - Math.pow(1 - kIn, 3);
         camera.position.z = baseZ + (saved ? 0.7 : 1.9) * (1 - ease);   // gentle push-in
         var idle = now - lastPtr > 2600;
-        var ex = idle ? Math.sin(t * 0.4) * 0.22 : tx;
-        var ey = idle ? Math.cos(t * 0.33) * 0.12 : ty;
+        var ex = idle ? Math.sin(t * 0.4) * 0.1 : tx;
+        var ey = idle ? Math.cos(t * 0.33) * 0.05 : ty;
         coreWire.rotation.y = t * 0.35;
         coreWire.rotation.x = t * 0.2;
         coreWire.scale.setScalar(1 + Math.sin(t * 1.6) * 0.03);
@@ -6556,6 +6609,10 @@ __CAT_JS__
                     { p: t, ry: group.rotation.y, rx: group.rotation.x }));
             } catch (err) {}
         }
+        PL.forEach(function (p) {
+            p.grp.position.set(p.sx * halfW * p.fx, halfH * p.fy + Math.sin(t * p.sp + p.ph) * 0.12, -1);
+            if (p.ringMesh) { p.ringMesh.rotation.z = t * 0.6 + p.ph; }
+        });
         renderer.render(scene, camera);
         if (running) { requestAnimationFrame(frame); }
     }
@@ -6785,6 +6842,22 @@ div:has(> .st-key-topbar) { position: sticky; top: 10px; z-index: 60; }
 @media (max-width: 480px) {
     .st-key-topbar button { padding: 0 0.75rem; min-width: 0; }
     .st-key-topbar { padding-left: 0.5rem; }
+}
+.lp-about {
+    max-width: 640px; margin: 0.6rem auto 0; padding: 0.95rem 1.15rem; text-align: center;
+    border-radius: 16px; background: rgba(19, 28, 43, 0.85);
+    box-shadow: inset 0 0 0 1px var(--line);
+}
+.lp-about b { color: var(--white); font-size: 1rem; }
+.lp-about p { margin: 0.3rem 0 0.6rem; color: var(--text); font-size: 0.88rem; line-height: 1.55; }
+.lp-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; justify-content: center; }
+.lp-chips span {
+    padding: 2px 10px; border-radius: 999px; font: 600 0.72rem var(--mono);
+    color: var(--text); background: rgba(229, 56, 59, 0.14);
+}
+.st-key-topbar_home {
+    position: absolute !important; width: 1px; height: 1px; overflow: hidden;
+    opacity: 0; pointer-events: none; margin: 0 !important;
 }
 .lp-footer-note {
     max-width: 640px; margin: 0 auto 1.1rem; color: var(--muted);
@@ -7032,18 +7105,10 @@ __CAT_JS__
         far.width = near.width = W + 80; far.height = near.height = skyH + 240;
         drawDust(far, 7, 70, 2, 3, 0.30);
         drawDust(near, 19, 34, 4, 6, 0.22);
-        if (fe && Math.abs((parseInt(fe.style.height, 10) || 0) - H) > 2) {
-            fe.style.height = H + 'px'; fe.setAttribute('height', H);
-            if (fe.parentElement) {   // Streamlit's wrapper keeps the old height otherwise
-                var bs = fe.parentElement.style, hp = H + 'px';
-                bs.setProperty('height', hp, 'important');
-                bs.setProperty('min-height', '0', 'important');
-                bs.setProperty('max-height', hp, 'important');
-                bs.setProperty('flex', '0 0 ' + hp, 'important');
-            }
-        }
+        if (fe) { sizeFrame(H); }
     }
     layout();
+    setInterval(function () { if (fe) { sizeFrame(H); } }, 1500);
     if (window.ResizeObserver) { new ResizeObserver(layout).observe(wrap); }
     window.addEventListener('resize', layout);
 
@@ -7266,6 +7331,20 @@ DB_ERRORS_AR = {
 }
 
 
+STRINGS["en"].update({
+    "about_title": "About this application",
+    "about_text": ("Nashmi Agent is an independent project by Hassan Aldajah, a cybersecurity "
+                   "student at the University of Jordan. It is still growing and its answers can "
+                   "be wrong, so always double-check anything important."),
+})
+STRINGS["ar"].update({
+    "about_title": "عن هذا التطبيق",
+    "about_text": ("نشمي مشروع مستقل من تطوير حسن الدعجة، طالب أمن سيبراني "
+                   "في الجامعة الأردنية. ما زال يتطور وقد تخطئ إجاباته، "
+                   "لذلك تحقّق دائماً من أي معلومة مهمة."),
+})
+
+
 def lang() -> str:
     """'en' or 'ar'. The first visit follows the browser language; the language
     button changes it. Switching only changes words and text direction, never
@@ -7302,6 +7381,7 @@ RTL_CSS = """
 .st-key-login_card [data-testid="stWidgetLabel"], .st-key-login_card label,
 .st-key-login_card button, .st-key-topbar button, .lp-signin { direction: rtl; }
 .st-key-login_card input { direction: ltr; text-align: left; }
+.lp-signin ul { text-align: right; padding-left: 0; padding-right: 1.2rem; }
 .st-key-login_card [data-testid="stCaptionContainer"] { text-align: center; }
 """
 
@@ -7397,7 +7477,7 @@ MINI_LOGO_TEMPLATE = """<!DOCTYPE html>
     @media (max-width: 170px) { .name span { display: none; } .name { font-size: 16px; } }
     @media (max-width: 135px) { .name { display: none; } }
 </style></head>
-<body><div class="row"><div class="logo"><canvas id="c"></canvas><img alt="Nashmi" src="__AVATAR__"></div>
+<body><div class="row" role="button" tabindex="0" title="Home" style="cursor:pointer"><div class="logo"><canvas id="c"></canvas><img alt="Nashmi" src="__AVATAR__"></div>
 <div class="name"><span>&gt;_</span> Nashmi</div></div>
 <script src="__THREE_URL__" integrity="__THREE_SRI__" crossorigin="anonymous"></script>
 <script>
@@ -7436,6 +7516,17 @@ MINI_LOGO_TEMPLATE = """<!DOCTYPE html>
     f(0);
     if (!reduce) { requestAnimationFrame(f); }
 })();
+(function () {
+    var row = document.querySelector('.row');
+    function home() {
+        try {
+            var b = window.parent.document.querySelector('.st-key-topbar_home button');
+            if (b) { b.click(); }
+        } catch (err) { }
+    }
+    row.addEventListener('click', home);
+    row.addEventListener('keydown', function (e) { if (e.key === 'Enter') { home(); } });
+})();
 </script></body></html>
 """
 
@@ -7466,6 +7557,7 @@ def render_topbar(mode: str = "landing") -> None:
             embed_html(MINI_LOGO_TEMPLATE.replace("__THREE_URL__", THREE_URL)
                        .replace("__THREE_SRI__", THREE_SRI)
                        .replace("__AVATAR__", avatar_data_uri()), 48)
+            st.button("Home", key="topbar_home", on_click=go_gate, args=("landing",))
         cols[1].button(tr("lang_btn"), key="topbar_lang", type="tertiary",
                        on_click=toggle_lang, width="stretch")
         for col, (key, label, kind, target, icon) in zip(cols[2:], actions):
@@ -7477,11 +7569,23 @@ def render_topbar(mode: str = "landing") -> None:
                            args=(target,), icon=icon, width="stretch")
 
 
+def render_about() -> None:
+    """A small 'about' card under the story."""
+    chips = "".join(f"<span>{name}</span>" for name in
+                    ("Python", "Streamlit", "PostgreSQL", "Three.js", "OAuth 2.0 + 2FA"))
+    st.markdown(
+        f'<div class="lp-about"{dir_attr()}><b>{html.escape(tr("about_title"))}</b>'
+        f'<p>{html.escape(tr("about_text"))}</p><div class="lp-chips">{chips}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
 def render_landing() -> None:
     """First page a visitor of the public site sees."""
     render_topbar("landing")
     render_scene("landing")
     render_story()
+    render_about()
     render_footer()
 
 
