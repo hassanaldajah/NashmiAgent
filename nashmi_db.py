@@ -120,8 +120,23 @@ profiles = Table(
     Column("registered_at", DateTime(timezone=True), nullable=False),
 )
 
+mfa = Table(
+    "mfa", metadata,
+    Column("user_id", Integer, ForeignKey("users.id", ondelete="CASCADE"),
+           primary_key=True),
+    Column("secret", Text, nullable=False),            # encrypted base32 secret
+    Column("backup_codes", Text, nullable=False),      # encrypted JSON list of hashes
+    Column("enabled_at", DateTime(timezone=True), nullable=False),
+    Column("last_step", Integer, nullable=False, default=0),
+    Column("failed", Integer, nullable=False, default=0),
+    Column("locked_until", DateTime(timezone=True), nullable=True),
+)
+
 ALL_USER_TABLES = (chats, projects, prefs, usage, api_keys,
-                   login_events, presence, profiles)
+                   login_events, presence, profiles, mfa)
+
+MFA_MAX_FAILURES = 5
+MFA_LOCK_MINUTES = 5
 
 USERNAME_RE = re.compile(r"^[a-z0-9_.]{3,24}$")
 RESERVED_USERNAMES = frozenset({
@@ -263,6 +278,59 @@ class Database:
         except IntegrityError:
             return "That username is already taken."
         return None
+
+    # ------------------------------------------------- two-step verification
+    def get_mfa(self, user_id: int) -> dict | None:
+        """The authenticator secret and state of a user, or None if not set up."""
+        with self.engine.connect() as conn:
+            row = conn.execute(
+                select(mfa).where(mfa.c.user_id == user_id)).mappings().first()
+        if not row:
+            return None
+        return {
+            "secret": self.cipher.decrypt(row["secret"]),
+            "backup_hashes": json.loads(self.cipher.decrypt(row["backup_codes"])),
+            "last_step": int(row["last_step"] or 0),
+            "locked_until": row["locked_until"],
+        }
+
+    def save_mfa(self, user_id: int, secret: str, backup_hashes: list[str]) -> None:
+        with self.engine.begin() as conn:
+            conn.execute(delete(mfa).where(mfa.c.user_id == user_id))
+            conn.execute(insert(mfa).values(
+                user_id=user_id, secret=self.cipher.encrypt(secret),
+                backup_codes=self.cipher.encrypt(json.dumps(backup_hashes)),
+                enabled_at=_now(), last_step=0, failed=0, locked_until=None))
+
+    def mfa_success(self, user_id: int, step: int | None = None) -> None:
+        values = {"failed": 0, "locked_until": None}
+        if step is not None:
+            values["last_step"] = step
+        with self.engine.begin() as conn:
+            conn.execute(update(mfa).where(mfa.c.user_id == user_id).values(**values))
+
+    def mfa_failure(self, user_id: int) -> None:
+        """Count a wrong code; lock further tries for a few minutes after too many."""
+        with self.engine.begin() as conn:
+            failed = (conn.execute(select(mfa.c.failed).where(
+                mfa.c.user_id == user_id)).scalar() or 0) + 1
+            values = {"failed": failed}
+            if failed >= MFA_MAX_FAILURES:
+                values = {"failed": 0, "locked_until":
+                          _now() + timedelta(minutes=MFA_LOCK_MINUTES)}
+            conn.execute(update(mfa).where(mfa.c.user_id == user_id).values(**values))
+
+    def mfa_use_backup(self, user_id: int, code_hash: str) -> bool:
+        """Spend one backup code (each works once)."""
+        state = self.get_mfa(user_id)
+        if not state or code_hash not in state["backup_hashes"]:
+            return False
+        remaining = [h for h in state["backup_hashes"] if h != code_hash]
+        with self.engine.begin() as conn:
+            conn.execute(update(mfa).where(mfa.c.user_id == user_id).values(
+                backup_codes=self.cipher.encrypt(json.dumps(remaining)),
+                failed=0, locked_until=None))
+        return True
 
     # ------------------------------------------- sign-in log and presence
     def record_login(self, user_id: int) -> None:

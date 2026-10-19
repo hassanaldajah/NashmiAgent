@@ -22,6 +22,8 @@ import base64
 import codecs
 import csv
 import hashlib
+import hmac
+import secrets
 import html
 import io
 import ipaddress
@@ -2138,6 +2140,7 @@ def is_admin() -> bool:
     return bool(
         user and account_id() and user["provider"] == "google"
         and user["verified"] and user["email"].strip().lower() in admin_emails()
+        and mfa_passed(account_id())
     )
 
 
@@ -6022,20 +6025,52 @@ function makeLook(el, getCenter) {
 }
 """
 
-# The cat on the line in the story. It has no shemagh. It sits (blinks, wags its
-# tail, looks at the pointer) when the line is still, and runs along the line
-# with a leg cycle that follows the distance travelled when it moves.
+# The cat on the line in the story. It has no shemagh. Like a desktop-pet cat it
+# runs along the line in the direction it travels (front, back or side view),
+# and when it stops it sits, scratches, gets tired and finally falls asleep.
 WALKER_JS = """var WW = 40, WHT = 46;
 var K = '#0b0b10', WH = '#ffffff', GR = '#d3d8e3', RD = '#E5383B', PK = '#f4a3a8';
 
-function drawCatSit(ctx, t, lx, ly) {
-    function px(x, y, w, h, c) { ctx.fillStyle = c; ctx.fillRect(Math.round(x), Math.round(y), w, h); }
-    ctx.clearRect(0, 0, WW, WHT);
-    var B = Math.sin(t * 1.6) > 0.75 ? 1 : 0;
-    function pb(x, y, w, h, c) { px(x, y + B, w, h, c); }
-    var blink = (t % 3.6) > 3.45, k, y;
+function catPx(ctx) {
+    return function (x, y, w, h, c) { ctx.fillStyle = c; ctx.fillRect(Math.round(x), Math.round(y), w, h); };
+}
 
-    for (k = 0; k < 11; k++) {                        // tail curling round the right side
+function catHead(px, B, mode, blink, ox, oy, nx, ny) {
+    var y, x0, x1;
+    function pb(x, y2, w, h, c) { px(x, y2 + B, w, h, c); }
+    for (y = 12; y <= 27; y++) {
+        var ins = (y <= 13 || y >= 26) ? 2 : (y === 14 || y === 25 ? 1 : 0);
+        x0 = 7 + ins; x1 = 32 - ins;
+        pb(x0 - 1, y, 1, 1, K); pb(x1 + 1, y, 1, 1, K);
+        pb(x0, y, x1 - x0 + 1, 1, WH);
+    }
+    pb(9, 11, 22, 1, K); pb(9, 28, 22, 1, K);
+    var ew = [1, 2, 4, 5, 7], up = mode === 'alert' ? 1 : 0;
+    for (y = 6; y <= 10; y++) {
+        var w = ew[y - 6], e0 = 11 - Math.floor(w / 2), f0 = 28 - Math.floor(w / 2);
+        pb(e0 - 1, y - up, 1, 1, K); pb(e0, y - up, w, 1, WH); pb(e0 + w, y - up, 1, 1, K);
+        pb(f0 - 1, y - up, 1, 1, K); pb(f0, y - up, w, 1, WH); pb(f0 + w, y - up, 1, 1, K);
+    }
+    pb(11, 5 - up, 1, 1, K); pb(28, 5 - up, 1, 1, K);
+    pb(11, 8 - up, 1, 2, PK); pb(28, 8 - up, 1, 2, PK);
+    var eh = blink ? 1 : 5, ey = blink ? 18 : 16;
+    if (mode === 'alert') { eh = 6; ey = 15; }
+    if (mode === 'tired') { eh = 2; ey = 19; }
+    pb(13 + ox, ey + oy, 2, eh, K); pb(25 + ox, ey + oy, 2, eh, K);
+    pb(19 + nx, 22 + ny, 2, 1, RD);
+    if (mode === 'tired') { pb(19 + nx, 24 + ny, 2, 2, K); }
+    else { pb(18 + nx, 24 + ny, 1, 1, K); pb(19 + nx, 25 + ny, 2, 1, K); pb(21 + nx, 24 + ny, 1, 1, K); }
+    pb(3 + nx, 22, 4, 1, GR); pb(4 + nx, 24, 3, 1, GR);
+    pb(33 + nx, 22, 4, 1, GR); pb(33 + nx, 24, 3, 1, GR);
+}
+
+function drawCatSit(ctx, t, lx, ly, mode) {
+    var px = catPx(ctx), k, y;
+    ctx.clearRect(0, 0, WW, WHT);
+    var B = (mode === 'tired') ? 1 : (Math.sin(t * 1.6) > 0.75 ? 1 : 0);
+    function pb(x, y2, w, h, c) { px(x, y2 + B, w, h, c); }
+    var blink = (t % 3.6) > 3.45;
+    for (k = 0; k < 11; k++) {
         var u = k / 10, wg = Math.sin(t * 3.2 + k * 0.5) * u * 2.2;
         px(28 + 8 * Math.sin(u * 2.0) + wg - 1, 43 - 15 * u + B - 1, 4, 4, K);
     }
@@ -6043,54 +6078,69 @@ function drawCatSit(ctx, t, lx, ly) {
         var v = k / 10, wg2 = Math.sin(t * 3.2 + k * 0.5) * v * 2.2;
         px(28 + 8 * Math.sin(v * 2.0) + wg2, 43 - 15 * v + B, 2, 2, WH);
     }
-
-    for (y = 29; y <= 43; y++) {                      // sitting body
+    for (y = 29; y <= 43; y++) {
         var hw = y < 32 ? 6 : (y < 37 ? 7 : 9);
         pb(20 - hw - 1, y, 1, 1, K); pb(20 + hw, y, 1, 1, K);
         pb(20 - hw, y, hw * 2, 1, WH);
     }
     pb(10, 44, 20, 1, K);
-    pb(16, 34, 8, 6, GR);                             // belly
-    pb(13, 40, 5, 4, WH); pb(22, 40, 5, 4, WH);       // front paws
-    pb(12, 40, 1, 5, K); pb(18, 40, 1, 5, K); pb(21, 40, 1, 5, K); pb(27, 40, 1, 5, K);
-    pb(15, 42, 1, 2, K); pb(24, 42, 1, 2, K);
-
-    for (y = 12; y <= 27; y++) {                      // head
-        var ins = (y <= 13 || y >= 26) ? 2 : (y === 14 || y === 25 ? 1 : 0);
-        var x0 = 7 + ins, x1 = 32 - ins;
-        pb(x0 - 1, y, 1, 1, K); pb(x1 + 1, y, 1, 1, K);
-        pb(x0, y, x1 - x0 + 1, 1, WH);
+    pb(16, 34, 8, 6, GR);
+    pb(13, 40, 5, 4, WH);
+    pb(12, 40, 1, 5, K); pb(18, 40, 1, 5, K); pb(15, 42, 1, 2, K);
+    if (mode === 'scratch') {                          // right paw scratches the head
+        var sw = Math.floor(t * 7) % 2;
+        pb(27 + sw, 34, 5, 3, K); pb(28 + sw, 34, 3, 3, WH);
+        pb(28 + sw, 24, 5, 11, K); pb(29 + sw, 24, 3, 10, WH);
+        pb(28 + sw, 22, 5, 3, K); pb(29 + sw, 22, 3, 3, WH);
+    } else {
+        pb(22, 40, 5, 4, WH);
+        pb(21, 40, 1, 5, K); pb(27, 40, 1, 5, K); pb(24, 42, 1, 2, K);
     }
-    pb(9, 11, 22, 1, K); pb(9, 28, 22, 1, K);
-    pb(13, 28, 14, 2, RD);                            // collar
-    pb(13, 28, 1, 2, K); pb(26, 28, 1, 2, K);
-
-    var ew = [1, 2, 4, 5, 7];                         // ears
-    for (y = 6; y <= 10; y++) {
-        var w = ew[y - 6], e0 = 11 - Math.floor(w / 2), f0 = 28 - Math.floor(w / 2);
-        pb(e0 - 1, y, 1, 1, K); pb(e0, y, w, 1, WH); pb(e0 + w, y, 1, 1, K);
-        pb(f0 - 1, y, 1, 1, K); pb(f0, y, w, 1, WH); pb(f0 + w, y, 1, 1, K);
-    }
-    pb(11, 5, 1, 1, K); pb(28, 5, 1, 1, K);
-    pb(11, 8, 1, 2, PK); pb(28, 8, 1, 2, PK);
-
-    var ox = Math.round((lx || 0) * 2), oy = Math.round((ly || 0) * 1.5);
-    var nx = Math.round(lx || 0), ny = Math.round(ly || 0);
-    var eh = blink ? 1 : 5, ey = (blink ? 18 : 16) + oy;
-    pb(13 + ox, ey, 2, eh, K); pb(25 + ox, ey, 2, eh, K);
-    pb(19 + nx, 22 + ny, 2, 1, RD);
-    pb(18 + nx, 24 + ny, 1, 1, K); pb(19 + nx, 25 + ny, 2, 1, K); pb(21 + nx, 24 + ny, 1, 1, K);
-    pb(3 + nx, 22, 4, 1, GR); pb(4 + nx, 24, 3, 1, GR);
-    pb(33 + nx, 22, 4, 1, GR); pb(33 + nx, 24, 3, 1, GR);
+    pb(13, 28, 14, 2, RD); pb(13, 28, 1, 2, K); pb(26, 28, 1, 2, K);
+    catHead(px, B, mode, blink, Math.round((lx || 0) * 2), Math.round((ly || 0) * 1.5),
+            Math.round(lx || 0), Math.round(ly || 0));
+    if (mode === 'alert') { px(33, 1, 2, 6, RD); px(33, 8, 2, 2, RD); }
 }
 
-function drawCatRun(ctx, t, gait) {
-    function px(x, y, w, h, c) { ctx.fillStyle = c; ctx.fillRect(Math.round(x), Math.round(y), w, h); }
+function drawCatSleep(ctx, t) {
+    var px = catPx(ctx), y, x;
+    ctx.clearRect(0, 0, WW, WHT);
+    var br = Math.sin(t * 2) > 0.5 ? 1 : 0;
+    for (y = 26; y <= 41 + br; y++) {                  // curled body
+        var dy = (y - 33.5) / (8 + br / 2), half = Math.round(15 * Math.sqrt(Math.max(0, 1 - dy * dy)));
+        px(20 - half - 1, y, 1, 1, K); px(20 + half, y, 1, 1, K);
+        px(20 - half, y, half * 2, 1, WH);
+    }
+    px(8, 42 + br, 24, 1, K);
+    for (y = 26; y <= 41; y++) {                       // the tail wraps round the front
+        px(24, y, 0, 0, K);
+    }
+    px(20, 39, 12, 3, K); px(21, 40, 10, 2, WH); px(31, 37, 2, 4, K); px(30, 38, 2, 3, WH);
+    for (y = 26; y <= 40; y++) {                       // tucked head
+        for (x = 5; x <= 21; x++) {
+            var d = (x - 13) * (x - 13) + (y - 33) * (y - 33);
+            if (d <= 42) { px(x, y, 1, 1, WH); }
+            else if (d <= 55) { px(x, y, 1, 1, K); }
+        }
+    }
+    px(8, 24, 4, 3, K); px(9, 25, 2, 2, WH); px(16, 24, 4, 3, K); px(17, 25, 2, 2, WH);
+    px(9, 33, 3, 1, K); px(15, 33, 3, 1, K);           // closed eyes
+    px(13, 36, 2, 1, RD);                              // nose
+    var z = (t * 0.9) % 1;                             // floating Z letters
+    function zed(zx, zy, a) {
+        ctx.globalAlpha = a; px(zx, zy, 5, 1, WH); px(zx + 3, zy + 1, 1, 1, WH);
+        px(zx + 2, zy + 2, 1, 1, WH); px(zx + 1, zy + 3, 1, 1, WH); px(zx, zy + 4, 5, 1, WH);
+        ctx.globalAlpha = 1;
+    }
+    zed(27, 18 - Math.round(z * 8), 1 - z);
+    zed(32, 10 - Math.round(z * 6), Math.max(0, 0.8 - z));
+}
+
+function drawCatRunSide(ctx, t, gait) {
+    var px = catPx(ctx), y, k;
     ctx.clearRect(0, 0, WW, WHT);
     var g = Math.sin(gait * Math.PI), bob = Math.abs(g) > 0.6 ? 1 : 0;
-    var k, y;
-
-    for (k = 0; k < 10; k++) {                         // tail streams behind
+    for (k = 0; k < 10; k++) {
         var u = k / 9, wv = Math.sin(t * 9 + k * 0.7) * u * 2;
         px(8 - 7 * u - 1, 21 - 9 * u * u + wv - 1 + bob, 4, 4, K);
     }
@@ -6098,43 +6148,113 @@ function drawCatRun(ctx, t, gait) {
         var v = k / 9, wv2 = Math.sin(t * 9 + k * 0.7) * v * 2;
         px(8 - 7 * v, 21 - 9 * v * v + wv2 + bob, 2, 2, WH);
     }
-
-    function leg(x, phase) {                           // four legs, diagonal pairs move together
+    function leg(x, phase) {
         var sw = Math.round(Math.sin(gait * Math.PI + phase) * 4);
         var lift = Math.max(0, Math.sin(gait * Math.PI + phase)) * 2;
         px(x + sw - 1, 25 - lift + bob, 5, 11, K);
         px(x + sw, 25 - lift + bob, 3, 10, WH);
         px(x + sw - 1, 35 - lift + bob, 6, 1, K);
     }
-    leg(10, 0); leg(26, 0);
-    leg(14, Math.PI); leg(22, Math.PI);
-
-    for (y = 18; y <= 28; y++) {                       // long running body
+    leg(10, 0); leg(26, 0); leg(14, Math.PI); leg(22, Math.PI);
+    for (y = 18; y <= 28; y++) {
         var bi = (y === 18 || y === 28) ? 2 : 0;
         px(7 + bi, y + bob, 1, 1, K); px(27 - bi, y + bob, 1, 1, K);
         px(8 + bi, y + bob, 19 - bi * 2, 1, WH);
     }
     px(10, 18 + bob, 15, 1, K); px(10, 29 + bob, 15, 1, K);
-    px(11, 25 + bob, 12, 2, GR);                       // belly shade
-
-    for (y = 14; y <= 26; y++) {                       // head (looks right)
+    px(11, 25 + bob, 12, 2, GR);
+    for (y = 14; y <= 26; y++) {
         var ins = (y <= 15 || y >= 25) ? 2 : (y === 16 || y === 24 ? 1 : 0);
         px(26 + ins - 1, y + bob, 1, 1, K); px(37 - ins + 1, y + bob, 1, 1, K);
         px(26 + ins, y + bob, 12 - ins * 2, 1, WH);
     }
     px(28, 13 + bob, 8, 1, K); px(28, 27 + bob, 8, 1, K);
-    px(26, 20 + bob, 2, 7, RD);                        // collar
+    px(26, 20 + bob, 2, 7, RD);
     px(28, 10 + bob, 3, 3, WH); px(28, 9 + bob, 3, 1, K); px(27, 10 + bob, 1, 3, K); px(31, 10 + bob, 1, 3, K);
     px(33, 10 + bob, 3, 3, WH); px(33, 9 + bob, 3, 1, K); px(32, 10 + bob, 1, 3, K); px(36, 10 + bob, 1, 3, K);
     px(29, 11 + bob, 1, 2, PK); px(34, 11 + bob, 1, 2, PK);
-    px(33, 17 + bob, 2, 4, K);                         // tall eye
-    px(37, 21 + bob, 2, 1, RD);                        // nose
-    px(36, 23 + bob, 2, 1, K);                         // mouth
+    px(33, 17 + bob, 2, 4, K); px(37, 21 + bob, 2, 1, RD); px(36, 23 + bob, 2, 1, K);
     px(38, 19 + bob, 2, 1, GR); px(38, 22 + bob, 2, 1, GR);
 }
 
-function drawCatPose(ctx, t, gait, mv, lx, ly) {
-    if (mv > 0.45) { drawCatRun(ctx, t, gait); } else { drawCatSit(ctx, t, lx, ly); }
+function drawCatRunFront(ctx, t, gait) {
+    var px = catPx(ctx), y, k;
+    ctx.clearRect(0, 0, WW, WHT);
+    var g = Math.sin(gait * Math.PI), B = Math.abs(g) > 0.6 ? 1 : 0;
+    function pb(x, y2, w, h, c) { px(x, y2 + B, w, h, c); }
+    for (k = 0; k < 9; k++) {
+        var u = k / 8, wv = Math.sin(t * 8 + k * 0.6) * u * 2.5;
+        px(30 + 6 * Math.sin(u * 1.6) + wv - 1, 38 - 17 * u * u + B - 1, 4, 4, K);
+    }
+    for (k = 0; k < 9; k++) {
+        var v = k / 8, wv2 = Math.sin(t * 8 + k * 0.6) * v * 2.5;
+        px(30 + 6 * Math.sin(v * 1.6) + wv2, 38 - 17 * v * v + B, 2, 2, WH);
+    }
+    function paw(x, ph) {
+        var s = Math.sin(gait * Math.PI + ph), len = 6 + Math.round(Math.max(0, s) * 4);
+        px(x - 1, 33 + B, 5, len + 2, K); px(x, 33 + B, 3, len + 1, WH); px(x - 1, 33 + B + len + 1, 6, 1, K);
+    }
+    paw(13, 0); paw(23, Math.PI);
+    for (y = 28; y <= 37; y++) {
+        var hw = y < 31 ? 6 : 7;
+        pb(20 - hw - 1, y, 1, 1, K); pb(20 + hw, y, 1, 1, K); pb(20 - hw, y, hw * 2, 1, WH);
+    }
+    pb(16, 31, 8, 4, GR);
+    pb(13, 28, 14, 2, RD); pb(13, 28, 1, 2, K); pb(26, 28, 1, 2, K);
+    catHead(px, B, 'run', false, 0, 0, 0, 0);
+}
+
+function drawCatRunBack(ctx, t, gait) {
+    var px = catPx(ctx), y, k;
+    ctx.clearRect(0, 0, WW, WHT);
+    var g = Math.sin(gait * Math.PI), B = Math.abs(g) > 0.6 ? 1 : 0;
+    function pb(x, y2, w, h, c) { px(x, y2 + B, w, h, c); }
+    for (k = 0; k < 9; k++) {                          // tail, drawn first so the body overlaps it
+        var u = k / 8, wv = Math.sin(t * 8 + k * 0.6) * u * 2.5;
+        px(21 + 8 * Math.sin(u * 1.5) + wv - 1, 36 - 16 * u * u + B - 1, 4, 4, K);
+    }
+    for (k = 0; k < 9; k++) {
+        var v = k / 8, wv2 = Math.sin(t * 8 + k * 0.6) * v * 2.5;
+        px(21 + 8 * Math.sin(v * 1.5) + wv2, 36 - 16 * v * v + B, 2, 2, WH);
+    }
+    function paw(x, ph) {
+        var s = Math.sin(gait * Math.PI + ph), len = 5 + Math.round(Math.max(0, s) * 3);
+        px(x - 1, 35 + B, 5, len + 2, K); px(x, 35 + B, 3, len + 1, WH); px(x - 1, 35 + B + len + 1, 6, 1, K);
+    }
+    paw(13, 0); paw(23, Math.PI);
+    for (y = 28; y <= 38; y++) {
+        var hw = y < 31 ? 6 : 8;
+        pb(20 - hw - 1, y, 1, 1, K); pb(20 + hw, y, 1, 1, K); pb(20 - hw, y, hw * 2, 1, WH);
+    }
+    pb(15, 33, 10, 3, GR);
+    for (y = 12; y <= 27; y++) {                       // back of the head: ears, no face
+        var ins = (y <= 13 || y >= 26) ? 2 : (y === 14 || y === 25 ? 1 : 0);
+        var x0 = 7 + ins, x1 = 32 - ins;
+        pb(x0 - 1, y, 1, 1, K); pb(x1 + 1, y, 1, 1, K); pb(x0, y, x1 - x0 + 1, 1, WH);
+    }
+    pb(9, 11, 22, 1, K); pb(9, 28, 22, 1, K);
+    var ew = [1, 2, 4, 5, 7];
+    for (y = 6; y <= 10; y++) {
+        var w = ew[y - 6], e0 = 11 - Math.floor(w / 2), f0 = 28 - Math.floor(w / 2);
+        pb(e0 - 1, y, 1, 1, K); pb(e0, y, w, 1, WH); pb(e0 + w, y, 1, 1, K);
+        pb(f0 - 1, y, 1, 1, K); pb(f0, y, w, 1, WH); pb(f0 + w, y, 1, 1, K);
+    }
+    pb(11, 5, 1, 1, K); pb(28, 5, 1, 1, K);
+    pb(13, 28, 14, 2, RD); pb(13, 28, 1, 2, K); pb(26, 28, 1, 2, K);
+    pb(16, 18, 8, 1, GR);
+}
+
+// Same idea as the desktop-pet cats: sit when still, scratch, get tired, fall asleep,
+// run in the direction of travel.
+function drawCatState(ctx, state, t, gait, lx, ly) {
+    if (state === 'sleep') { drawCatSleep(ctx, t); }
+    else if (state === 'scratch') { drawCatSit(ctx, t, lx, ly, 'scratch'); }
+    else if (state === 'tired') { drawCatSit(ctx, t, lx, ly, 'tired'); }
+    else if (state === 'alert') { drawCatSit(ctx, t, lx, ly, 'alert'); }
+    else if (state === 'runS') { drawCatRunFront(ctx, t, gait); }
+    else if (state === 'runN') { drawCatRunBack(ctx, t, gait); }
+    else if (state === 'runE') { drawCatRunSide(ctx, t, gait); }
+    else { drawCatSit(ctx, t, lx, ly, 'sit'); }
 }
 """
 
@@ -6393,6 +6513,10 @@ __CAT_JS__
         baseZ = w / h < 0.9 ? 10.5 : (w / h < 1.6 ? 8.6 : 7.2);
         camera.position.set(0, 0, baseZ);
         net.scale.set(Math.max(1, Math.min(2.1, (w / h) * 0.7)), 1, 1);   // wider cloud on wide screens
+        var GS = __GSCALE__, OFF = __OFFSET_Y__;       // keep the whole ring inside the banner
+        var fitK = Math.min(1, (baseZ * 0.4142 * 0.96) / ((3.6 + OFF) * GS));
+        group.scale.setScalar(GS * fitK);
+        group.position.y = OFF * fitK;
         camera.updateProjectionMatrix();
     }
     resize();
@@ -6471,7 +6595,7 @@ SCENE_COPY = {
 # height, scene offset, scene scale, cat width (phone / wide screen), cat
 # vertical position, extra height factor on wide screens
 SCENE_SIZES = {
-    "landing": (470, 0.9, 1.0, (230, 320), "37%", 1.2),
+    "landing": (470, 0.9, 1.0, (230, 250), "37%", 1.2),
     "login": (290, 0.6, 0.66, (150, 150), "36%", 1.0),
     "signup": (290, 0.6, 0.66, (150, 150), "36%", 1.0),
 }
@@ -6729,12 +6853,14 @@ STORY_TEMPLATE = """<!DOCTYPE html>
         mask-image: linear-gradient(transparent, #000 20%, #000 80%, transparent);
     }
     #sky canvas { position: absolute; left: -40px; top: 0; }
-    #track { position: absolute; width: 2px; background: rgba(164, 177, 205, 0.22); }
-    #fill {
-        position: absolute; width: 2px; z-index: 1;
-        background: linear-gradient(#E5383B, #ff6b6e);
-        box-shadow: 0 0 10px rgba(229, 56, 59, 0.6);
+    #pathsvg {
+        position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+        overflow: visible; z-index: 1; pointer-events: none;
     }
+    #pathBg { fill: none; stroke: rgba(164, 177, 205, 0.4); stroke-width: 2;
+              stroke-dasharray: 2 7; stroke-linecap: round; }
+    #pathFill { fill: none; stroke: #ff4b4f; stroke-width: 2.5; stroke-linecap: round;
+                filter: drop-shadow(0 0 6px rgba(229, 56, 59, 0.7)); }
     #rows { position: relative; z-index: 2; }
     .row { position: relative; margin: 0 0 24px; min-height: 64px; }
     .node {
@@ -6776,14 +6902,17 @@ STORY_TEMPLATE = """<!DOCTYPE html>
         filter: drop-shadow(0 0 12px rgba(255, 59, 63, 0.45));
     }
     @media (max-width: 699px) {
-        :root { --tx: 46px; }
-        .row { padding-left: 92px; }
-        #cat { width: 80px; height: 92px; }
+        :root { --tx: 40px; }
+        .row { padding-left: 84px; }
+        #cat { width: 60px; height: 69px; }
     }
     @media (min-width: 700px) {
         :root { --tx: 50%; }
         .row .card { width: calc(50% - 82px); }
         .row:nth-child(even) .card { margin-left: auto; }
+        /* the line zigzags between the card sides, like a path from card to card */
+        .row:nth-child(odd) .node { margin-left: -41px; }
+        .row:nth-child(even) .node { margin-left: 27px; }
         #wrap { padding-left: 24px; padding-right: 24px; }
     }
     @media (prefers-reduced-motion: reduce) {
@@ -6794,7 +6923,7 @@ STORY_TEMPLATE = """<!DOCTYPE html>
 <body>
 <div id="wrap">
     <div id="sky"><canvas id="far"></canvas><canvas id="near"></canvas></div>
-    <div id="track"></div><div id="fill"></div>
+    <svg id="pathsvg" aria-hidden="true"><path id="pathBg"></path><path id="pathFill"></path></svg>
     <div id="rows">__CARDS__</div>
     <canvas id="cat" width="40" height="46" role="img" aria-label="Nashmi the cat walking down the line"></canvas>
 </div>
@@ -6808,20 +6937,19 @@ __CAT_JS__
         window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     var wrap = document.getElementById('wrap');
     var rows = Array.prototype.slice.call(document.querySelectorAll('.row'));
-    var track = document.getElementById('track'), fill = document.getElementById('fill');
+    var pathBg = document.getElementById('pathBg'), pathFill = document.getElementById('pathFill');
     var cat = document.getElementById('cat'), sky = document.getElementById('sky');
     var far = document.getElementById('far'), near = document.getElementById('near');
     var P = null, fe = null;
     try { P = window.parent; fe = window.frameElement; void P.document.body; }
     catch (err) { P = null; fe = null; }
-    var H = 0, W = 0, x = 0, y0 = 0, y1 = 0, centers = [], skyH = 0;
+    var H = 0, W = 0, y0 = 0, y1 = 0, centers = [], skyH = 0, pts = [], pathLen = 0;
 
     var cctx = cat.getContext('2d');
     var look = makeLook(wrap, function () {
         var r = cat.getBoundingClientRect();
         return { x: r.left + r.width / 2, y: r.top + r.height * 0.4 };
     });
-    var gait = 0, mv = 0, dirSign = 1, ang = 0, angTarget = 0;
 
     function rng(seed) {
         var s = seed;
@@ -6842,17 +6970,29 @@ __CAT_JS__
     function layout() {
         var wb = wrap.getBoundingClientRect();
         W = wrap.clientWidth; H = wrap.offsetHeight;
-        centers = rows.map(function (r) {
+        var nx = [], ny = [];
+        rows.forEach(function (r) {
             var n = r.querySelector('.node').getBoundingClientRect();
-            return n.top - wb.top + n.height / 2;
+            nx.push(n.left - wb.left + n.width / 2);
+            ny.push(n.top - wb.top + n.height / 2);
         });
-        var n0 = rows[0].querySelector('.node').getBoundingClientRect();
-        x = n0.left - wb.left + n0.width / 2;
-        y0 = centers[0]; y1 = centers[centers.length - 1];
-        track.style.left = (x - 1) + 'px'; track.style.top = y0 + 'px';
-        track.style.height = (y1 - y0) + 'px';
-        fill.style.left = (x - 1) + 'px'; fill.style.top = y0 + 'px';
-        cat.style.left = x + 'px';
+        centers = ny; y0 = ny[0]; y1 = ny[ny.length - 1];
+        // between two cards the line goes straight, then diagonally, then straight again
+        var d = 'M ' + nx[0] + ',' + ny[0];
+        for (var i = 1; i < nx.length; i++) {
+            var st = Math.round((ny[i] - ny[i - 1]) * 0.3 / 4) * 4;
+            d += ' L ' + nx[i - 1] + ',' + (ny[i - 1] + st) +
+                 ' L ' + nx[i] + ',' + (ny[i] - st) + ' L ' + nx[i] + ',' + ny[i];
+        }
+        pathBg.setAttribute('d', d); pathFill.setAttribute('d', d);
+        pathLen = pathBg.getTotalLength();
+        pathFill.style.strokeDasharray = pathLen + ' ' + pathLen;
+        var count = Math.max(2, Math.ceil(pathLen / 3));
+        pts = [];
+        for (var k = 0; k <= count; k++) {
+            var dist = k / count * pathLen, pt = pathBg.getPointAtLength(dist);
+            pts.push({ x: pt.x, y: pt.y, dist: dist });
+        }
         var vh = (P && P.innerHeight) || 700;
         skyH = Math.min(vh, H);
         sky.style.height = skyH + 'px';
@@ -6874,7 +7014,32 @@ __CAT_JS__
     if (window.ResizeObserver) { new ResizeObserver(layout).observe(wrap); }
     window.addEventListener('resize', layout);
 
-    var cy = y0, passed = [], active = -1;
+    // where the line is at a given height (the line only ever goes down)
+    function pointAtY(y) {
+        var lo = 0, hi = pts.length - 1;
+        while (hi - lo > 1) {
+            var mid = (lo + hi) >> 1;
+            if (pts[mid].y < y) { lo = mid; } else { hi = mid; }
+        }
+        var a = pts[lo], b = pts[hi];
+        var f = Math.max(0, Math.min(1, (y - a.y) / ((b.y - a.y) || 1)));
+        return { x: a.x + (b.x - a.x) * f, y: y, dist: a.dist + (b.dist - a.dist) * f };
+    }
+    // eight directions like a desktop-pet cat: [pose, mirror, tilt]
+    function dirOf(a) {
+        if (a > -22.5 && a <= 22.5) { return ['runE', 1, 0]; }
+        if (a > 22.5 && a <= 67.5) { return ['runE', 1, 25]; }
+        if (a > 67.5 && a <= 112.5) { return ['runS', 1, 0]; }
+        if (a > 112.5 && a <= 157.5) { return ['runE', -1, 25]; }
+        if (a > 157.5 || a <= -157.5) { return ['runE', -1, 0]; }
+        if (a > -157.5 && a <= -112.5) { return ['runE', -1, -25]; }
+        if (a > -112.5 && a <= -67.5) { return ['runN', 1, 0]; }
+        return ['runE', 1, -25];
+    }
+
+    var cy = y0, prevX = null, prevY = null, svx = 0, svy = 0, gait = 0;
+    var state = 'sit', stillSince = null, wasMoving = false, alertUntil = 0;
+    var flip = 1, rot = 0, rotCur = 0, passed = [], active = -1;
     function frame(now) {
         var r = fe ? fe.getBoundingClientRect() : null;
         var vh = (P && P.innerHeight) || 700, tgt;
@@ -6883,17 +7048,31 @@ __CAT_JS__
         var d = tgt - cy;
         cy += d * 0.14;
         if (Math.abs(d) < 0.05) { cy = tgt; }
-        var moved = Math.abs(d * 0.14);
-        mv += ((moved > 0.25 ? 1 : 0) - mv) * 0.2;      // 1 while the line is moving
-        gait += moved / 5;                              // one stride every ~5 px travelled
-        if (Math.abs(d) > 0.5) { dirSign = d > 0 ? 1 : -1; }
-        angTarget = mv > 0.45 ? dirSign * 90 : 0;       // runs head first along the line
-        ang += (angTarget - ang) * 0.25;
-        cat.style.top = cy + 'px';
+        var p = pointAtY(cy);
+        cat.style.left = p.x + 'px'; cat.style.top = p.y + 'px';
+        pathFill.style.strokeDashoffset = (pathLen - p.dist) + 'px';
+        if (prevX === null) { prevX = p.x; prevY = p.y; }
+        svx += ((p.x - prevX) - svx) * 0.35; svy += ((p.y - prevY) - svy) * 0.35;
+        prevX = p.x; prevY = p.y;
+        var speed = Math.sqrt(svx * svx + svy * svy);
+        if (stillSince === null) { stillSince = now; }
+        if (speed > 0.4) {
+            if (!wasMoving && now - stillSince > 1500) { alertUntil = now + 380; }   // wakes up, perks up first
+            wasMoving = true; stillSince = now;
+            gait += speed / 5;                                  // one stride every ~5 px travelled
+            var da = dirOf(Math.atan2(svy, svx) * 180 / Math.PI);
+            state = now < alertUntil ? 'alert' : da[0]; flip = da[1]; rot = da[2];
+        } else {
+            if (wasMoving) { wasMoving = false; stillSince = now; }
+            var still = (now - stillSince) / 1000;
+            state = still < 1.2 ? 'sit' : (still < 3.4 ? 'scratch' :
+                    (still < 4.6 ? 'sit' : (still < 8 ? 'tired' : 'sleep')));
+            flip = 1; rot = 0;
+        }
+        rotCur += (rot - rotCur) * 0.3;
         look.update(now);
-        drawCatPose(cctx, now / 1000, gait, mv, look.x, look.y);
-        cat.style.transform = 'translate(-50%, -56%) rotate(' + ang.toFixed(1) + 'deg)';
-        fill.style.height = Math.max(0, cy - y0) + 'px';
+        drawCatState(cctx, state, now / 1000, gait, look.x, look.y);
+        cat.style.transform = 'translate(-50%, -56%) scaleX(' + flip + ') rotate(' + rotCur.toFixed(1) + 'deg)';
         var best = 0, bd = 1e9;
         for (var i = 0; i < rows.length; i++) {
             var on = centers[i] <= cy + 14;
@@ -7167,6 +7346,175 @@ def render_complete_signup(user_id: int, user: dict) -> None:
     render_footer()
 
 
+# ---------------------------------------------------------------------------
+# Two-step verification: an authenticator app (TOTP) after the Google sign-in
+# ---------------------------------------------------------------------------
+MFA_ISSUER = "Nashmi Agent"
+
+
+def _mfa_libs():
+    try:
+        import pyotp
+        import qrcode
+        return pyotp, qrcode
+    except ImportError:  # the packages are listed in requirements.txt
+        return None, None
+
+
+def mfa_required() -> bool:
+    """On by default. NASHMI_REQUIRE_2FA=0 switches it off (for example if the
+    owner is locked out), and it stays off if the libraries are missing."""
+    return server_setting("NASHMI_REQUIRE_2FA") != "0" and _mfa_libs()[0] is not None
+
+
+def mfa_passed(user_id) -> bool:
+    return (not mfa_required()) or st.session_state.get("_mfa_ok") == user_id
+
+
+def _code_hash(code: str) -> str:
+    return hashlib.sha256(code.strip().lower().replace(" ", "").encode()).hexdigest()
+
+
+def new_backup_codes(count: int = 8) -> list[str]:
+    return [f"{secrets.token_hex(2)}-{secrets.token_hex(2)}" for _ in range(count)]
+
+
+def totp_step(secret: str, code: str) -> int | None:
+    """The 30-second step a correct code belongs to, or None. A code from the
+    previous or next step is accepted to allow for clock drift."""
+    pyotp, _ = _mfa_libs()
+    code = (code or "").strip().replace(" ", "")
+    if not (pyotp and code.isdigit() and len(code) == 6):
+        return None
+    totp, now = pyotp.TOTP(secret), datetime.now(timezone.utc)
+    for offset in (-1, 0, 1):
+        moment = now + timedelta(seconds=30 * offset)
+        if hmac.compare_digest(totp.at(moment), code):
+            return int(totp.timecode(moment))
+    return None
+
+
+def qr_png(uri: str) -> bytes:
+    _, qrcode = _mfa_libs()
+    buf = io.BytesIO()
+    qrcode.make(uri, box_size=6, border=2).save(buf, "PNG")
+    return buf.getvalue()
+
+
+def _mfa_page_start() -> None:
+    st.markdown(
+        f'<style>{LANDING_CSS}.block-container {{ max-width: 620px !important; }}</style>',
+        unsafe_allow_html=True)
+
+
+def render_mfa_setup(user_id: int, user: dict) -> None:
+    """First sign-in: link an authenticator app, then save the backup codes."""
+    pyotp, _ = _mfa_libs()
+    _mfa_page_start()
+    codes = st.session_state.get("_mfa_codes")
+    if codes:
+        st.markdown(
+            '<div class="lp-signin"><h2>Save your backup codes</h2>'
+            '<p>Each code works once if you lose your phone. They are shown '
+            '<b>only now</b>, so copy them somewhere safe.</p></div>',
+            unsafe_allow_html=True)
+        with st.container(key="login_card"):
+            st.code("\n".join(codes), language=None)
+            saved = st.checkbox("I saved these codes")
+            if st.button("Continue", type="primary", width="stretch",
+                         disabled=not saved, key="mfa_codes_done"):
+                st.session_state.pop("_mfa_codes", None)
+                st.session_state["_mfa_ok"] = user_id
+                st.rerun()
+        render_footer()
+        return
+    secret = st.session_state.setdefault("_mfa_secret", pyotp.random_base32())
+    uri = pyotp.TOTP(secret).provisioning_uri(
+        name=user["email"] or user["name"], issuer_name=MFA_ISSUER)
+    st.markdown(
+        '<div class="lp-signin"><h2>Turn on two-step verification</h2>'
+        '<p>1. Open Google Authenticator (or any authenticator app) and scan '
+        'this code.<br>2. Type the 6-digit code the app shows.</p></div>',
+        unsafe_allow_html=True)
+    with st.container(key="login_card"):
+        st.image(qr_png(uri), width=220)
+        st.caption("Cannot scan? Type this key into the app:")
+        st.code(secret, language=None)
+        with st.form("mfa_setup", border=False):
+            code = st.text_input("6-digit code", max_chars=7,
+                                 placeholder="123456")
+            go = st.form_submit_button("Verify and turn on", type="primary",
+                                       width="stretch")
+        if go:
+            if totp_step(secret, code) is None:
+                st.error("That code is not right. Wait for the next one and try again.")
+            else:
+                codes = new_backup_codes()
+                get_db().save_mfa(user_id, secret, [_code_hash(c) for c in codes])
+                step = totp_step(secret, code)
+                get_db().mfa_success(user_id, step)
+                st.session_state.pop("_mfa_secret", None)
+                st.session_state["_mfa_codes"] = codes
+                st.rerun()
+        st.button("Cancel and sign out", key="mfa_cancel", on_click=sign_out,
+                  type="tertiary", width="stretch", icon=":material/logout:")
+    render_footer()
+
+
+def render_mfa_challenge(user_id: int, state: dict) -> None:
+    """Every sign-in: ask for the code from the authenticator app."""
+    _mfa_page_start()
+    st.markdown(
+        '<div class="lp-signin"><h2>Enter your verification code</h2>'
+        '<p>Open your authenticator app and type the 6-digit code. Lost your '
+        'phone? Use one of your backup codes.</p></div>',
+        unsafe_allow_html=True)
+    locked = _as_utc(state["locked_until"])
+    waiting = locked is not None and locked > datetime.now(timezone.utc)
+    with st.container(key="login_card"):
+        if waiting:
+            st.error("Too many wrong codes. Try again at "
+                     f"{locked:%H:%M} UTC.")
+        with st.form("mfa_challenge", border=False):
+            code = st.text_input("Code", max_chars=12,
+                                 placeholder="123456 or backup code")
+            go = st.form_submit_button("Verify", type="primary", width="stretch",
+                                       disabled=waiting)
+        if go and not waiting:
+            db = get_db()
+            step = totp_step(state["secret"], code)
+            if step is not None and step > state["last_step"]:
+                db.mfa_success(user_id, step)
+                st.session_state["_mfa_ok"] = user_id
+                st.rerun()
+            elif db.mfa_use_backup(user_id, _code_hash(code or "")):
+                db.mfa_success(user_id)
+                st.session_state["_mfa_ok"] = user_id
+                st.rerun()
+            else:
+                db.mfa_failure(user_id)
+                st.error("That code is not right.")
+        st.button("Sign out", key="mfa_signout", on_click=sign_out,
+                  type="tertiary", width="stretch", icon=":material/logout:")
+    render_footer()
+
+
+def mfa_gate(user_id: int | None, user: dict | None) -> bool:
+    """True when a page was shown and the app must not be rendered yet."""
+    if not (user_id and user and mfa_required()) or mfa_passed(user_id):
+        return False
+    try:
+        state = get_db().get_mfa(user_id)
+    except Exception:  # noqa: BLE001 - never lock people out of a broken DB
+        LOGGER.exception("Could not read the two-step state")
+        return False
+    if state is None or st.session_state.get("_mfa_codes"):
+        render_mfa_setup(user_id, user)      # also shows the backup codes once
+    else:
+        render_mfa_challenge(user_id, state)
+    return True
+
+
 def render_auth_page(mode: str) -> None:
     """Sign-in and sign-up page. Google shows its own password / 2-step
     screen and Nashmi never sees or stores a password. A new Google account
@@ -7434,6 +7782,8 @@ def main() -> None:
         return
     if needs_signup(account_id()):
         render_complete_signup(account_id(), current_user())
+        return
+    if mfa_gate(account_id(), current_user()):
         return
     st.markdown(f"<style>{APP_POLISH_CSS}</style>", unsafe_allow_html=True)
     nav_box = st.sidebar.container(key="side_nav")
