@@ -260,6 +260,145 @@ class Track:
     actions: tuple[tuple[str, str], ...] = ()  # (button label, prompt)
 
 
+MODE_CTF = "CTF"
+
+# What a strong CTF player checks first in each category. The same notes feed
+# the system prompt of the CTF track and the per-question expert prompt.
+CTF_CATEGORIES = {
+    "Web": (
+        r"\b(web|http|https|cookie|jwt|session|sqli?|sql injection|xss|csrf|"
+        r"ssrf|ssti|xxe|lfi|rfi|idor|graphql|php|flask|node|burp|login page|"
+        r"robots\.txt|endpoint|api|url|parameter)\b",
+        "view-source, robots.txt, headers and cookies; decode JWTs and "
+        "sessions; test injection (SQLi, SSTI, command injection, XXE, "
+        "SSRF, LFI/path traversal), auth and logic flaws (IDOR, mass "
+        "assignment, race conditions), client side (XSS, CSRF, prototype "
+        "pollution). Tools: Burp Suite, curl, ffuf, sqlmap.",
+    ),
+    "Crypto": (
+        r"\b(crypto|cipher|encrypt\w*|decrypt\w*|rsa|aes|des|xor|hash|md5|"
+        r"sha\d*|base64|modulus|exponent|ciphertext|plaintext|key|nonce|iv|"
+        r"padding oracle|ecb|cbc|ctr|gcm|prng|lcg|caesar|vigenere|"
+        r"diffie|elliptic|ecdsa|lattice)\b",
+        "tell classical from modern crypto; single-byte and repeating-key "
+        "XOR, frequency analysis; RSA flaws (small e, shared modulus, "
+        "common factors, Wiener, Hastad, partial key); AES ECB/CBC "
+        "(bit flipping, padding oracle, ECB cut-and-paste); hash length "
+        "extension; weak PRNG/LCG. Tools: CyberChef, dCode, RsaCtfTool, "
+        "SageMath, z3, pycryptodome.",
+    ),
+    "Pwn": (
+        r"\b(pwn|binary exploitation|buffer overflow|stack|heap|rop|ret2\w+|"
+        r"shellcode|format string|canary|aslr|pie|nx|got|plt|libc|gdb|"
+        r"segfault|nc|netcat|remote service|checksec)\b",
+        "run checksec and file; find the bug class (stack overflow, format "
+        "string, heap, integer overflow); get the offset with cyclic and "
+        "gdb (pwndbg/GEF); ret2win, ROP, ret2libc, shellcode, one_gadget. "
+        "Give a pwntools template.",
+    ),
+    "Reverse": (
+        r"\b(reverse|reversing|rev|disassembl\w*|decompil\w*|ghidra|ida|"
+        r"radare2?|r2|crackme|keygen|obfuscat\w*|packed|upx|elf|pe file|"
+        r"exe|apk|jar|pyc|dotnet|assembly|angr)\b",
+        "file, strings, ltrace/strace first; open in Ghidra/IDA/radare2 and "
+        "find the comparison that decides success; watch for anti-debug and "
+        "packing (UPX); solve constraints with z3 or angr; use the right "
+        "decompiler (jadx, dnSpy, pycdc/uncompyle6).",
+    ),
+    "Forensics": (
+        r"\b(forensics?|pcap|pcapng|wireshark|tshark|memory dump|volatility|"
+        r"disk image|autopsy|registry|evtx|event log|carv\w*|deleted file|"
+        r"timeline|artifact|dmp|e01|raw dump|log file)\b",
+        "file, exiftool, binwalk, foremost for unknown files; Wireshark "
+        "(follow stream, export objects, filters) and tshark for pcaps; "
+        "Volatility 3 for memory (pslist, netscan, cmdline, filescan); "
+        "Autopsy/FTK for disks; event logs and registry for Windows.",
+    ),
+    "Stego": (
+        r"\b(stego\w*|steghide|zsteg|lsb|hidden message|hidden in|image|"
+        r"png|jpe?g|bmp|gif|wav|mp3|audio|spectrogram|sstv|dtmf|exif)\b",
+        "exiftool, strings, binwalk and check for appended data; images: "
+        "zsteg, StegSolve, steghide, per-channel and LSB planes, palette; "
+        "audio: spectrogram in Audacity or Sonic Visualiser, DTMF, SSTV.",
+    ),
+    "OSINT": (
+        r"\b(osint|geolocat\w*|where was|which city|username|social media|"
+        r"twitter|instagram|linkedin|whois|dns|wayback|reverse image|"
+        r"google dork\w*|coordinates|landmark|street view)\b",
+        "reverse image search (Google Lens, Yandex, TinEye), EXIF and map "
+        "clues, Wayback Machine, username and e-mail search, WHOIS/DNS "
+        "history, Google dorks, Street View and Mapillary for locations.",
+    ),
+    "Misc": (
+        r"\b(misc|encoding|base32|base58|base85|hex|binary|morse|"
+        r"brainfuck|esolang|qr code|barcode|jail|pyjail|sandbox escape|"
+        r"scripting|puzzle|trivia|ctf)\b",
+        "identify the encoding layers (base64/32/58/85, hex, binary, morse, "
+        "esoteric languages like Brainfuck); QR and barcodes; jail escapes "
+        "(pyjail, restricted bash); automate repetitive steps with a short "
+        "Python script.",
+    ),
+}
+
+CTF_FOCUS = (
+    "CTF (capture the flag) coaching across every category. Think like a "
+    "seasoned CTF player: read the challenge title, description, points and "
+    "hints for clues; classify the category; do the cheap checks first; "
+    "rank hypotheses; give exact commands or a short script; check the "
+    "flag format; say what to try next when stuck. Teach why each step "
+    "works, so the player learns. When the player asks only for a hint, "
+    "give hints and not the full solution. When a file, source code or tool "
+    "output is needed, say exactly what to run and paste instead of "
+    "guessing. Only help with challenge targets that belong to the CTF or "
+    "the player's own lab. Category checklists: "
+    + " ".join(f"[{name}] {notes}" for name, (_, notes)
+               in CTF_CATEGORIES.items())
+)
+
+CTF_PROMPT_TEMPLATE = (
+    "CTF challenge help. Detected category: {category}. Player's message:\n"
+    "'''{user_text}'''\n\n"
+    "Answer as a seasoned CTF player coaching a teammate:\n"
+    "1. Restate what is given and the goal, and the flag format if known.\n"
+    "2. Name the likely technique and why in a sentence or two. If the "
+    "detected category looks wrong, say so and re-classify.\n"
+    "3. Give a numbered plan, cheapest checks first, with the exact "
+    "commands or a short script.\n"
+    "4. Checklist for this category: {notes}\n"
+    "5. If something needed is missing (file, source, service output), say "
+    "precisely what to run or paste, and do not guess.\n"
+    "6. Say what to try next if the first approach fails. If the player "
+    "asked only for a hint, give hints only.\n"
+    "Match the answer length to the question; for a greeting or an unclear "
+    "message reply briefly and ask for the challenge."
+)
+
+
+def detect_ctf_category(text: str) -> str | None:
+    """Best-guess CTF category from keywords, or None when nothing fits."""
+    best, best_hits = None, 0
+    for name, (pattern, _) in CTF_CATEGORIES.items():
+        hits = len(re.findall(pattern, text, flags=re.IGNORECASE))
+        if hits > best_hits:
+            best, best_hits = name, hits
+    return best
+
+
+def build_ctf_prompt(user_text: str) -> str:
+    """Rewrite a plain CTF question into a category-aware expert prompt."""
+    category = detect_ctf_category(user_text)
+    if category:
+        notes = CTF_CATEGORIES[category][1]
+        label = f"{category} (guessed from keywords)"
+    else:
+        notes = ("first identify the category from the title, files and "
+                 "description, then use that category's usual first checks")
+        label = "unknown, identify it first"
+    return CTF_PROMPT_TEMPLATE.format(
+        category=label, user_text=user_text, notes=notes
+    )
+
+
 MODE_CHAT = "Chat"
 MODE_SOC = "SOC Analyzer"
 MODE_TOOLS = "Toolbox"
@@ -410,6 +549,53 @@ TRACKS = (
                 "Give me a professional penetration test report structure "
                 "with one example finding written in full (description, "
                 "impact, evidence, CVSS, remediation).",
+            ),
+        ),
+    ),
+    Track(
+        name=MODE_CTF,
+        blurb="CTF coach for every category: web, crypto, pwn, reverse, "
+              "forensics, stego, OSINT and misc. Describe a challenge and "
+              "get a step-by-step approach.",
+        placeholder="Paste a CTF challenge, a file's output or ask how to "
+                    "start (web, crypto, pwn, rev, forensics...)",
+        focus=CTF_FOCUS,
+        context="CTF challenge solving (web, crypto, pwn, reverse, "
+                "forensics, stego, OSINT, misc)",
+        actions=(
+            (
+                "Web: where do I start?",
+                "I have a CTF web challenge with a login page. Walk me "
+                "through the first checks and the most likely "
+                "vulnerabilities, with the exact commands.",
+            ),
+            (
+                "Crypto: identify the cipher",
+                "I have a CTF crypto challenge with a ciphertext. How do I "
+                "work out which cipher or flaw it uses, step by step?",
+            ),
+            (
+                "Pwn: first steps on a binary",
+                "I downloaded a CTF binary and there is a remote service. "
+                "What do I run first, and how do I find and exploit a "
+                "buffer overflow with pwntools?",
+            ),
+            (
+                "Reverse: crack a crackme",
+                "I have a CTF reverse engineering binary that asks for a "
+                "password. How do I find the check in Ghidra and recover "
+                "the flag, including with z3 or angr?",
+            ),
+            (
+                "Forensics: analyse a pcap or image",
+                "I have a CTF forensics file I know nothing about. Give me "
+                "the triage workflow for unknown files, pcaps, memory "
+                "dumps and disk images.",
+            ),
+            (
+                "Stego and OSINT checklist",
+                "Give me a checklist for CTF steganography on images and "
+                "audio, and for OSINT geolocation challenges.",
             ),
         ),
     ),
@@ -652,6 +838,17 @@ TRACK_REFS = {
         ("NIST SP 800-190 (containers)",
          "https://csrc.nist.gov/pubs/sp/800/190/final"),
     ),
+    MODE_CTF: (
+        ("CTFtime", "https://ctftime.org/"),
+        ("CTF101", "https://ctf101.org/"),
+        ("picoCTF", "https://picoctf.org/"),
+        ("pwn.college", "https://pwn.college/"),
+        ("OverTheWire wargames", "https://overthewire.org/wargames/"),
+        ("CyberChef", "https://gchq.github.io/CyberChef/"),
+        ("GTFOBins", "https://gtfobins.github.io/"),
+        ("PayloadsAllTheThings",
+         "https://github.com/swisskyrepo/PayloadsAllTheThings"),
+    ),
     MODE_SOC: (
         ("NIST SP 800-61 Rev. 3 (incident response)",
          "https://csrc.nist.gov/pubs/sp/800/61/r3/final"),
@@ -770,6 +967,8 @@ def wrap_prompt_as_security_expert(user_text: str, mode: str) -> str:
     """Turn a plain question into an expert prompt for the chosen track."""
     if mode == MODE_CHAT:
         return user_text  # normal chat: send the message as written
+    if mode == MODE_CTF:
+        return build_ctf_prompt(user_text)
     track = TRACKS_BY_NAME.get(mode)
     return EXPERT_TEMPLATE.format(
         context=track.context if track and track.context else mode,
@@ -1858,6 +2057,7 @@ def current_user() -> dict | None:
             "email": email,
             "name": str(user.get("name") or email.split("@")[0] or "Account"),
             "picture": str(user.get("picture") or ""),
+            "verified": user.get("email_verified") is True,
         }
     except Exception:  # noqa: BLE001 - sign-in not configured
         return None
@@ -1899,7 +2099,45 @@ def account_id() -> int | None:
         except Exception:  # noqa: BLE001
             LOGGER.exception("Could not open the account")
             st.session_state["_account_id"] = None
+        else:
+            try:  # the sign-in log must never block signing in
+                db.record_login(st.session_state["_account_id"])
+            except Exception:  # noqa: BLE001
+                LOGGER.exception("Could not log the sign-in")
     return st.session_state.get("_account_id")
+
+
+PRESENCE_EVERY_SECONDS = 60
+ONLINE_WINDOW_MINUTES = 5
+
+
+def touch_presence() -> None:
+    """Tell the database this signed-in user is active (at most once a minute
+    per session), so the admin screen can show who is online right now."""
+    user_id, db = st.session_state.get("_account_id"), get_db()
+    if not (user_id and db):
+        return
+    if time.time() - st.session_state.get("_presence_at", 0) < PRESENCE_EVERY_SECONDS:
+        return
+    st.session_state["_presence_at"] = time.time()
+    try:
+        db.touch_presence(user_id)
+    except Exception:  # noqa: BLE001 - presence is best effort
+        LOGGER.exception("Could not update presence")
+
+
+def admin_emails() -> set[str]:
+    raw = server_setting("NASHMI_ADMIN_EMAILS")
+    return {e.strip().lower() for e in raw.split(",") if e.strip()}
+
+
+def is_admin() -> bool:
+    """Only a verified Google e-mail listed in NASHMI_ADMIN_EMAILS."""
+    user = current_user()
+    return bool(
+        user and account_id() and user["provider"] == "google"
+        and user["verified"] and user["email"].strip().lower() in admin_emails()
+    )
 
 
 def _chat_digest(track: str, chat: dict) -> str:
@@ -2023,6 +2261,15 @@ def on_delete_account() -> None:
 
 def open_account() -> None:
     st.session_state["view"] = "account"
+
+
+def open_admin() -> None:
+    st.session_state["view"] = "admin"
+
+
+def sign_out() -> None:
+    st.session_state["gate"] = "landing"
+    st.logout()
 
 
 def close_account() -> None:
@@ -3942,6 +4189,7 @@ def render_login_buttons(key_prefix: str) -> None:
             key=f"{key_prefix}_login_{provider}",
             on_click=start_login, args=(provider,),
             icon=":material/login:",
+            width="stretch" if key_prefix == "login" else "content",
         )
 
 
@@ -3997,8 +4245,11 @@ def render_user_card(box) -> None:
                 first.button("Account", key="open_account",
                              on_click=open_account,
                              icon=":material/account_circle:")
-                second.button("Sign out", key="sign_out", on_click=st.logout,
+                second.button("Sign out", key="sign_out", on_click=sign_out,
                               icon=":material/logout:", type="tertiary")
+                if is_admin():
+                    st.button("Admin", key="open_admin", on_click=open_admin,
+                              icon=":material/monitoring:", type="tertiary")
         elif accounts_enabled():
             st.caption("Guest: chats are not saved. Sign in to keep them.")
             render_login_buttons("side")
@@ -4176,7 +4427,7 @@ def render_account(settings: Settings) -> None:
                 unsafe_allow_html=True)
     if st.session_state.get("_account_deleted"):
         st.success("Your account and data were deleted. Sign out to finish.")
-        st.button("Sign out", key="sign_out_deleted", on_click=st.logout,
+        st.button("Sign out", key="sign_out_deleted", on_click=sign_out,
                   icon=":material/logout:")
         return
     profile, prefs_tab, usage_tab, data_tab = st.tabs(
@@ -4192,7 +4443,7 @@ def render_account(settings: Settings) -> None:
                 f"Signed in with {user['provider'].title()}"
                 + (f" - member since {since}" if since else "")
             )
-            st.button("Sign out", key="sign_out_page", on_click=st.logout,
+            st.button("Sign out", key="sign_out_page", on_click=sign_out,
                       icon=":material/logout:")
         else:
             st.markdown("### Guest")
@@ -5598,6 +5849,360 @@ def render_exam_track(settings: Settings) -> None:
     render_references("Practice Exam")
 
 
+# ---------------------------------------------------------------------------
+# Landing page, sign-in page and admin screen
+# ---------------------------------------------------------------------------
+LANDING_CSS = """
+.lp-hero { text-align: center; padding: 2.2rem 0 0.4rem; }
+.lp-badge {
+    display: inline-block; padding: 0.25rem 0.8rem; border-radius: 999px;
+    border: 1px solid var(--accent-dim); background: var(--accent-soft);
+    color: var(--white); font: 600 0.78rem var(--mono); letter-spacing: 0.04em;
+}
+.lp-title {
+    margin: 1rem 0 0.4rem; color: var(--white); font-weight: 800;
+    font-size: clamp(2rem, 6vw, 3.2rem); line-height: 1.1;
+}
+.lp-title span { color: var(--accent); }
+.lp-sub {
+    max-width: 640px; margin: 0 auto 1.2rem; color: var(--text);
+    font-size: clamp(1rem, 2.6vw, 1.15rem); line-height: 1.55;
+}
+.lp-grid {
+    display: grid; gap: 0.9rem; margin: 1.6rem 0 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+.lp-card {
+    padding: 1.1rem 1.15rem; border-radius: 14px;
+    background: var(--panel); border: 1px solid var(--line);
+}
+.lp-card b { display: block; color: var(--white); margin-bottom: 0.3rem; }
+.lp-card span { color: var(--text); font-size: 0.93rem; line-height: 1.5; }
+.lp-note {
+    max-width: 640px; margin: 0.8rem auto 0; text-align: center;
+    color: var(--muted); font-size: 0.85rem; line-height: 1.5;
+}
+.lp-signin {
+    max-width: 440px; margin: 2rem auto 0.6rem; padding: 1.6rem 1.4rem;
+    border-radius: 16px; background: var(--panel);
+    border: 1px solid var(--line); text-align: center;
+}
+.lp-signin h2 {
+    margin: 0 0 0.4rem; padding: 0; color: var(--white); font-size: 1.5rem;
+    text-align: center;
+}
+.lp-signin p { margin: 0.2rem 0 0.8rem; color: var(--text); font-size: 0.95rem; }
+.lp-signin ul {
+    margin: 0.4rem 0 0; padding-left: 1.2rem; text-align: left;
+    color: var(--text); font-size: 0.92rem; line-height: 1.7;
+}
+.st-key-landing_cta, .st-key-login_card { max-width: 440px; margin: 0 auto; }
+.st-key-login_card [data-testid="stButton"],
+.st-key-login_card [data-testid="stButton"] button { width: 100%; }
+.st-key-login_card [data-testid="stCaptionContainer"] {
+    color: var(--text); text-align: center;
+}
+"""
+
+LANDING_FEATURES = (
+    ("SOC Analyzer",
+     "Upload logs, PCAPs, screenshots or alerts and get a structured "
+     "analyst-style report."),
+    ("Security Toolbox",
+     "CVE lookup from the NVD, hashing and encoding, and an IOC extractor "
+     "that need no AI at all."),
+    ("Practice Exams",
+     "Generate cybersecurity practice exams from your own material and get "
+     "them graded."),
+    ("CTF Coach",
+     "Describe any CTF challenge, web, crypto, pwn, reverse, forensics or "
+     "OSINT, and get a step-by-step approach."),
+)
+
+PRIVACY_NOTE = (
+    "Signing in stores your name, e-mail address and sign-in times. Your "
+    "chats and saved keys are encrypted. Guests store nothing."
+)
+
+
+def go_gate(name: str) -> None:
+    st.session_state["gate"] = name
+
+
+def current_gate() -> str:
+    """'landing', 'login' or 'app'. Only a shared (public) server gates."""
+    if not is_public() or current_user():
+        return "app"
+    return st.session_state.get("gate", "landing")
+
+
+def render_landing() -> None:
+    """First page a visitor of the public site sees."""
+    cards = "".join(
+        f'<div class="lp-card"><b>{html.escape(title)}</b>'
+        f'<span>{html.escape(text)}</span></div>'
+        for title, text in LANDING_FEATURES
+    )
+    st.markdown(
+        f'<style>{LANDING_CSS}</style>'
+        '<div class="lp-hero"><span class="lp-badge">&gt; CYBERSECURITY AI '
+        'AGENT</span>'
+        '<div class="lp-title" role="heading" aria-level="1">Meet '
+        f'<span>{html.escape(APP_NAME)}</span></div>'
+        '<p class="lp-sub">An AI agent built only for cybersecurity. '
+        'Analyse incidents, look up vulnerabilities and practise for exams, '
+        'with your own API key and your data kept private.</p></div>',
+        unsafe_allow_html=True,
+    )
+    with st.container(key="landing_cta"):
+        if accounts_enabled():
+            st.button("Sign in", key="landing_signin", type="primary",
+                      on_click=go_gate, args=("login",),
+                      icon=":material/login:", width="stretch")
+            st.button("Continue as guest", key="landing_guest",
+                      on_click=go_gate, args=("app",),
+                      icon=":material/arrow_forward:",
+                      width="stretch")
+        else:
+            st.button("Start", key="landing_guest", type="primary",
+                      on_click=go_gate, args=("app",),
+                      icon=":material/arrow_forward:",
+                      width="stretch")
+    st.markdown(f'<div class="lp-grid">{cards}</div>', unsafe_allow_html=True)
+    if accounts_enabled():
+        st.markdown(f'<p class="lp-note">{html.escape(PRIVACY_NOTE)}</p>',
+                    unsafe_allow_html=True)
+
+
+def render_login_page() -> None:
+    """Focused sign-in page. Google shows its own password / 2-step screen;
+    Nashmi never sees or stores a password."""
+    st.markdown(
+        f'<style>{LANDING_CSS}</style>'
+        '<div class="lp-signin"><h2>Sign in to '
+        f'{html.escape(APP_NAME)}</h2>'
+        '<p>Keep your work between visits.</p><ul>'
+        '<li>Your chats and projects are saved</li>'
+        '<li>Usage history across devices</li>'
+        '<li>Optionally save API keys, encrypted</li></ul></div>',
+        unsafe_allow_html=True,
+    )
+    with st.container(key="login_card"):
+        render_login_buttons("login")
+        st.caption("You will be sent to your provider to verify who you "
+                   "are. Nashmi never sees your password.")
+        st.button("Continue as guest", key="login_guest", on_click=go_gate,
+                  args=("app",), width="stretch")
+        st.button("Back", key="login_back", on_click=go_gate,
+                  args=("landing",), type="tertiary", width="stretch",
+                  icon=":material/arrow_back:")
+    st.markdown(f'<p class="lp-note">{html.escape(PRIVACY_NOTE)}</p>',
+                unsafe_allow_html=True)
+
+
+def _as_utc(value):
+    """Databases such as SQLite hand back naive datetimes; they are UTC."""
+    if value is None:
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def _ago(value) -> str:
+    value = _as_utc(value)
+    if value is None:
+        return "-"
+    seconds = max(0, int((datetime.now(timezone.utc) - value).total_seconds()))
+    if seconds < 60:
+        return f"{seconds}s ago"
+    if seconds < 3600:
+        return f"{seconds // 60} min ago"
+    if seconds < 86400:
+        return f"{seconds // 3600} h ago"
+    return f"{seconds // 86400} d ago"
+
+
+def _stamp(value) -> str:
+    value = _as_utc(value)
+    return value.strftime("%Y-%m-%d %H:%M UTC") if value else "-"
+
+
+@st.fragment(run_every=10)
+def render_admin_live() -> None:
+    """The live part of the admin screen; refreshes itself every 10 s."""
+    import pandas as pd
+
+    db = get_db()
+    if not (db and is_admin()):  # re-checked on every refresh
+        st.error("Admins only.")
+        return
+    data = db.admin_overview(online_minutes=ONLINE_WINDOW_MINUTES)
+    first, second, third, fourth = st.columns(4)
+    first.metric("Online now", len(data["online"]))
+    second.metric("Sign-ins today", data["logins_today"])
+    third.metric("Total users", data["total_users"])
+    fourth.metric("New this week", data["new_this_week"])
+    st.caption(
+        f"Online = active in the last {ONLINE_WINDOW_MINUTES} minutes. "
+        f"Updated {datetime.now(timezone.utc):%H:%M:%S} UTC, refreshes "
+        "every 10 seconds."
+    )
+    st.subheader("Online now")
+    if data["online"]:
+        st.dataframe(pd.DataFrame([
+            {"Name": r["name"], "E-mail": r["email"],
+             "Last active": _ago(r["last_seen"])}
+            for r in data["online"]
+        ]), hide_index=True, width="stretch")
+    else:
+        st.info("Nobody is online right now.")
+    st.subheader("Recent sign-ins")
+    if data["recent_logins"]:
+        st.dataframe(pd.DataFrame([
+            {"Name": r["name"], "E-mail": r["email"],
+             "When": _stamp(r["at"]), "": _ago(r["at"])}
+            for r in data["recent_logins"]
+        ]), hide_index=True, width="stretch")
+    else:
+        st.info("No sign-ins yet.")
+def render_admin_stats(db) -> None:
+    """Trends over the last 30 days. Counts only, never chat text."""
+    import pandas as pd
+
+    stats = db.admin_stats(days=30)
+    first, second, third, fourth = st.columns(4)
+    first.metric("Active users (24 h)", stats["active_1d"])
+    second.metric("Active users (7 d)", stats["active_7d"])
+    third.metric("Active users (30 d)", stats["active_30d"])
+    fourth.metric("Total chats saved", stats["chats_total"])
+    days = pd.to_datetime(stats["days"])
+
+    def chart(title: str, series: list[int], kind: str = "bar") -> None:
+        st.subheader(title)
+        frame = pd.DataFrame({title: series}, index=days)
+        (st.bar_chart if kind == "bar" else st.line_chart)(frame)
+
+    chart("New sign-ups per day", stats["signups_by_day"])
+    chart("Sign-ins per day", stats["logins_by_day"])
+    chart("Distinct users signing in per day", stats["active_users_by_day"],
+          "line")
+    chart("AI requests per day", stats["requests_by_day"])
+    left, right = st.columns(2)
+    with left:
+        st.subheader("Requests by model (30 d)")
+        if stats["requests_by_model"]:
+            st.dataframe(pd.DataFrame(
+                stats["requests_by_model"], columns=["Model", "Requests"]),
+                hide_index=True, width="stretch")
+        else:
+            st.info("No requests yet.")
+        st.subheader("Chats by track")
+        if stats["chats_by_track"]:
+            st.dataframe(pd.DataFrame(
+                stats["chats_by_track"], columns=["Track", "Chats"]),
+                hide_index=True, width="stretch")
+        else:
+            st.info("No saved chats yet.")
+    with right:
+        st.subheader("Most active users (30 d)")
+        if stats["top_users"]:
+            st.dataframe(pd.DataFrame([
+                {"Name": r["name"], "E-mail": r["email"],
+                 "Requests": r["requests"]} for r in stats["top_users"]
+            ]), hide_index=True, width="stretch")
+        else:
+            st.info("No requests yet.")
+        st.metric("Users with a saved API key",
+                  stats["users_with_saved_keys"])
+    st.caption("Chat contents are encrypted and are never shown here.")
+
+
+def render_admin_users(db) -> None:
+    import pandas as pd
+
+    data = db.admin_overview(online_minutes=ONLINE_WINDOW_MINUTES)
+    frame = pd.DataFrame([
+        {"Name": r["name"], "E-mail": r["email"],
+         "Joined": _stamp(r["created_at"]),
+         "Last sign-in": _stamp(r["last_login"]), "Sign-ins": r["logins"]}
+        for r in data["users"]
+    ])
+    st.caption(f"{data['total_users']} users, newest activity first.")
+    if frame.empty:
+        st.info("No users yet.")
+        return
+    query = st.text_input("Search by name or e-mail", key="admin_search")
+    if query.strip():
+        needle = query.strip().lower()
+        frame = frame[
+            frame["Name"].str.lower().str.contains(needle, regex=False)
+            | frame["E-mail"].str.lower().str.contains(needle, regex=False)
+        ]
+    st.dataframe(frame, hide_index=True, width="stretch")
+    st.download_button(
+        "Download as CSV", frame.to_csv(index=False).encode("utf-8"),
+        file_name="nashmi_users.csv", mime="text/csv",
+        icon=":material/download:",
+    )
+
+
+def render_admin_system(db) -> None:
+    """What is configured and whether the database answers."""
+    from sqlalchemy import text
+
+    started = time.perf_counter()
+    try:
+        with db.engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        latency = f"{(time.perf_counter() - started) * 1000:.0f} ms"
+        reachable = "Reachable"
+    except Exception:  # noqa: BLE001
+        reachable, latency = "Not reachable", "-"
+    rows = [
+        ("Database", "SQLite (local test)" if db.is_sqlite else "PostgreSQL"),
+        ("Database status", reachable),
+        ("Database latency", latency),
+        ("Encryption at rest", "On" if db.cipher.enabled else "Off"),
+        ("Sign-in providers", ", ".join(auth_providers()) or "none"),
+        ("Public mode", "On" if is_public() else "Off"),
+        ("Admins configured", str(len(admin_emails()))),
+        ("Streamlit", st.__version__),
+    ]
+    st.dataframe(pd_rows(rows), hide_index=True, width="stretch")
+    if not db.is_sqlite and not db.cipher.enabled:
+        st.warning("Encryption is off. Set NASHMI_SECRET_KEY.")
+
+
+def pd_rows(rows: list[tuple[str, str]]):
+    import pandas as pd
+
+    return pd.DataFrame(rows, columns=["Setting", "Value"])
+
+
+def render_admin() -> None:
+    """Admin screen: live activity, statistics, users and system health."""
+    st.button("Back to chat", key="close_admin", on_click=close_account,
+              icon=":material/arrow_back:")
+    st.markdown('<div class="empty-title">Admin</div>'
+                '<div class="empty-blurb">Sign-ins, live activity and '
+                'statistics. Only you can see this page.</div>',
+                unsafe_allow_html=True)
+    db = get_db()
+    if not (db and is_admin()):
+        st.error("Admins only.")
+        return
+    live, stats_tab, users_tab, system_tab = st.tabs(
+        ["Live", "Statistics", "Users", "System"]
+    )
+    with live:
+        render_admin_live()
+    with stats_tab:
+        render_admin_stats(db)
+    with users_tab:
+        render_admin_users(db)
+    with system_tab:
+        render_admin_system(db)
+
+
 def main() -> None:
     """Entry point executed on every Streamlit rerun."""
     st.set_page_config(
@@ -5607,18 +6212,29 @@ def main() -> None:
         initial_sidebar_state="auto",  # collapsed on phones, open on desktop
     )
     inject_theme()
+    gate = current_gate()
+    if gate == "landing":
+        render_landing()
+        return
+    if gate == "login":
+        render_login_page()
+        return
     nav_box = st.sidebar.container(key="side_nav")
     chats_box = st.sidebar.container(key="side_chats")
     settings_box = st.sidebar.container(key="side_settings")
     user_box = st.sidebar.container(key="side_user")
 
     account_id()  # settle who is signed in before anything is loaded
+    touch_presence()
     mode = render_nav(nav_box)
     settings, usage_slot = render_settings(settings_box, mode)
     usage_slot.markdown(limit_widget_html(settings), unsafe_allow_html=True)
     render_user_card(user_box)
     if st.session_state.get("view") == "account":
         render_account(settings)
+        return
+    if st.session_state.get("view") == "admin" and is_admin():
+        render_admin()
         return
     render_hero()
     render_topline(settings)

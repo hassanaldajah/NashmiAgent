@@ -129,7 +129,30 @@ Public mode ignores them anyway, but there is no reason to store them.
 - Every prompt, answer and uploaded document goes to the AI provider the
   visitor chose, under that provider's terms.
 
-## 6. Run it locally
+## 6. Landing page, sign-in page and admin screen
+
+On a public server (`NASHMI_PUBLIC_MODE=1` or `[auth]` set) visitors first see
+a **landing page**, then a **sign-in page** (Google) or "Continue as guest".
+On your own computer none of this appears.
+
+Set `NASHMI_ADMIN_EMAILS` (comma separated) to the e-mail addresses that may
+open the **Admin** screen. Only a *verified Google* e-mail on that list counts,
+and Google does the password / 2-step verification, so Nashmi never sees a
+password. Admins get an **Admin** button in the sidebar with four tabs:
+
+- **Live**: who is online now (active in the last 5 minutes), sign-ins today,
+  recent sign-ins. Refreshes itself every 10 seconds.
+- **Statistics**: active users, sign-ups, sign-ins and AI requests per day,
+  requests by model, most active users, chats by track.
+- **Users**: everyone who signed in, searchable, with a CSV download.
+- **System**: database type, reachability and latency, encryption status.
+
+Chat contents stay encrypted and are never shown to admins. Sign-in records
+older than 90 days are deleted automatically. Because this stores e-mail
+addresses and sign-in times, say so in your privacy note (the landing page
+already shows a short one).
+
+## 7. Run it locally
 
 ```
 py -m pip install -r requirements.txt

@@ -96,7 +96,24 @@ api_keys = Table(
     Column("token", Text, nullable=False),          # encrypted
 )
 
-ALL_USER_TABLES = (chats, projects, prefs, usage, api_keys)
+login_events = Table(
+    "login_events", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("user_id", Integer, ForeignKey("users.id", ondelete="CASCADE"),
+           nullable=False, index=True),
+    Column("at", DateTime(timezone=True), nullable=False, index=True),
+)
+presence = Table(
+    "presence", metadata,
+    Column("user_id", Integer, ForeignKey("users.id", ondelete="CASCADE"),
+           primary_key=True),
+    Column("last_seen", DateTime(timezone=True), nullable=False, index=True),
+)
+
+ALL_USER_TABLES = (chats, projects, prefs, usage, api_keys,
+                   login_events, presence)
+
+LOGIN_EVENT_RETENTION_DAYS = 90
 
 
 class ConfigError(RuntimeError):
@@ -189,6 +206,171 @@ class Database:
                 last_login=now,
             ))
             return int(result.inserted_primary_key[0])
+
+    # ------------------------------------------- sign-in log and presence
+    def record_login(self, user_id: int) -> None:
+        """Log one sign-in and drop entries older than the retention window."""
+        now = _now()
+        with self.engine.begin() as conn:
+            conn.execute(insert(login_events).values(user_id=user_id, at=now))
+            conn.execute(delete(login_events).where(
+                login_events.c.at < now - timedelta(
+                    days=LOGIN_EVENT_RETENTION_DAYS)
+            ))
+
+    def touch_presence(self, user_id: int) -> None:
+        """Mark the user as active right now (the live 'who is online')."""
+        now = _now()
+        with self.engine.begin() as conn:
+            updated = conn.execute(
+                update(presence).where(presence.c.user_id == user_id)
+                .values(last_seen=now)
+            ).rowcount
+            if not updated:
+                try:
+                    conn.execute(insert(presence).values(
+                        user_id=user_id, last_seen=now))
+                except IntegrityError:  # another session inserted it first
+                    pass
+
+    def admin_overview(self, online_minutes: int = 5,
+                       recent: int = 50, max_users: int = 500) -> dict:
+        """Numbers and lists for the admin screen. Callers must check that
+        the viewer is an admin: this method does not know who is asking."""
+        now = _now()
+        day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        online_since = now - timedelta(minutes=online_minutes)
+        with self.engine.connect() as conn:
+            total_users = conn.execute(
+                select(func.count()).select_from(users)).scalar() or 0
+            new_week = conn.execute(
+                select(func.count()).select_from(users)
+                .where(users.c.created_at >= now - timedelta(days=7))
+            ).scalar() or 0
+            logins_today = conn.execute(
+                select(func.count()).select_from(login_events)
+                .where(login_events.c.at >= day_start)
+            ).scalar() or 0
+            online = conn.execute(
+                select(users.c.name, users.c.email, presence.c.last_seen)
+                .join(presence, presence.c.user_id == users.c.id)
+                .where(presence.c.last_seen >= online_since)
+                .order_by(presence.c.last_seen.desc())
+            ).mappings().all()
+            recent_logins = conn.execute(
+                select(users.c.name, users.c.email, login_events.c.at)
+                .join(login_events, login_events.c.user_id == users.c.id)
+                .order_by(login_events.c.at.desc()).limit(recent)
+            ).mappings().all()
+            counts = (
+                select(login_events.c.user_id,
+                       func.count().label("n"))
+                .group_by(login_events.c.user_id).subquery()
+            )
+            everyone = conn.execute(
+                select(users.c.name, users.c.email, users.c.created_at,
+                       users.c.last_login, counts.c.n)
+                .outerjoin(counts, counts.c.user_id == users.c.id)
+                .order_by(users.c.last_login.desc()).limit(max_users)
+            ).mappings().all()
+        return {
+            "total_users": int(total_users),
+            "new_this_week": int(new_week),
+            "logins_today": int(logins_today),
+            "online": [dict(r) for r in online],
+            "recent_logins": [dict(r) for r in recent_logins],
+            "users": [{
+                "name": r["name"], "email": r["email"],
+                "created_at": r["created_at"], "last_login": r["last_login"],
+                "logins": int(r["n"] or 0),
+            } for r in everyone],
+        }
+
+    def admin_stats(self, days: int = 30) -> dict:
+        """Aggregate statistics for the admin screen. Counts and totals only:
+        chat text stays encrypted and is never read here. Callers must check
+        that the viewer is an admin."""
+        now = _now()
+        since = now - timedelta(days=days)
+        first_day = (now - timedelta(days=days - 1)).strftime("%Y-%m-%d")
+        with self.engine.connect() as conn:
+            signups = conn.execute(
+                select(users.c.created_at).where(users.c.created_at >= since)
+            ).scalars().all()
+            logins = conn.execute(
+                select(login_events.c.user_id, login_events.c.at)
+                .where(login_events.c.at >= since).limit(50_000)
+            ).all()
+            requests_rows = conn.execute(
+                select(usage.c.day, usage.c.provider, usage.c.model,
+                       func.sum(usage.c.requests))
+                .where(usage.c.day >= first_day)
+                .group_by(usage.c.day, usage.c.provider, usage.c.model)
+            ).all()
+            top_users = conn.execute(
+                select(users.c.name, users.c.email,
+                       func.sum(usage.c.requests).label("n"))
+                .join(usage, usage.c.user_id == users.c.id)
+                .where(usage.c.day >= first_day)
+                .group_by(users.c.id, users.c.name, users.c.email)
+                .order_by(func.sum(usage.c.requests).desc()).limit(10)
+            ).mappings().all()
+            chat_total = conn.execute(
+                select(func.count()).select_from(chats)).scalar() or 0
+            chat_tracks = conn.execute(
+                select(chats.c.track, func.count())
+                .group_by(chats.c.track).order_by(func.count().desc())
+            ).all()
+            key_users = conn.execute(
+                select(func.count(func.distinct(api_keys.c.user_id)))
+            ).scalar() or 0
+
+        def day_of(value) -> str:
+            value = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+            return value.astimezone(timezone.utc).strftime("%Y-%m-%d")
+
+        all_days = [(now - timedelta(days=i)).strftime("%Y-%m-%d")
+                    for i in range(days - 1, -1, -1)]
+        signup_by_day = dict.fromkeys(all_days, 0)
+        for created in signups:
+            signup_by_day[day_of(created)] = (
+                signup_by_day.get(day_of(created), 0) + 1)
+        logins_by_day = dict.fromkeys(all_days, 0)
+        active_by_day: dict[str, set] = {d: set() for d in all_days}
+        for user_id, at in logins:
+            key = day_of(at)
+            logins_by_day[key] = logins_by_day.get(key, 0) + 1
+            active_by_day.setdefault(key, set()).add(user_id)
+        requests_by_day = dict.fromkeys(all_days, 0)
+        by_model: dict[str, int] = {}
+        for day, provider, model, total in requests_rows:
+            requests_by_day[day] = requests_by_day.get(day, 0) + int(total or 0)
+            label = f"{provider}: {model}"
+            by_model[label] = by_model.get(label, 0) + int(total or 0)
+
+        def distinct_since(window_days: int) -> int:
+            cutoff = now - timedelta(days=window_days)
+            return len({uid for uid, at in logins
+                        if (at if at.tzinfo else
+                            at.replace(tzinfo=timezone.utc)) >= cutoff})
+
+        return {
+            "days": all_days,
+            "signups_by_day": [signup_by_day[d] for d in all_days],
+            "logins_by_day": [logins_by_day[d] for d in all_days],
+            "active_users_by_day": [len(active_by_day[d]) for d in all_days],
+            "requests_by_day": [requests_by_day[d] for d in all_days],
+            "requests_by_model": sorted(by_model.items(),
+                                        key=lambda kv: kv[1], reverse=True),
+            "top_users": [{"name": r["name"], "email": r["email"],
+                           "requests": int(r["n"] or 0)} for r in top_users],
+            "active_1d": distinct_since(1),
+            "active_7d": distinct_since(7),
+            "active_30d": distinct_since(30),
+            "chats_total": int(chat_total),
+            "chats_by_track": [(t, int(n)) for t, n in chat_tracks],
+            "users_with_saved_keys": int(key_users),
+        }
 
     def get_user(self, user_id: int) -> dict | None:
         with self.engine.connect() as conn:
