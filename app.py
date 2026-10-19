@@ -6768,7 +6768,7 @@ def scene_copy(kind: str) -> str:
 # vertical position, extra height factor on wide screens
 SCENE_SIZES = {
     "landing": (470, 0.9, 1.0, (230, 250), "37%", 1.2),
-    "login": (330, 0.5, 0.82, (190, 230), "35%", 1.3),
+    "login": (482, 0.7, 1.0, (230, 250), "36%", 1.3),
     "signup": (330, 0.5, 0.82, (190, 230), "35%", 1.3),
 }
 
@@ -6835,6 +6835,8 @@ LANDING_CSS = """
     border-radius: 16px; background: var(--panel);
     border: 1px solid var(--line); text-align: center;
 }
+/* the sign-in column starts at the same line as the banner beside it */
+[data-testid="stColumn"] .lp-signin { margin-top: 0; }
 .lp-signin h2 {
     margin: 0 0 0.4rem; padding: 0; color: var(--white); font-size: 1.5rem;
     text-align: center;
@@ -8288,7 +8290,7 @@ def render_auth_page(mode: str) -> None:
     password / 2-step screen and Nashmi never sees a password. A new Google
     account must finish the sign-up step before it can use the app."""
     render_topbar(mode)
-    banner, form = st.columns([1, 1], gap="large", vertical_alignment="center")
+    banner, form = st.columns([1, 1], gap="large", vertical_alignment="top")
     with banner:
         render_scene(mode)
     with form:
