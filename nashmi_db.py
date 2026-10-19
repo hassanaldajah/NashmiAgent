@@ -279,6 +279,25 @@ class Database:
             return "That username is already taken."
         return None
 
+    def update_username(self, user_id: int, username: str) -> str | None:
+        """Change the username of a finished sign-up. Returns an error message,
+        or None on success."""
+        username = (username or "").strip().lower()
+        if not USERNAME_RE.match(username):
+            return ("The username needs 3 to 24 characters: lowercase "
+                    "letters, digits, dot or underscore.")
+        if username in RESERVED_USERNAMES:
+            return "That username is reserved. Please pick another one."
+        try:
+            with self.engine.begin() as conn:
+                result = conn.execute(update(profiles).where(
+                    profiles.c.user_id == user_id).values(username=username))
+                if not result.rowcount:
+                    return "Finish signing up first."
+        except IntegrityError:
+            return "That username is already taken."
+        return None
+
     # ------------------------------------------------- two-step verification
     def get_mfa(self, user_id: int) -> dict | None:
         """The authenticator secret and state of a user, or None if not set up."""

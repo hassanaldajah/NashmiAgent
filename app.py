@@ -2265,6 +2265,37 @@ def on_remove_key(provider_id: str) -> None:
     st.toast("Saved key removed.")
 
 
+def my_username() -> str:
+    user_id, db = account_id(), get_db()
+    if not (user_id and db):
+        return ""
+    cached = st.session_state.get("_username")
+    if cached and cached[0] == user_id:
+        return cached[1]
+    try:
+        profile = db.get_profile(user_id) or {}
+    except Exception:  # noqa: BLE001 - the card still works without it
+        LOGGER.exception("Could not read the username")
+        return ""
+    name = profile.get("username", "") or ""
+    st.session_state["_username"] = (user_id, name)
+    return name
+
+
+def on_change_username() -> None:
+    user_id, db = account_id(), get_db()
+    new = st.session_state.get("new_username", "")
+    if not (user_id and db):
+        return
+    error = db.update_username(user_id, new)
+    if error:
+        st.session_state["_username_msg"] = ("error", db_error(error))
+    else:
+        st.session_state["_username"] = (user_id, new.strip().lower())
+        st.session_state["_username_msg"] = ("ok", tt("Username updated.",
+                                                      "تم تحديث اسم المستخدم."))
+
+
 def on_delete_account() -> None:
     user_id, db = st.session_state.get("_account_id"), get_db()
     if user_id and db:
@@ -3201,6 +3232,7 @@ pre, [data-testid="stCode"] {
     border-radius: 50%;
 }
 .user-card .avatar-fallback {
+    color: #fff; font-size: 1rem;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -3334,6 +3366,40 @@ pre, [data-testid="stCode"] {
 .st-key-guest_card [data-testid="stElementContainer"],
 .st-key-guest_card [data-testid="stButton"] { width: 100% !important; }
 .st-key-guest_card .guest-text { margin-bottom: 0.65rem; }
+
+/* ---- Sidebar: one shape for every control ---- */
+[data-testid="stSidebar"] button,
+[data-testid="stSidebar"] [data-testid="stRadioOption"],
+[data-testid="stSidebar"] [data-baseweb="input"],
+[data-testid="stSidebar"] [data-testid="stTextInputRootElement"],
+[data-testid="stSidebar"] [data-testid="stSelectbox"] [role="group"] {
+    border-radius: 999px !important;
+}
+.st-key-track_box, .st-key-lang_box, .user-card { border-radius: 999px !important; }
+.st-key-track_box, .st-key-lang_box { padding-left: 1.1rem; padding-right: 0.9rem; }
+.st-key-guest_card { border-radius: 26px !important; }
+[data-testid="stSidebar"] .stLinkButton a { border-radius: 999px !important; }
+.user-card { padding: 8px 18px 8px 10px; }
+.user-card img, .user-card .avatar-fallback { border-radius: 50% !important; }
+.user-card em { display: block; font-style: normal; color: #ff8a93; font-size: 0.74rem;
+                font-family: var(--mono); }
+.user-card span { display: block; }
+.st-key-user_actions, .st-key-user_actions [data-testid="stHorizontalBlock"] { width: 100% !important; }
+.st-key-user_actions [data-testid="stHorizontalBlock"] { align-items: stretch; flex-wrap: nowrap; gap: 0.4rem; }
+.st-key-user_actions [data-testid="stPopover"],
+.st-key-user_actions [data-testid="stPopover"] > div { width: 100% !important; height: 100%; }
+.st-key-side_delete_account button:not(:disabled) {
+    background: linear-gradient(135deg, #ff3b3f, #c81e3a) !important; color: #fff !important; border: 0 !important;
+}
+.st-key-user_actions [data-testid="stPopoverButton"] {
+    width: 100%; height: 100%; min-height: 40px; padding: 0; border-radius: 999px !important;
+    border: 0 !important; background: rgba(255, 255, 255, 0.05) !important;
+}
+.st-key-user_actions [data-testid="stPopoverButton"] > div > div[aria-hidden="true"] { display: none; }
+.st-key-user_actions [data-testid="stColumn"]:first-child { flex: 1 1 auto !important; width: auto !important; }
+.st-key-user_actions [data-testid="stColumn"]:last-child {
+    flex: 0 0 52px !important; width: 52px !important; min-width: 52px !important;
+}
 
 /* ---- Scrollbar (desktop) ---- */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -4224,7 +4290,7 @@ SIDEBAR_RTL_CSS = """
 """
 
 APP_POLISH_CSS = """
-/* Sidebar: soft gradient, pill controls without borders */
+/* Sidebar: soft gradient, one pill (oval) shape for every control */
 [data-testid="stSidebar"] {
     background: linear-gradient(180deg, #0f1626 0%, #0b111c 55%, #150b14 100%) !important;
     border-right: 0 !important; box-shadow: 12px 0 40px rgba(0, 0, 0, 0.35);
@@ -4257,7 +4323,7 @@ APP_POLISH_CSS = """
     background: rgba(255, 255, 255, 0.05) !important; box-shadow: none !important;
 }
 [data-testid="stSidebar"] [data-testid="stExpander"] details {
-    border: 0 !important; border-radius: 22px !important;
+    border: 0 !important; border-radius: 14px !important;
     background: rgba(255, 255, 255, 0.04) !important;
 }
 .st-key-side_brand [data-testid="stHorizontalBlock"] {
@@ -4295,10 +4361,7 @@ def render_nav(box) -> str:
                 f'<span><span class="prompt">&gt;</span> Nashmi</span></div>',
                 unsafe_allow_html=True,
             )
-            if is_public() and current_user():
-                out.button(tt("Sign out", "تسجيل الخروج"), key="side_signout",
-                           on_click=sign_out, type="tertiary",
-                           icon=":material/logout:")
+            # signing out is in the ... menu next to Account
         st.button(
             tt("New chat", "محادثة جديدة"), key="new_chat", icon=":material/add:",
             on_click=on_new_chat, disabled=mode in (MODE_SOC, MODE_TOOLS, MODE_EXAM),
@@ -4463,21 +4526,42 @@ def render_user_card(box) -> None:
                 f'<span class="avatar-fallback">'
                 f'{html.escape(user["name"][:1].upper())}</span>'
             )
+            handle = my_username()
             st.markdown(
                 f'<div class="user-card">{avatar}<div><b>'
-                f'{html.escape(user["name"])}</b><br><span>'
-                f'{html.escape(user["email"])}</span></div></div>',
+                f'{html.escape(user["name"])}</b>'
+                + (f'<em dir="ltr">@{html.escape(handle)}</em>' if handle else "")
+                + f'<span>{html.escape(user["email"])}</span></div></div>',
                 unsafe_allow_html=True,
             )
             with st.container(key="user_actions"):
-                first, second = st.columns(2)
+                first, second = st.columns([4, 1])
                 first.button(tt("Account", "الحساب"), key="open_account",
-                             on_click=open_account,
+                             on_click=open_account, width="stretch",
                              icon=":material/account_circle:")
-                if is_admin():
-                    second.button(tt("Admin", "المشرف"), key="open_admin",
-                                  on_click=open_admin,
+                with second.popover(" ", icon=":material/more_horiz:", width="stretch"):
+                    if is_admin():
+                        st.button(tt("Admin", "المشرف"), key="open_admin",
+                                  on_click=open_admin, width="stretch",
                                   icon=":material/monitoring:")
+                    st.button(tt("Sign out", "تسجيل الخروج"), key="menu_signout",
+                              on_click=sign_out, width="stretch",
+                              icon=":material/logout:")
+                    st.divider()
+                    st.markdown(f"**{tt('Delete account', 'حذف الحساب')}**")
+                    st.caption(tt(
+                        "Deletes your profile, chats, projects, usage and saved "
+                        "keys from the database. This cannot be undone.",
+                        "يحذف ملفك ومحادثاتك ومشاريعك واستخدامك ومفاتيحك المحفوظة "
+                        "من قاعدة البيانات. لا يمكن التراجع."))
+                    typed = st.text_input(
+                        tt("Type DELETE to confirm", "اكتب DELETE للتأكيد"),
+                        key="side_confirm_delete", placeholder="DELETE")
+                    st.button(tt("Delete my account", "احذف حسابي"),
+                              key="side_delete_account", type="primary",
+                              on_click=on_delete_account, width="stretch",
+                              icon=":material/delete_forever:",
+                              disabled=typed.strip() != "DELETE")
         elif accounts_enabled():
             with st.container(key="guest_card"):
                 st.markdown(
@@ -4687,6 +4771,19 @@ def render_account(settings: Settings) -> None:
                 f"Signed in with {user['provider'].title()}"
                 + (f" - member since {since}" if since else "")
             )
+            handle = my_username()
+            if handle:
+                st.markdown(f"**{tt('Username', 'اسم المستخدم')}:** `@{handle}`")
+            with st.form("change_username", border=False):
+                st.text_input(tt("New username", "اسم مستخدم جديد"),
+                              key="new_username", max_chars=24,
+                              placeholder=handle or "hassan.sec",
+                              help=tr("fs_user_help"))
+                st.form_submit_button(tt("Save username", "احفظ اسم المستخدم"),
+                                      on_click=on_change_username)
+            msg = st.session_state.pop("_username_msg", None)
+            if msg:
+                (st.success if msg[0] == "ok" else st.error)(msg[1])
             st.button("Sign out", key="sign_out_page", on_click=sign_out,
                       icon=":material/logout:")
         else:
@@ -7590,12 +7687,12 @@ STRINGS["ar"].update({
 
 
 STRINGS["en"].update({
-    "fs_title": "Choose your name",
+    "fs_title": "Choose your username",
     "fs_p": "{email} is verified. This name and username are what you will use on Nashmi.",
     "fs_create": "Submit",
 })
 STRINGS["ar"].update({
-    "fs_title": "اختر اسمك",
+    "fs_title": "اختر اسم المستخدم",
     "fs_p": "تم التحقق من {email}. هذا الاسم واسم المستخدم هما ما ستستعمله في نشمي.",
     "fs_create": "إرسال",
 })
@@ -8206,9 +8303,9 @@ def render_complete_signup(user_id: int, user: dict) -> None:
             unsafe_allow_html=True)
         with st.form("complete_signup", border=False):
             st.text_input(tr("fs_email"), value=user["email"], disabled=True)
-            full_name = st.text_input(tr("fs_name"), value=user["name"], max_chars=120)
             username = st.text_input(tr("fs_username"), max_chars=24,
                                      placeholder=tr("fs_ph"), help=tr("fs_user_help"))
+            full_name = st.text_input(tr("fs_name"), value=user["name"], max_chars=120)
             agree = st.checkbox(tr("privacy"))
             go = st.form_submit_button(tr("fs_create"), type="primary", width="stretch")
         if go:
@@ -8220,6 +8317,7 @@ def render_complete_signup(user_id: int, user: dict) -> None:
                     st.error(db_error(error))
                 else:
                     st.session_state["_profile_ok"] = user_id
+                    st.session_state["_username"] = (user_id, username.strip().lower())
                     st.rerun()
         st.button(tr("fs_cancel"), key="signup_cancel", on_click=sign_out,
                   type="tertiary", width="stretch", icon=":material/logout:")
@@ -8471,7 +8569,7 @@ def _new_otp(user_id: int, email: str) -> bool:
 
 def auth_steps(current: int) -> str:
     """Small '1. Verify e-mail  2. Your name' line on top of the sign-in box."""
-    names = [tt("Verify e-mail", "تحقق من البريد"), tt("Your name", "اسمك")]
+    names = [tt("Verify e-mail", "تحقق من البريد"), tt("Username", "اسم المستخدم")]
     items = "".join(
         f'<span class="{"on" if i + 1 == current else ("done" if i + 1 < current else "")}">'
         f'{i + 1}. {html.escape(n)}</span>' for i, n in enumerate(names))
