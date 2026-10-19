@@ -1798,15 +1798,17 @@ def limit_widget_html(settings) -> str:
             "#f0c24b" if pct >= 50 else "#4cc38a"
         )
         text = (
-            f"<b style='color:{color}'>{left} left</b> of {limit} today "
-            f"({used} used)"
+            f"<b style='color:{color}'>{left} {tt('left', 'متبقي')}</b> "
+            f"{tt('of', 'من')} {limit} {tt('today', 'اليوم')} "
+            f"({used} {tt('used', 'مستخدم')})"
         )
         bar = (
             "<div class='lw-bar'><span class='lw-mark' "
             f"style='left:{pct:.1f}%'></span></div>"
         )
     else:
-        text = f"{used} used today &middot; limit unknown"
+        text = tt(f"{used} used today &middot; limit unknown",
+                  f"{used} \u0645\u0633\u062a\u062e\u062f\u0645 \u0627\u0644\u064a\u0648\u0645 &middot; \u0627\u0644\u062d\u062f \u063a\u064a\u0631 \u0645\u0639\u0631\u0648\u0641")
         bar = "<div class='lw-bar unknown'></div>"
     info = (st.session_state.get("rate_info") or {}).get(
         f"{provider.id}:{model}"
@@ -1814,13 +1816,13 @@ def limit_widget_html(settings) -> str:
     extra = ""
     if info.get("remaining_requests"):
         extra += (
-            "<div class='lw-extra'>requests left: "
+            f"<div class='lw-extra'>{tt('requests left', 'الطلبات المتبقية')}: "
             f"{_fmt_num(info['remaining_requests'])} / "
             f"{_fmt_num(info.get('limit_requests', '?'))}</div>"
         )
     if info.get("remaining_tokens"):
         extra += (
-            "<div class='lw-extra'>tokens left this minute: "
+            f"<div class='lw-extra'>{tt('tokens left this minute', 'الرموز المتبقية هذه الدقيقة')}: "
             f"{_fmt_num(info['remaining_tokens'])}</div>"
         )
     return f"<div class='limit-widget'><div>{text}</div>{bar}{extra}</div>"
@@ -2273,6 +2275,9 @@ def open_admin() -> None:
 
 
 def sign_out() -> None:
+    for key in ("_mfa_ok", "_mfa_codes", "_mfa_secret", "_profile_ok", "_account_deleted",
+                "_account_id", "_account_sub", "_presence_at"):
+        st.session_state.pop(key, None)
     st.session_state["gate"] = "landing"
     st.logout()
 
@@ -4150,6 +4155,13 @@ def md_escape(text: str) -> str:
     return re.sub(r"([\\`*_{}\[\]()#+!~|<>])", r"\\\1", text)
 
 
+SIDEBAR_RTL_CSS = """
+[data-testid="stSidebar"] [data-testid="stSidebarContent"] { direction: rtl; }
+[data-testid="stSidebar"] input, [data-testid="stSidebar"] textarea { direction: ltr; }
+[data-testid="stSidebar"] [data-baseweb="select"] input { direction: rtl; }
+[data-testid="stSidebar"] .stMarkdown, [data-testid="stSidebar"] label { text-align: right; }
+"""
+
 APP_POLISH_CSS = """
 /* Sidebar: soft gradient, pill controls without borders */
 [data-testid="stSidebar"] {
@@ -4223,15 +4235,17 @@ def render_nav(box) -> str:
                 unsafe_allow_html=True,
             )
             if is_public() and current_user():
-                out.button("Sign out", key="side_signout", on_click=sign_out,
-                           type="tertiary", icon=":material/logout:")
+                out.button(tt("Sign out", "تسجيل الخروج"), key="side_signout",
+                           on_click=sign_out, type="tertiary",
+                           icon=":material/logout:")
         st.button(
-            "New chat", key="new_chat", icon=":material/add:",
+            tt("New chat", "محادثة جديدة"), key="new_chat", icon=":material/add:",
             on_click=on_new_chat, disabled=mode in (MODE_SOC, MODE_TOOLS, MODE_EXAM),
         )
         return st.selectbox(
             "Track", MODES, key="track", label_visibility="collapsed",
             on_change=close_account,
+            format_func=lambda name: tt(name, TRACK_AR.get(name, name)),
         )
 
 
@@ -4297,6 +4311,9 @@ def render_login_buttons(key_prefix: str) -> None:
 
 
 def key_label(provider: Provider) -> str:
+    if lang() == "ar":
+        return (f"احصل على مفتاح {provider.short} المجاني" if provider.free
+                else f"احصل على مفتاح API لـ {provider.short}")
     return (f"Get your free {provider.short} key" if provider.free
             else f"Get your {provider.short} API key")
 
@@ -4345,23 +4362,33 @@ def render_user_card(box) -> None:
             )
             with st.container(key="user_actions"):
                 first, second = st.columns(2)
-                first.button("Account", key="open_account",
+                first.button(tt("Account", "الحساب"), key="open_account",
                              on_click=open_account,
                              icon=":material/account_circle:")
                 if is_admin():
-                    second.button("Admin", key="open_admin",
+                    second.button(tt("Admin", "المشرف"), key="open_admin",
                                   on_click=open_admin,
                                   icon=":material/monitoring:")
         elif accounts_enabled():
-            st.caption("Guest: chats are not saved. Sign in to keep them.")
+            st.caption(tt("Guest: chats are not saved. Sign in to keep them.",
+                          "ضيف: المحادثات لا تُحفظ. سجّل الدخول لتحتفظ بها."))
             render_login_buttons("side")
-            st.button("Usage and settings", key="open_account",
+            st.button(tt("Usage and settings", "الاستخدام والإعدادات"), key="open_account",
                       on_click=open_account,
                       icon=":material/account_circle:", type="tertiary")
         else:
-            st.button("Usage and settings", key="open_account",
+            st.button(tt("Usage and settings", "الاستخدام والإعدادات"), key="open_account",
                       on_click=open_account,
                       icon=":material/account_circle:", type="tertiary")
+
+
+def render_side_language(box) -> None:
+    """Language dropdown for the signed-in app (same choice as on the public pages)."""
+    with box:
+        st.session_state["side_lang"] = lang()
+        st.selectbox(tt("Language", "اللغة"), ["en", "ar"], key="side_lang",
+                     format_func=lambda c: {"en": "English", "ar": "العربية"}[c],
+                     on_change=on_app_lang_pick)
 
 
 def render_keys_panel(user_id: int | None) -> None:
@@ -4587,28 +4614,33 @@ def render_settings(box, mode: str):
             or saved_keys().get(current.id, "")
         )
         with st.expander(
-            f"AI model: {current.short}", icon=":material/tune:",
+            tt(f"AI model: {current.short}", f"نموذج الذكاء الاصطناعي: {current.short}"),
+            icon=":material/tune:",
             expanded=is_public() and not has_key,
         ):
-            label = st.selectbox("Provider", labels, key="provider_choice")
+            label = st.selectbox(tt("Provider", "المزوّد"), labels, key="provider_choice")
             provider = PROVIDERS[label]
 
             typed_key = st.text_input(
-                f"{provider.short} API key",
+                tt(f"{provider.short} API key", f"مفتاح API لـ {provider.short}"),
                 type="password",
                 key=f"key_{provider.id}",
-                placeholder="Paste your key here",
-                help=("Used for this session only. Signed-in accounts can "
-                      "save it, encrypted, from the Account page."
+                placeholder=tt("Paste your key here", "الصق مفتاحك هنا"),
+                help=(tt("Used for this session only. Signed-in accounts can "
+                         "save it, encrypted, from the Account page.",
+                         "يُستخدم لهذه الجلسة فقط. يمكن للحسابات المسجّلة حفظه "
+                         "مشفّراً من صفحة الحساب.")
                       if is_public() else None),
             )
             env_key = get_secret(*provider.env_keys)
             stored_key = saved_keys().get(provider.id, "")
             api_key = typed_key.strip() or env_key or stored_key
             if env_key and not typed_key.strip():
-                st.caption("Key loaded from .env. Type here to override it.")
+                st.caption(tt("Key loaded from .env. Type here to override it.",
+                              "تم تحميل المفتاح من .env. اكتب هنا لتجاوزه."))
             elif stored_key and not typed_key.strip():
-                st.caption("Using the key saved in your account.")
+                st.caption(tt("Using the key saved in your account.",
+                              "يُستخدم المفتاح المحفوظ في حسابك."))
             st.link_button(
                 key_label(provider), provider.key_url,
                 icon=":material/key:", width="stretch",
@@ -4622,16 +4654,16 @@ def render_settings(box, mode: str):
                 )
             else:
                 options = list(provider.models)
-            chosen = st.selectbox("Model", options, key=f"model_{provider.id}")
+            chosen = st.selectbox(tt("Model", "الموديل"), options, key=f"model_{provider.id}")
             custom = ""
-            if st.toggle("Use a custom model name",
+            if st.toggle(tt("Use a custom model name", "استخدم اسم موديل مخصص"),
                          key=f"custom_on_{provider.id}"):
                 custom = st.text_input(
                     "Custom model", key=f"custom_{provider.id}",
                     label_visibility="collapsed",
-                    placeholder="exact model id",
+                    placeholder=tt("exact model id", "معرّف الموديل بالضبط"),
                 )
-            st.caption(provider.note)
+            st.caption(tt(provider.note, PROVIDER_NOTE_AR.get(provider.id, provider.note)))
         usage_slot = st.empty()
     return Settings(provider, api_key, custom.strip() or chosen, mode), usage_slot
 
@@ -4641,10 +4673,10 @@ def render_topline(settings: Settings) -> None:
     ok = bool(settings.api_key)
     st.markdown(
         f'<div class="topline"><span class="t-track">'
-        f'{html.escape(settings.mode)}</span><span class="t-sep">/</span>'
+        f'{html.escape(tt(settings.mode, TRACK_AR.get(settings.mode, settings.mode)))}</span><span class="t-sep">/</span>'
         f'<span class="t-model">{html.escape(settings.model)}</span>'
         f'<span class="t-key {"ok" if ok else "bad"}">'
-        f'{"key loaded" if ok else "no API key"}</span></div>',
+        f'{tt("key loaded", "مفتاح محمّل") if ok else tt("no API key", "لا يوجد مفتاح API")}</span></div>',
         unsafe_allow_html=True,
     )
 
@@ -4662,7 +4694,7 @@ def render_chat_sidebar(box, mode: str, chats: list[dict]) -> int:
         if len(ids) > 1:  # the picker only appears once a project exists
             project = st.selectbox(
                 "Project", ids, key="project", label_visibility="collapsed",
-                format_func=lambda i: names.get(i, "All chats"),
+                format_func=lambda i: names.get(i, tt("All chats", "كل المحادثات")),
             )
         if project and not any(c.get("project") == project for c in chats):
             chats.insert(0, new_chat_record(project))
@@ -4671,7 +4703,7 @@ def render_chat_sidebar(box, mode: str, chats: list[dict]) -> int:
         query = st.text_input(
             "Search chats",
             key=search_key(mode),
-            placeholder="Search chats",
+            placeholder=tt("Search chats", "ابحث في المحادثات"),
             label_visibility="collapsed",
         )
         found = search_chats(chats, query)
@@ -4682,17 +4714,17 @@ def render_chat_sidebar(box, mode: str, chats: list[dict]) -> int:
             title, more = st.columns([4, 1])
             title.markdown(
                 f'<div class="side-label">'
-                f'{"Results" if query.strip() else "Recent"}</div>',
+                f'{tt("Results", "النتائج") if query.strip() else tt("Recent", "الأخيرة")}</div>',
                 unsafe_allow_html=True,
             )
             with more:
                 with st.popover(" ", icon=":material/more_horiz:"):
                     st.button(
-                        "Delete this chat", key=f"delete_chat_{mode}",
+                        tt("Delete this chat", "حذف هذه المحادثة"), key=f"delete_chat_{mode}",
                         icon=":material/delete:", on_click=on_delete_chat,
                     )
         if not found:
-            st.caption("No chats match your search.")
+            st.caption(tt("No chats match your search.", "لا توجد محادثات مطابقة لبحثك."))
             return active_index(mode, len(chats))
 
         indices = [i for i, _ in found]
@@ -4712,7 +4744,8 @@ def render_chat_sidebar(box, mode: str, chats: list[dict]) -> int:
         )
         snippets = message_snippets(chats[index], query)
         if snippets:
-            with st.expander(f"Matches in this chat ({len(snippets)})",
+            with st.expander(tt(f"Matches in this chat ({len(snippets)})",
+                                f"نتائج في هذه المحادثة ({len(snippets)})"),
                              expanded=True):
                 for snippet in snippets:
                     st.caption(snippet)
@@ -7412,6 +7445,38 @@ def lang() -> str:
     return guess
 
 
+def tt(en: str, ar: str) -> str:
+    """Inline translation for the in-app text."""
+    return ar if lang() == "ar" else en
+
+
+TRACK_AR = {
+    "Security Intelligence": "\u0627\u0633\u062a\u062e\u0628\u0627\u0631\u0627\u062a \u0627\u0644\u0623\u0645\u0646",
+    "CPSS": "\u0623\u0645\u0646 \u0627\u0644\u0623\u0646\u0638\u0645\u0629 \u0627\u0644\u0633\u064a\u0628\u0631\u0627\u0646\u064a\u0629-\u0627\u0644\u0641\u064a\u0632\u064a\u0627\u0626\u064a\u0629",
+    "Chat": "\u0645\u062d\u0627\u062f\u062b\u0629",
+    "Secure Coding & SQL": "\u0627\u0644\u0628\u0631\u0645\u062c\u0629 \u0627\u0644\u0622\u0645\u0646\u0629 \u0648SQL",
+    "Penetration Testing": "\u0627\u062e\u062a\u0628\u0627\u0631 \u0627\u0644\u0627\u062e\u062a\u0631\u0627\u0642",
+    "CTF": "CTF",
+    "Malware Analysis": "\u062a\u062d\u0644\u064a\u0644 \u0627\u0644\u0628\u0631\u0645\u062c\u064a\u0627\u062a \u0627\u0644\u062e\u0628\u064a\u062b\u0629",
+    "Forensics & IR": "\u0627\u0644\u062a\u062d\u0642\u064a\u0642 \u0627\u0644\u062c\u0646\u0627\u0626\u064a \u0648\u0627\u0644\u0627\u0633\u062a\u062c\u0627\u0628\u0629",
+    "Network Security": "\u0623\u0645\u0646 \u0627\u0644\u0634\u0628\u0643\u0627\u062a",
+    "Cloud Security": "\u0623\u0645\u0646 \u0627\u0644\u0633\u062d\u0627\u0628\u0629",
+    "SOC Analyzer": "\u0645\u062d\u0644\u0651\u0644 SOC",
+    "Toolbox": "\u0635\u0646\u062f\u0648\u0642 \u0627\u0644\u0623\u062f\u0648\u0627\u062a",
+    "Practice Exam": "\u0627\u0645\u062a\u062d\u0627\u0646 \u062a\u062f\u0631\u064a\u0628\u064a",
+}
+PROVIDER_NOTE_AR = {
+    "gemini": "\u0646\u0633\u062e\u0629 \u0645\u062c\u0627\u0646\u064a\u0629 \u0628\u062d\u062f\u0648\u062f \u0641\u064a \u0627\u0644\u062f\u0642\u064a\u0642\u0629 \u0648\u0641\u064a \u0627\u0644\u064a\u0648\u0645.",
+    "groq": "\u0646\u0633\u062e\u0629 \u0645\u062c\u0627\u0646\u064a\u0629 \u0628\u062d\u062f\u0648\u062f \u0645\u0639\u062f\u0651\u0644. GPT-OSS \u0646\u0645\u0648\u0630\u062c \u0645\u0641\u062a\u0648\u062d \u0645\u0646 OpenAI \u0648\u0644\u064a\u0633 ChatGPT \u0646\u0641\u0633\u0647.",
+    "openai": "\u062a\u064f\u062d\u0627\u0633\u064e\u0628 \u0639\u0644\u0649 \u062d\u0633\u0627\u0628\u0643 \u0641\u064a OpenAI. \u0627\u0644\u0642\u0627\u0626\u0645\u0629 \u062a\u0639\u0631\u0636 \u0627\u0644\u0646\u0645\u0627\u0630\u062c \u0627\u0644\u062a\u064a \u064a\u0633\u0645\u062d \u0628\u0647\u0627 \u0645\u0641\u062a\u0627\u062d\u0643\u060c \u0648\u064a\u0645\u0643\u0646\u0643 \u0643\u062a\u0627\u0628\u0629 \u0623\u064a \u0627\u0633\u0645 \u0622\u062e\u0631 \u0636\u0645\u0646 \u0627\u0644\u0646\u0645\u0648\u0630\u062c \u0627\u0644\u0645\u062e\u0635\u0635.",
+    "anthropic": "\u062a\u064f\u062d\u0627\u0633\u064e\u0628 \u0639\u0644\u0649 \u062d\u0633\u0627\u0628\u0643 \u0641\u064a Anthropic. \u0627\u0644\u0642\u0627\u0626\u0645\u0629 \u062a\u0639\u0631\u0636 \u0627\u0644\u0646\u0645\u0627\u0630\u062c \u0627\u0644\u0645\u062a\u0627\u062d\u0629 \u0644\u0645\u0641\u062a\u0627\u062d\u0643.",
+}
+
+
+def on_app_lang_pick() -> None:
+    st.session_state["lang"] = st.session_state["side_lang"]
+
+
 def tr(key: str, **fmt):
     value = STRINGS[lang()].get(key, STRINGS["en"][key])
     return value.format(**fmt) if fmt and isinstance(value, str) else value
@@ -7726,7 +7791,7 @@ def _code_hash(code: str) -> str:
 
 
 def new_backup_codes(count: int = 8) -> list[str]:
-    return [f"{secrets.token_hex(2)}-{secrets.token_hex(2)}" for _ in range(count)]
+    return [f"{secrets.token_hex(4)}-{secrets.token_hex(4)}" for _ in range(count)]
 
 
 def totp_step(secret: str, code: str) -> int | None:
@@ -7816,7 +7881,7 @@ def render_mfa_challenge(user_id: int, state: dict) -> None:
         if waiting:
             st.error(tr("ch_locked", t=f"{locked:%H:%M}"))
         with st.form("mfa_challenge", border=False):
-            code = st.text_input(tr("ch_code"), max_chars=12, placeholder=tr("ch_ph"))
+            code = st.text_input(tr("ch_code"), max_chars=24, placeholder=tr("ch_ph"))
             go = st.form_submit_button(tr("ch_verify"), type="primary", width="stretch",
                                        disabled=waiting)
         if go and not waiting:
@@ -7844,9 +7909,14 @@ def mfa_gate(user_id: int | None, user: dict | None) -> bool:
         return False
     try:
         state = get_db().get_mfa(user_id)
-    except Exception:  # noqa: BLE001 - never lock people out of a broken DB
+    except Exception:  # noqa: BLE001 - fail closed: no code check, no entry
         LOGGER.exception("Could not read the two-step state")
-        return False
+        _mfa_page_start()
+        st.error(tt("Verification is temporarily unavailable. Please try again in a minute.",
+                    "التحقق غير متاح مؤقتاً. حاول مرة أخرى بعد دقيقة."))
+        st.button(tt("Sign out", "تسجيل الخروج"), key="mfa_unavailable_out",
+                  on_click=sign_out, icon=":material/logout:")
+        return True
     if state is None or st.session_state.get("_mfa_codes"):
         render_mfa_setup(user_id, user)      # also shows the backup codes once
     else:
@@ -8014,8 +8084,10 @@ def render_admin_users(db) -> None:
             | frame["E-mail"].str.lower().str.contains(needle, regex=False)
         ]
     st.dataframe(frame, hide_index=True, width="stretch")
+    bad_start = ('=', '+', '-', '@', chr(9), chr(13))
+    safe = frame.map(lambda v: ("'" + v) if isinstance(v, str) and v[:1] in bad_start else v)
     st.download_button(
-        "Download as CSV", frame.to_csv(index=False).encode("utf-8"),
+        "Download as CSV", safe.to_csv(index=False).encode("utf-8"),
         file_name="nashmi_users.csv", mime="text/csv",
         icon=":material/download:",
     )
@@ -8109,7 +8181,10 @@ def main() -> None:
         return
     if mfa_gate(account_id(), current_user()):
         return
-    st.markdown(f"<style>{APP_POLISH_CSS}</style>", unsafe_allow_html=True)
+    st.markdown(
+        f"<style>{APP_POLISH_CSS}"
+        + (SIDEBAR_RTL_CSS if lang() == "ar" else "") + "</style>",
+        unsafe_allow_html=True)
     nav_box = st.sidebar.container(key="side_nav")
     chats_box = st.sidebar.container(key="side_chats")
     settings_box = st.sidebar.container(key="side_settings")
@@ -8121,6 +8196,7 @@ def main() -> None:
     settings, usage_slot = render_settings(settings_box, mode)
     usage_slot.markdown(limit_widget_html(settings), unsafe_allow_html=True)
     render_user_card(user_box)
+    render_side_language(user_box)
     if st.session_state.get("view") == "account":
         render_account(settings)
         return

@@ -310,15 +310,16 @@ class Database:
             conn.execute(update(mfa).where(mfa.c.user_id == user_id).values(**values))
 
     def mfa_failure(self, user_id: int) -> None:
-        """Count a wrong code; lock further tries for a few minutes after too many."""
+        """Count a wrong code; lock further tries for a few minutes after too many.
+        The counter is bumped inside one UPDATE so parallel guesses cannot dodge it."""
         with self.engine.begin() as conn:
-            failed = (conn.execute(select(mfa.c.failed).where(
-                mfa.c.user_id == user_id)).scalar() or 0) + 1
-            values = {"failed": failed}
+            conn.execute(update(mfa).where(mfa.c.user_id == user_id)
+                         .values(failed=mfa.c.failed + 1))
+            failed = conn.execute(select(mfa.c.failed).where(
+                mfa.c.user_id == user_id)).scalar() or 0
             if failed >= MFA_MAX_FAILURES:
-                values = {"failed": 0, "locked_until":
-                          _now() + timedelta(minutes=MFA_LOCK_MINUTES)}
-            conn.execute(update(mfa).where(mfa.c.user_id == user_id).values(**values))
+                conn.execute(update(mfa).where(mfa.c.user_id == user_id).values(
+                    failed=0, locked_until=_now() + timedelta(minutes=MFA_LOCK_MINUTES)))
 
     def mfa_use_backup(self, user_id: int, code_hash: str) -> bool:
         """Spend one backup code (each works once)."""
