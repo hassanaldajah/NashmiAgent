@@ -5910,13 +5910,6 @@ SCENE_TEMPLATE = """<!DOCTYPE html>
             #3b0d19 26%, #121827 62%, #070b12 100%);
     }
     canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; z-index: 1; }
-    /* red and white shemagh check along the top edge */
-    .band {
-        position: absolute; left: 0; right: 0; top: 0; height: 12px; z-index: 3;
-        background: conic-gradient(#fff 25%, #E5383B 0 50%, #fff 0 75%,
-            #E5383B 0) 0 0 / 12px 12px;
-        opacity: 0.95;
-    }
     .glow {
         position: absolute; left: 50%; top: __CAT_TOP__; z-index: 0;
         width: 86%; aspect-ratio: 1; max-width: 340px;
@@ -5973,7 +5966,6 @@ SCENE_TEMPLATE = """<!DOCTYPE html>
 <div id="stage">
     <div class="glow"></div>
     <canvas id="c"></canvas>
-    <div class="band"></div>
     <div class="catbox"><img id="cat" alt="Nashmi, the cat in a red and white shemagh" src="data:image/png;base64,__CAT__"></div>
     <div class="copy">__COPY__</div>
 </div>
