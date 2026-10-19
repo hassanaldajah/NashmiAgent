@@ -7448,20 +7448,14 @@ STRINGS["ar"].update({
 
 
 def lang() -> str:
-    """'en' or 'ar'. The first visit follows the browser language; the language
-    button changes it. Switching only changes words and text direction, never
-    the layout or the pictures."""
+    """'en' or 'ar'. The site always opens in English; the language dropdown
+    changes it for this visit. Switching only changes words and text direction,
+    never the layout or the pictures."""
     current = st.session_state.get("lang")
     if current in ("en", "ar"):
         return current
-    guess = "en"
-    try:
-        if str(st.context.headers.get("Accept-Language", "")).lower().startswith("ar"):
-            guess = "ar"
-    except Exception:  # noqa: BLE001 - no browser headers (tests)
-        pass
-    st.session_state["lang"] = guess
-    return guess
+    st.session_state["lang"] = "en"
+    return "en"
 
 
 def tt(en: str, ar: str) -> str:
