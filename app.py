@@ -6462,14 +6462,30 @@ __CAT_JS__
     shellWrap.add(shell);
     group.add(coreWire, shellWrap);
 
-    var N = 190, positions = new Float32Array(N * 3), colors = new Float32Array(N * 3), pts = [];
+    // On a wide screen the red network is spread over the whole frame, edge to edge, so there
+    // are no empty corners. On a phone it stays a ball around the cat.
+    var sw0 = stage.clientWidth || 400, sh0 = stage.clientHeight || 400, asp0 = sw0 / sh0;
+    var wideNet = asp0 >= 1.25;
+    var bz0 = asp0 < 0.9 ? 10.5 : (asp0 < 1.6 ? 8.6 : 7.2);
+    var fit0 = Math.min(1, (bz0 * 0.4142 * 0.96) / ((3.6 + __OFFSET_Y__) * __GSCALE__));
+    var kLocal = 1 / (__GSCALE__ * fit0);
+    var XW = 0.4142 * bz0 * asp0 * 1.06 * kLocal, YH = 0.4142 * bz0 * 1.06 * kLocal;
+    var OFFL = __OFFSET_Y__ * kLocal * __GSCALE__ * fit0;
+    var N = wideNet ? 420 : 190, positions = new Float32Array(N * 3), colors = new Float32Array(N * 3), pts = [];
     for (var i = 0; i < N; i++) {
-        var r = 3.2 + Math.random() * 1.5;
-        var t = Math.random() * Math.PI * 2;
-        var u = Math.acos(2 * Math.random() - 1);
-        var x = r * Math.sin(u) * Math.cos(t);
-        var y = r * Math.sin(u) * Math.sin(t);
-        var z = r * Math.cos(u);
+        var x, y, z;
+        if (wideNet) {
+            x = (Math.random() * 2 - 1) * XW;
+            y = (Math.random() * 2 - 1) * YH - OFFL * kLocal;
+            z = (Math.random() * 2 - 1) * 1.6;
+        } else {
+            var r = 3.2 + Math.random() * 1.5;
+            var t = Math.random() * Math.PI * 2;
+            var u = Math.acos(2 * Math.random() - 1);
+            x = r * Math.sin(u) * Math.cos(t);
+            y = r * Math.sin(u) * Math.sin(t);
+            z = r * Math.cos(u);
+        }
         positions[i * 3] = x; positions[i * 3 + 1] = y; positions[i * 3 + 2] = z;
         // alternate white and bright red points
         colors[i * 3] = 1; colors[i * 3 + 1] = i % 2 ? 1 : 0.23; colors[i * 3 + 2] = i % 2 ? 1 : 0.25;
@@ -6481,13 +6497,32 @@ __CAT_JS__
     var points = new THREE.Points(pg, new THREE.PointsMaterial(
         { vertexColors: true, size: 0.075, transparent: true, opacity: 0.95 }));
     var lineData = [], MAX_FLOATS = 260 * 6;
-    for (var a = 0; a < N && lineData.length < MAX_FLOATS; a++) {
-        for (var b = a + 1; b < N && lineData.length < MAX_FLOATS; b++) {
-            var dx = pts[a][0] - pts[b][0], dy = pts[a][1] - pts[b][1],
-                dz = pts[a][2] - pts[b][2];
-            if (dx * dx + dy * dy + dz * dz < 1.7) {
-                lineData.push(pts[a][0], pts[a][1], pts[a][2],
-                              pts[b][0], pts[b][1], pts[b][2]);
+    if (wideNet) {                       // join every point to its two nearest neighbours
+        for (var a = 0; a < N; a++) {
+            var best = [[1e9, -1], [1e9, -1]];
+            for (var b = 0; b < N; b++) {
+                if (a === b) { continue; }
+                var dx = pts[a][0] - pts[b][0], dy = pts[a][1] - pts[b][1], dz = pts[a][2] - pts[b][2];
+                var dd = dx * dx + dy * dy + dz * dz;
+                if (dd < best[0][0]) { best[1] = best[0]; best[0] = [dd, b]; }
+                else if (dd < best[1][0]) { best[1] = [dd, b]; }
+            }
+            for (var q = 0; q < 2; q++) {
+                var bb = best[q][1];
+                if (bb >= 0) {
+                    lineData.push(pts[a][0], pts[a][1], pts[a][2], pts[bb][0], pts[bb][1], pts[bb][2]);
+                }
+            }
+        }
+    } else {
+        for (var a = 0; a < N && lineData.length < MAX_FLOATS; a++) {
+            for (var b = a + 1; b < N && lineData.length < MAX_FLOATS; b++) {
+                var dx = pts[a][0] - pts[b][0], dy = pts[a][1] - pts[b][1],
+                    dz = pts[a][2] - pts[b][2];
+                if (dx * dx + dy * dy + dz * dz < 1.7) {
+                    lineData.push(pts[a][0], pts[a][1], pts[a][2],
+                                  pts[b][0], pts[b][1], pts[b][2]);
+                }
             }
         }
     }
@@ -6509,40 +6544,6 @@ __CAT_JS__
     ring2.rotation.y = 0.1;
     group.add(ring, ring2);
 
-    // glowing planets that fill the sides of the banner
-    function glowTex(rgb) {
-        var cv = document.createElement('canvas'); cv.width = cv.height = 64;
-        var g2 = cv.getContext('2d'), gr = g2.createRadialGradient(32, 32, 1, 32, 32, 32);
-        gr.addColorStop(0, 'rgba(' + rgb + ',0.95)'); gr.addColorStop(0.3, 'rgba(' + rgb + ',0.35)');
-        gr.addColorStop(1, 'rgba(' + rgb + ',0)');
-        g2.fillStyle = gr; g2.fillRect(0, 0, 64, 64);
-        return new THREE.CanvasTexture(cv);
-    }
-    var texRed = glowTex('255,59,63'), texWhite = glowTex('255,255,255');
-    var planets = new THREE.Group(); scene.add(planets);
-    var PL = [
-        { sx: -1, fx: 0.74, fy: 0.30, r: 0.30, red: true,  ring: true,  sp: 0.6, ph: 0 },
-        { sx: -1, fx: 0.90, fy: -0.45, r: 0.13, red: false, ring: false, sp: 0.9, ph: 2 },
-        { sx: -1, fx: 0.52, fy: -0.80, r: 0.09, red: true,  ring: false, sp: 1.1, ph: 4 },
-        { sx: 1,  fx: 0.78, fy: -0.25, r: 0.26, red: false, ring: true,  sp: 0.5, ph: 1 },
-        { sx: 1,  fx: 0.92, fy: 0.55, r: 0.12, red: true,  ring: false, sp: 1.0, ph: 3 },
-        { sx: 1,  fx: 0.50, fy: 0.82, r: 0.09, red: false, ring: false, sp: 0.8, ph: 5 }
-    ];
-    PL.forEach(function (p) {
-        var grp = new THREE.Group();
-        grp.add(new THREE.Mesh(new THREE.SphereGeometry(p.r, 18, 14),
-            new THREE.MeshBasicMaterial({ color: p.red ? 0xFF3B3F : 0xFFFFFF })));
-        var sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: p.red ? texRed : texWhite,
-            transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
-        sp.scale.setScalar(p.r * 7); grp.add(sp);
-        if (p.ring) {
-            var rg = new THREE.Mesh(new THREE.TorusGeometry(p.r * 1.9, p.r * 0.05, 6, 48),
-                new THREE.MeshBasicMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0.6 }));
-            rg.rotation.x = 1.2; rg.rotation.y = 0.3; grp.add(rg); p.ringMesh = rg;
-        }
-        p.grp = grp; planets.add(grp);
-    });
-    var halfW = 3, halfH = 3;
     var saved = null;
     try { saved = JSON.parse(sessionStorage.getItem('nashmi_scene') || 'null'); } catch (err) {}
     var phase0 = saved && saved.p ? saved.p : 0, lastSave = 0, baseZ = 8.6;
@@ -6555,21 +6556,18 @@ __CAT_JS__
         camera.aspect = w / h;
         baseZ = w / h < 0.9 ? 10.5 : (w / h < 1.6 ? 8.6 : 7.2);
         camera.position.set(0, 0, baseZ);
-        net.scale.set(Math.max(1, Math.min(2.1, (w / h) * 0.7)), 1, 1);   // wider cloud on wide screens
+        if (wideNet) { net.scale.set(1, 1, 1); }
+        else { net.scale.set(Math.max(1, Math.min(2.1, (w / h) * 0.7)), 1, 1); }
         var GS = __GSCALE__, OFF = __OFFSET_Y__;       // keep the whole ring inside the banner
         var fitK = Math.min(1, (baseZ * 0.4142 * 0.96) / ((3.6 + OFF) * GS));
         group.scale.setScalar(GS * fitK);
         group.position.y = OFF * fitK;
-        // wide screens only: stretch the big mesh sideways so it reaches the frame's edges
-        var asp = w / h, halfView = 0.4142 * baseZ * asp;
-        shellWrap.scale.x = asp >= 1.25 ? Math.max(1, (halfView * 1.04) / (2.7 * GS * fitK)) : 1;
-        shellWrap.scale.y = asp >= 1.25 ? Math.max(1, ((0.4142 * baseZ - OFF * fitK) * 1.03) / (2.7 * GS * fitK)) : 1;
         // centre the cat (and its glow) on the middle of the rings
         var ndcY = (OFF * fitK) / (0.4142 * baseZ), cy = ((1 - ndcY) / 2 * h).toFixed(1) + 'px';
         var cb = document.querySelector('.catbox'), gl = document.querySelector('.glow');
         if (cb) { cb.style.top = cy; }
         if (gl) { gl.style.top = cy; }
-        halfH = 0.4142 * (baseZ + 1); halfW = halfH * (w / h);
+
         camera.updateProjectionMatrix();
     }
     resize();
@@ -6596,8 +6594,8 @@ __CAT_JS__
         coreWire.rotation.x = t * 0.2;
         coreWire.scale.setScalar(1 + Math.sin(t * 1.6) * 0.03);
         shell.rotation.y = -t * 0.12;
-        net.rotation.y = t * 0.06;
-        net.rotation.x = Math.sin(t * 0.2) * 0.1;
+        net.rotation.y = wideNet ? Math.sin(t * 0.3) * 0.04 : t * 0.06;
+        net.rotation.x = wideNet ? 0 : Math.sin(t * 0.2) * 0.1;
         ring.rotation.z = t * 0.25;
         ring2.rotation.z = -t * 0.18;
         group.rotation.y += (ex * 0.9 - group.rotation.y) * 0.05;
@@ -6609,10 +6607,6 @@ __CAT_JS__
                     { p: t, ry: group.rotation.y, rx: group.rotation.x }));
             } catch (err) {}
         }
-        PL.forEach(function (p) {
-            p.grp.position.set(p.sx * halfW * p.fx, halfH * p.fy + Math.sin(t * p.sp + p.ph) * 0.12, -1);
-            if (p.ringMesh) { p.ringMesh.rotation.z = t * 0.6 + p.ph; }
-        });
         renderer.render(scene, camera);
         if (running) { requestAnimationFrame(frame); }
     }
@@ -6855,6 +6849,18 @@ div:has(> .st-key-topbar) { position: sticky; top: 10px; z-index: 60; }
     padding: 2px 10px; border-radius: 999px; font: 600 0.72rem var(--mono);
     color: var(--text); background: rgba(229, 56, 59, 0.14);
 }
+.st-key-topbar [data-baseweb="select"] > div {
+    border: 0 !important; border-radius: 999px !important; min-height: 40px;
+    background: rgba(255, 255, 255, 0.07) !important; box-shadow: none !important;
+    font-size: 0.9rem; cursor: pointer;
+}
+.st-key-topbar [data-testid="stColumn"]:nth-child(2) { flex: 0 0 6rem !important; width: 6rem !important; min-width: 6rem !important; }
+.st-key-topbar [data-baseweb="select"] { min-width: 5.2rem; }
+.st-key-topbar [data-baseweb="select"] [class*="ValueContainer"], .st-key-topbar [data-baseweb="select"] div[value] { overflow: visible; }
+.st-key-topbar [data-baseweb="select"] > div { padding-left: 0.2rem; }
+.st-key-topbar [data-baseweb="select"] [data-baseweb="icon"], .st-key-topbar [data-baseweb="select"] svg { width: 16px; height: 16px; }
+.st-key-topbar [data-baseweb="select"] > div:hover { background: rgba(255, 255, 255, 0.12) !important; }
+.st-key-topbar [data-baseweb="select"] input { caret-color: transparent; cursor: pointer; }
 .st-key-topbar_home {
     position: absolute !important; width: 1px; height: 1px; overflow: hidden;
     opacity: 0; pointer-events: none; margin: 0 !important;
@@ -7386,8 +7392,11 @@ RTL_CSS = """
 """
 
 
-def toggle_lang() -> None:
-    st.session_state["lang"] = "en" if lang() == "ar" else "ar"
+LANG_SHORT = {"en": "EN", "ar": "AR"}
+
+
+def on_lang_pick() -> None:
+    st.session_state["lang"] = st.session_state["topbar_lang"]
 
 
 def go_gate(name: str) -> None:
@@ -7548,7 +7557,7 @@ def render_topbar(mode: str = "landing") -> None:
     else:                                                  # finishing sign-up / two-step
         actions = [("topbar_signout", "sign_out", "tertiary", None, ":material/logout:")]
     with st.container(key="topbar"):
-        cols = st.columns([6, 1.7] + [2] * len(actions),
+        cols = st.columns([5, 1.6] + [2] * len(actions),
                           vertical_alignment="center", gap="small")
         with cols[0]:
             # the page style rides with the first element so nothing sits above the bar
@@ -7558,8 +7567,10 @@ def render_topbar(mode: str = "landing") -> None:
                        .replace("__THREE_SRI__", THREE_SRI)
                        .replace("__AVATAR__", avatar_data_uri()), 48)
             st.button("Home", key="topbar_home", on_click=go_gate, args=("landing",))
-        cols[1].button(tr("lang_btn"), key="topbar_lang", type="tertiary",
-                       on_click=toggle_lang, width="stretch")
+        st.session_state["topbar_lang"] = lang()
+        cols[1].selectbox("Language", ["en", "ar"], key="topbar_lang",
+                          format_func=LANG_SHORT.get, label_visibility="collapsed",
+                          on_change=on_lang_pick)
         for col, (key, label, kind, target, icon) in zip(cols[2:], actions):
             if target is None:
                 col.button(tr(label), key=key, type=kind, on_click=sign_out,
