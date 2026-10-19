@@ -173,6 +173,10 @@ class Database:
     def __init__(self, url: str, secret_keys: Iterable[str] = ()):
         if url.startswith("postgres://"):  # old style used by some hosts
             url = "postgresql://" + url[len("postgres://"):]
+        if url.startswith("postgresql://"):
+            # Newer SQLAlchemy maps a bare "postgresql://" to psycopg 3, but
+            # requirements.txt installs psycopg2, so name the driver.
+            url = "postgresql+psycopg2://" + url[len("postgresql://"):]
         self.is_sqlite = url.startswith("sqlite")
         self.cipher = Cipher(secret_keys)
         if not self.is_sqlite and not self.cipher.enabled:
