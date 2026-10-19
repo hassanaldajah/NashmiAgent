@@ -3390,9 +3390,8 @@ HERO_TEMPLATE = """<!DOCTYPE html>
     <canvas id="bg"></canvas>
     <canvas id="cat" width="416" height="292"></canvas>
     <div class="overlay">
-        <h1 class="title">NASHMI AGENT<span class="caret"></span></h1>
-        <p class="subtitle">Your friendly SOC and security coding buddy.
-            The cat is watching your pointer.</p>
+        <h1 class="title">__HERO_TITLE__<span class="caret"></span></h1>
+        <p class="subtitle">__HERO_SUB__</p>
     </div>
 </div>
 <script>
@@ -3547,7 +3546,12 @@ def embed_html(markup: str, height: int) -> None:
 
 def render_hero() -> None:
     """Show the animated banner with the eye-tracking cat."""
-    embed_html(HERO_TEMPLATE.replace("__CAT_B64__", CAT_B64), HERO_HEIGHT)
+    embed_html(HERO_TEMPLATE.replace("__CAT_B64__", CAT_B64)
+               .replace("__HERO_TITLE__", tt("NASHMI AGENT", "نشمي"))
+               .replace("__HERO_SUB__", tt(
+                   "Your friendly SOC and security coding buddy. The cat is watching your pointer.",
+                   "رفيقك في الـ SOC وبرمجة الأمن. القطة بتتابع مؤشرك.")),
+               HERO_HEIGHT)
 
 
 # ---------------------------------------------------------------------------
@@ -4321,9 +4325,24 @@ def key_label(provider: Provider) -> str:
 def render_key_help(provider: Provider) -> None:
     """Explain the bring-your-own-key model and link to the key page."""
     saving = (
-        " Signed-in accounts can also save it, encrypted."
+        tt(" Signed-in accounts can also save it, encrypted.",
+           " الحسابات المسجّلة تقدر تحفظه مشفّراً.")
         if accounts_enabled() else ""
     )
+    if lang() == "ar":
+        pre = "مجاني " if provider.free else ""
+        st.info(
+            "**استخدم مفتاح API الخاص بك.** نشمي يشتغل بمفتاحك أنت، فمحادثاتك ما بتستهلك "
+            "حصة غيرك. Gemini وGroq عندهم مفاتيح مجانية؛ وOpenAI وClaude بتنحاسب على "
+            "حسابك." + "\n\n"
+            f"1. أنشئ مفتاح {provider.short} {pre}بالزر تحت." + "\n"
+            "2. افتح **نموذج الذكاء الاصطناعي** في الشريط الجانبي، واختر المزوّد والصق المفتاح." + "\n"
+            f"3. ابدأ المحادثة.{saving}",
+            icon=":material/key:",
+        )
+        st.link_button(key_label(provider), provider.key_url,
+                       icon=":material/open_in_new:")
+        return
     st.info(
         "**Bring your own API key.** Nashmi runs on your own key, so your "
         "chats never use anybody else's quota. Gemini and Groq have free "
@@ -4764,14 +4783,14 @@ def render_references(name: str) -> None:
 def render_empty_state(track: Track) -> str | None:
     """Start screen of a fresh chat; returns a clicked suggestion's prompt."""
     st.markdown(
-        f'<div class="empty-title">{html.escape(track.name)}</div>'
-        f'<div class="empty-blurb">{html.escape(track.blurb)}</div>',
+        f'<div class="empty-title">{html.escape(track_title(track))}</div>'
+        f'<div class="empty-blurb">{html.escape(track_blurb(track))}</div>',
         unsafe_allow_html=True,
     )
     selected = None
     for number, (label, prompt) in enumerate(track.actions):
         if st.button(label, key=f"quick_{track.name}_{number}"):
-            selected = prompt
+            selected = prompt + (" Please answer in Arabic." if lang() == "ar" else "")
     render_references(track.name)
     return selected
 
@@ -4999,8 +5018,8 @@ def render_soc_track(settings: Settings) -> None:
     provider = settings.provider
     track = TRACKS_BY_NAME[MODE_SOC]
     st.markdown(
-        f'<div class="empty-title">{html.escape(track.name)}</div>'
-        f'<div class="empty-blurb">{html.escape(track.blurb)}</div>',
+        f'<div class="empty-title">{html.escape(track_title(track))}</div>'
+        f'<div class="empty-blurb">{html.escape(track_blurb(track))}</div>',
         unsafe_allow_html=True,
     )
     render_references(MODE_SOC)
@@ -5144,8 +5163,8 @@ def render_toolbox() -> None:
     """Non-AI helpers an analyst needs all day: CVE, hashes, encoders, IOCs."""
     track = TRACKS_BY_NAME[MODE_TOOLS]
     st.markdown(
-        f'<div class="empty-title">{html.escape(track.name)}</div>'
-        f'<div class="empty-blurb">{html.escape(track.blurb)}</div>',
+        f'<div class="empty-title">{html.escape(track_title(track))}</div>'
+        f'<div class="empty-blurb">{html.escape(track_blurb(track))}</div>',
         unsafe_allow_html=True,
     )
     tab_cve, tab_hash, tab_ioc = st.tabs(
@@ -5522,8 +5541,8 @@ def _blank_safe(text: str) -> str:
 def render_exam_setup(settings: Settings) -> None:
     track = TRACKS_BY_NAME[MODE_EXAM]
     st.markdown(
-        f'<div class="empty-title">{html.escape(track.name)}</div>'
-        f'<div class="empty-blurb">{html.escape(track.blurb)}</div>',
+        f'<div class="empty-title">{html.escape(track_title(track))}</div>'
+        f'<div class="empty-blurb">{html.escape(track_blurb(track))}</div>',
         unsafe_allow_html=True,
     )
     if not settings.api_key:
@@ -7508,6 +7527,267 @@ def on_lang_pick() -> None:
     st.session_state["lang"] = st.session_state["topbar_lang"]
 
 
+# English -> Arabic for the in-app text. A thin wrapper (install_ar_wrappers) swaps
+# the text of Streamlit widgets when the language is Arabic, so no call site changes.
+AR_MAP = {
+    # tracks: blurbs, placeholders and quick-start buttons
+    "Threat intel, OSINT, log analysis with Pandas and anomaly detection.": "استخبارات التهديدات، وOSINT، وتحليل السجلات بـ Pandas وكشف الشذوذ.",
+    "Ask about threat intel, OSINT, Sigma/YARA, log analysis": "اسأل عن استخبارات التهديدات وOSINT وSigma/YARA وتحليل السجلات",
+    "Pandas Security Data Lab": "مختبر بيانات الأمن بـ Pandas",
+    "Threat Intel (OSINT) Script": "سكربت استخبارات التهديدات (OSINT)",
+    "AI Attack Detection Model": "نموذج ذكاء اصطناعي لكشف الهجمات",
+    "Cyber-physical systems security: SCADA, ICS, IoT and intrusion detection projects.": "أمن الأنظمة السيبرانية-الفيزيائية: SCADA وICS وIoT ومشاريع كشف التسلل.",
+    "Ask about SCADA, ICS, Modbus, MQTT, IoT security": "اسأل عن SCADA وICS وModbus وMQTT وأمن IoT",
+    "CPSS Project Ideas": "أفكار مشاريع CPSS",
+    "Modbus / IoT Attack Simulation": "محاكاة هجمات Modbus / IoT",
+    "CPS Intrusion Detection (IDS)": "كشف التسلل في الأنظمة السيبرانية-الفيزيائية (IDS)",
+    "Ask anything, in Arabic or English. Cybersecurity and programming are my strong side.": "اسأل أي شي بالعربي أو الإنجليزي. الأمن السيبراني والبرمجة نقطة قوتي.",
+    "Message Nashmi": "اكتب لنشمي",
+    "Vulnerable versus secure code, explained line by line.": "الكود الضعيف مقابل الآمن، مشروحاً سطراً بسطر.",
+    "Ask about SQL injection, secure code, code review": "اسأل عن حقن SQL والكود الآمن ومراجعة الكود",
+    "SQL Injection Defense Code": "كود الدفاع ضد حقن SQL",
+    "Network Port Scanner Script": "سكربت فحص منافذ الشبكة",
+    "Brute Force Detection Script": "سكربت كشف هجمات التخمين",
+    "Authorized testing methodology, labs, CTFs and reporting.": "منهجية الاختبار المصرّح به، والمختبرات، وCTF، وكتابة التقارير.",
+    "Ask about recon, web testing, labs, CTFs, reporting": "اسأل عن الاستطلاع واختبار الويب والمختبرات وCTF والتقارير",
+    "Recon Methodology": "منهجية الاستطلاع",
+    "Practice Lab Setup": "تجهيز مختبر تدريب",
+    "Pentest Report Template": "قالب تقرير اختبار اختراق",
+    "CTF coach for every category: web, crypto, pwn, reverse, forensics, stego, OSINT and misc. Describe a challenge and get a step-by-step approach.": "مدرّب CTF لكل الفئات: ويب وتشفير وpwn وهندسة عكسية وتحقيق جنائي وإخفاء معلومات وOSINT ومتفرقات. صِف التحدي وخذ خطة خطوة بخطوة.",
+    "Paste a CTF challenge, a file's output or ask how to start (web, crypto, pwn, rev, forensics...)": "الصق تحدي CTF أو مخرجات ملف أو اسأل كيف تبدأ (ويب، تشفير، pwn، rev، forensics...)",
+    "Web: where do I start?": "ويب: من وين أبدأ؟",
+    "Crypto: identify the cipher": "تشفير: حدّد نوع الشيفرة",
+    "Pwn: first steps on a binary": "Pwn: أول الخطوات على ملف تنفيذي",
+    "Reverse: crack a crackme": "هندسة عكسية: حل crackme",
+    "Forensics: analyse a pcap or image": "تحقيق جنائي: حلّل pcap أو صورة",
+    "Stego and OSINT checklist": "قائمة فحص Stego وOSINT",
+    "Static and dynamic analysis, reverse engineering and YARA, from a defender's view.": "التحليل الساكن والديناميكي والهندسة العكسية وYARA من منظور المدافع.",
+    "Ask about static analysis, sandboxes, YARA, reversing": "اسأل عن التحليل الساكن وبيئات العزل وYARA والهندسة العكسية",
+    "Static Analysis Workflow": "مراحل التحليل الساكن",
+    "Safe Sandbox Setup": "تجهيز بيئة عزل آمنة",
+    "Write a YARA Rule": "اكتب قاعدة YARA",
+    "Digital forensics and incident response: artifacts, timelines and playbooks.": "التحقيق الجنائي الرقمي والاستجابة للحوادث: الآثار والجداول الزمنية وخطط العمل.",
+    "Ask about forensics, artifacts, timelines, IR playbooks": "اسأل عن التحقيق الجنائي والآثار والجداول الزمنية وخطط الاستجابة",
+    "Ransomware IR Playbook": "خطة الاستجابة لفدية",
+    "Windows Forensic Artifacts": "آثار التحقيق الجنائي في Windows",
+    "Build an Event Timeline": "بناء جدول زمني للأحداث",
+    "Traffic analysis, IDS/IPS, firewalls and segmentation.": "تحليل الحركة، وIDS/IPS، وجدران الحماية، وتقسيم الشبكة.",
+    "Ask about Wireshark, Suricata, firewalls, protocols": "اسأل عن Wireshark وSuricata وجدران الحماية والبروتوكولات",
+    "Wireshark Triage": "فرز سريع بـ Wireshark",
+    "Suricata Rule": "قاعدة Suricata",
+    "Segmentation Design": "تصميم تقسيم الشبكة",
+    "IAM, misconfigurations, containers and Kubernetes hardening.": "إدارة الهوية والصلاحيات، والأخطاء في الإعدادات، وتحصين الحاويات وKubernetes.",
+    "Ask about AWS, Azure, IAM, containers, Kubernetes": "اسأل عن AWS وAzure وIAM والحاويات وKubernetes",
+    "IAM Least Privilege": "أقل صلاحية في IAM",
+    "Storage Misconfigurations": "أخطاء إعدادات التخزين",
+    "Container Hardening": "تحصين الحاويات",
+    "Upload logs, screenshots or captures and get a SOC report you can export as PDF.": "ارفع سجلات أو لقطات شاشة أو التقاطات واحصل على تقرير SOC تقدر تصدّره PDF.",
+    "Look up CVEs in the official NVD, hash and decode data, and pull indicators out of any text. Everything can be exported.": "ابحث عن CVE في NVD الرسمية، وجزّئ وفكّ ترميز البيانات، واستخرج المؤشرات من أي نص. وكل شي قابل للتصدير.",
+    "Build a full exam from a subject or your own slides and PDFs: multiple choice, drag and drop, image labelling, short answers and more. Take it, get graded, export it.": "ابنِ امتحاناً كاملاً من موضوع أو من شرائحك وملفات PDF: اختيار من متعدد، سحب وإفلات، تسمية صور، إجابات قصيرة وأكثر. قدّمه واحصل على علامتك وصدّره.",
+    "Nashmi is waiting for you...": "نشمي بانتظارك...",
+    # chat and shared
+    "Trusted references": "مراجع موثوقة",
+    "Export": "تصدير",
+    "Markdown (.md)": "ماركداون (.md)",
+    "Plain text (.txt)": "نص عادي (.txt)",
+    "PDF (.pdf)": "PDF (.pdf)",
+    "All code files (.zip)": "كل ملفات الكود (.zip)",
+    "No reply was received. Try again or pick another model.": "لم يصل رد. حاول مرة أخرى أو اختر موديل آخر.",
+    "Detections": "الاكتشافات",
+    # account
+    "Back to chat": "رجوع للمحادثة",
+    "Sign out": "تسجيل الخروج",
+    "Profile": "الملف الشخصي",
+    "Settings": "الإعدادات",
+    "Usage": "الاستخدام",
+    "Data and security": "البيانات والأمان",
+    "### Guest": "### ضيف",
+    "Sign in to keep your chats, projects, usage history and saved keys.": "سجّل الدخول لتحتفظ بمحادثاتك ومشاريعك وسجل استخدامك ومفاتيحك المحفوظة.",
+    "Accounts are not set up on this server. Your chats are kept on this computer.": "الحسابات غير مفعّلة على هذا الخادم. محادثاتك محفوظة على هذا الجهاز.",
+    "Your account and data were deleted. Sign out to finish.": "تم حذف حسابك وبياناتك. سجّل الخروج لإنهاء العملية.",
+    "Projects": "المشاريع",
+    "Group chats and give them standing instructions. Once you have a project, a picker appears in the sidebar.": "جمّع المحادثات وأعطها تعليمات دائمة. أول ما يكون عندك مشروع بتظهر قائمة اختيار في الشريط الجانبي.",
+    "Project name": "اسم المشروع",
+    "e.g. Final-year thesis": "مثال: مشروع التخرج",
+    "Instructions (optional)": "التعليمات (اختياري)",
+    "e.g. Always use Bash, cite NIST, keep answers short": "مثال: استخدم Bash دائماً، واذكر NIST، وخلّي الإجابات قصيرة",
+    "Create project": "إنشاء مشروع",
+    "Instructions of this project": "تعليمات هذا المشروع",
+    "Delete project": "حذف المشروع",
+    "Answer length": "طول الإجابة",
+    "Answer language": "لغة الإجابة",
+    "API keys": "مفاتيح API",
+    "Nashmi never uses a key of ours. Paste your own: it is used only to call the provider you pick.": "نشمي ما بيستخدم مفتاحاً من عندنا أبداً. الصق مفتاحك: بيُستخدم فقط لمناداة المزوّد اللي بتختاره.",
+    "Saved in your account (encrypted)": "محفوظ في حسابك (مشفّر)",
+    "Remove saved key": "حذف المفتاح المحفوظ",
+    "Save encrypted": "حفظ مشفّراً",
+    "Requests today": "طلبات اليوم",
+    "Last 14 days": "آخر 14 يوماً",
+    "Chats": "المحادثات",
+    "Messages": "الرسائل",
+    "No requests yet. Your usage will show up here.": "ما في طلبات بعد. استخدامك رح يظهر هون.",
+    "**Requests per day**": "**الطلبات يومياً**",
+    "**By model**": "**حسب الموديل**",
+    "Guest usage is counted for this session only. Sign in to keep a history.": "استخدام الضيف بيُحسب لهذه الجلسة فقط. سجّل الدخول لتحتفظ بسجل.",
+    "Export my data (.json)": "تصدير بياناتي (.json)",
+    "Import data (.json)": "استيراد بيانات (.json)",
+    "Import now": "استورد الآن",
+    "I want to delete all my chats and projects": "أريد حذف كل محادثاتي ومشاريعي",
+    "Delete all chats and projects": "حذف كل المحادثات والمشاريع",
+    "**Delete my account**": "**حذف حسابي**",
+    "Removes your profile, chats, projects, usage history and saved keys from the database. This cannot be undone.": "يحذف ملفك الشخصي ومحادثاتك ومشاريعك وسجل استخدامك ومفاتيحك المحفوظة من قاعدة البيانات. لا يمكن التراجع.",
+    "Type your e-mail to confirm": "اكتب بريدك الإلكتروني للتأكيد",
+    "Delete my account": "حذف حسابي",
+    # SOC
+    "Logs, screenshots, videos, PCAP/CSV/JSON or any file": "سجلات، لقطات شاشة، فيديو، PCAP/CSV/JSON أو أي ملف",
+    "Notes or a specific question about the files (optional)": "ملاحظات أو سؤال محدد عن الملفات (اختياري)",
+    "VirusTotal scan (optional, free key)": "فحص VirusTotal (اختياري، مفتاح مجاني)",
+    "VirusTotal API key": "مفتاح VirusTotal API",
+    "Upload files VirusTotal does not know yet (they become visible to the VirusTotal community)": "ارفع الملفات التي لا يعرفها VirusTotal بعد (تصبح ظاهرة لمجتمع VirusTotal)",
+    "Add VT_API_KEY to .env (free key from virustotal.com) to scan every uploaded file with VirusTotal.": "أضف VT_API_KEY إلى .env (مفتاح مجاني من virustotal.com) لفحص كل ملف مرفوع بـ VirusTotal.",
+    "Start security analysis": "ابدأ التحليل الأمني",
+    "VirusTotal scan": "فحص VirusTotal",
+    "Unique IPs": "عناوين IP الفريدة",
+    "External IPs": "عناوين IP الخارجية",
+    "SHA-256 Hashes": "تجزئات SHA-256",
+    "Your security report is ready.": "تقريرك الأمني جاهز.",
+    "Download report (PDF)": "تنزيل التقرير (PDF)",
+    "Download report (Markdown)": "تنزيل التقرير (ماركداون)",
+    # toolbox
+    "CVE lookup": "بحث CVE",
+    "Hash and encode": "تجزئة وترميز",
+    "IOC extractor": "مستخرج IOC",
+    "CVE ID": "معرّف CVE",
+    "Look up in the NVD": "ابحث في NVD",
+    "Severity": "الخطورة",
+    "CISA KEV": "CISA KEV",
+    "Download record (.json)": "تنزيل السجل (.json)",
+    "Enter an ID like CVE-2021-44228.": "أدخل معرّفاً مثل CVE-2021-44228.",
+    "The NVD could not be reached (network or rate limit). Try again in a minute.": "تعذّر الوصول إلى NVD (الشبكة أو حد الطلبات). حاول بعد دقيقة.",
+    "Text": "نص",
+    "...or a file": "...أو ملف",
+    "Encode or decode the text above": "ترميز أو فك ترميز النص أعلاه",
+    "Paste logs, alerts, an e-mail or a report": "الصق سجلات أو تنبيهات أو بريداً أو تقريراً",
+    "Undo defanging (hxxp, [.], [at])": "إلغاء التعطيل (hxxp, [.], [at])",
+    "No indicators found.": "لم يُعثر على مؤشرات.",
+    "Download (.csv)": "تنزيل (.csv)",
+    "Download (.json)": "تنزيل (.json)",
+    # exams
+    "Subject or topic": "الموضوع أو المادة",
+    "e.g. Network security: firewalls, IDS and VPNs": "مثال: أمن الشبكات: جدران الحماية وIDS وVPN",
+    "Study material (optional): slides, lecture notes, PDFs, pictures": "مادة الدراسة (اختياري): شرائح، ملاحظات محاضرات، PDF، صور",
+    "**Pictures found in your material.** Tick the ones the exam may use for image questions.": "**صور وُجدت في مادتك.** علّم التي قد يستخدمها الامتحان لأسئلة الصور.",
+    "Use": "استخدم",
+    "Exam language": "لغة الامتحان",
+    "Difficulty": "الصعوبة",
+    "Exam style": "نمط الامتحان",
+    "Questions (0 = Nashmi decides)": "عدد الأسئلة (0 = نشمي يقرر)",
+    "Total marks (0 = Nashmi decides)": "مجموع العلامات (0 = نشمي يقرر)",
+    "Minutes (0 = Nashmi decides)": "الدقائق (0 = نشمي يقرر)",
+    "Question types (leave empty and Nashmi picks the mix)": "أنواع الأسئلة (اتركها فاضية ونشمي يختار المزيج)",
+    "Double-check the answer key (one extra request, recommended)": "تدقيق مفتاح الإجابة (طلب إضافي واحد، موصى به)",
+    "Generate exam": "إنشاء الامتحان",
+    "Load a saved exam (.json)": "فتح امتحان محفوظ (.json)",
+    "Saved exam": "امتحان محفوظ",
+    "Open this exam": "افتح هذا الامتحان",
+    "Exam paper (.md)": "ورقة الامتحان (.md)",
+    "Exam paper (.pdf)": "ورقة الامتحان (.pdf)",
+    "Answer key (.pdf)": "مفتاح الإجابة (.pdf)",
+    "Save this exam to retake later (.json)": "احفظ هذا الامتحان لتعيده لاحقاً (.json)",
+    "PDF and Markdown exports contain the text only. Pictures stay in the saved .json exam.": "ملفات PDF وماركداون فيها النص فقط. الصور تبقى في ملف .json المحفوظ.",
+    "Questions": "الأسئلة",
+    "Total marks": "مجموع العلامات",
+    "Time": "الوقت",
+    "Start the exam": "ابدأ الامتحان",
+    "Make another exam": "أنشئ امتحاناً آخر",
+    "Answer": "الإجابة",
+    "Select all that apply": "اختر كل ما ينطبق",
+    "Choose one or more": "اختر واحداً أو أكثر",
+    "Your answer": "إجابتك",
+    "Time is up. Your answers were submitted.": "انتهى الوقت. تم تسليم إجاباتك.",
+    "Submit exam": "تسليم الامتحان",
+    "Marking the closed questions": "تصحيح الأسئلة المغلقة",
+    "Asking Nashmi to read your written answers": "نشمي يقرأ إجاباتك المكتوبة",
+    "Score": "العلامة",
+    "Percent": "النسبة",
+    "Result": "النتيجة",
+    "Some written answers could not be graded automatically and count as 0 until you review them.": "بعض الإجابات المكتوبة تعذّر تصحيحها تلقائياً وتُحسب صفراً حتى تراجعها.",
+    "**By section**": "**حسب القسم**",
+    "Retake this exam": "أعد هذا الامتحان",
+    "Results with answers (.pdf)": "النتائج مع الإجابات (.pdf)",
+    "The exam engine (nashmi_exam.py) is missing.": "محرك الامتحانات (nashmi_exam.py) غير موجود.",
+}
+
+_AR_WRAPPED = ("button", "text_input", "text_area", "selectbox", "radio", "checkbox", "toggle",
+               "expander", "download_button", "link_button", "file_uploader", "audio_input",
+               "popover", "metric", "form_submit_button", "multiselect", "number_input",
+               "slider", "subheader", "header", "caption", "info", "warning", "error",
+               "success", "markdown", "chat_input")
+
+
+def _ar(value):
+    if isinstance(value, str):
+        return AR_MAP.get(value, value)
+    return value
+
+
+def _wrap_ar(fn):
+    import functools
+
+    @functools.wraps(fn)
+    def inner(*args, **kwargs):
+        try:
+            arabic = lang() == "ar"
+        except Exception:  # noqa: BLE001 - outside a script run
+            arabic = False
+        if arabic:
+            if args:
+                args = (_ar(args[0]),) + tuple(args[1:])
+            for key in ("label", "placeholder", "help", "body"):
+                if key in kwargs:
+                    kwargs[key] = _ar(kwargs[key])
+        return fn(*args, **kwargs)
+    return inner
+
+
+def _wrap_tabs(fn):
+    import functools
+
+    @functools.wraps(fn)
+    def inner(tabs, *args, **kwargs):
+        try:
+            arabic = lang() == "ar"
+        except Exception:  # noqa: BLE001
+            arabic = False
+        if arabic:
+            tabs = [_ar(t) for t in tabs]
+        return fn(tabs, *args, **kwargs)
+    return inner
+
+
+def install_ar_wrappers() -> None:
+    """Wrap the Streamlit widgets once per process (st.* and the column/container objects)."""
+    if getattr(st, "_nashmi_ar_installed", False):
+        return
+    from streamlit.delta_generator import DeltaGenerator
+    for name in _AR_WRAPPED:
+        if hasattr(st, name):
+            setattr(st, name, _wrap_ar(getattr(st, name)))
+        if hasattr(DeltaGenerator, name):
+            setattr(DeltaGenerator, name, _wrap_ar(getattr(DeltaGenerator, name)))
+    st.tabs = _wrap_tabs(st.tabs)
+    DeltaGenerator.tabs = _wrap_tabs(DeltaGenerator.tabs)
+    st._nashmi_ar_installed = True
+
+
+def track_title(track) -> str:
+    return tt(track.name, TRACK_AR.get(track.name, track.name))
+
+
+def track_blurb(track) -> str:
+    return tt(track.blurb, AR_MAP.get(track.blurb, track.blurb))
+
+
 def go_gate(name: str) -> None:
     st.session_state["gate"] = name
 
@@ -8160,6 +8440,7 @@ def main() -> None:
         initial_sidebar_state="auto",  # collapsed on phones, open on desktop
     )
     inject_theme()
+    install_ar_wrappers()
     gate = current_gate()
     if gate == "landing":
         render_landing()
