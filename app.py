@@ -4288,7 +4288,7 @@ def render_login_buttons(key_prefix: str) -> None:
     """One button per sign-in provider that is set up."""
     for provider in auth_providers():
         st.button(
-            LOGIN_LABELS.get(provider, "Sign in"),
+            tr("continue_google") if provider == "google" else LOGIN_LABELS.get(provider, "Sign in"),
             key=f"{key_prefix}_login_{provider}",
             on_click=start_login, args=(provider,),
             icon=None if provider == "google" else ":material/login:",
@@ -6351,7 +6351,7 @@ SCENE_TEMPLATE = """<!DOCTYPE html>
     <div class="glow"></div>
     <canvas id="c"></canvas>
     <div class="catbox"><canvas id="cat" width="416" height="292" role="img" aria-label="Nashmi, the cat in a red and white shemagh"></canvas></div>
-    <div class="copy">__COPY__</div>
+    <div class="copy"__DIR__>__COPY__</div>
 </div>
 <script>
 __CAT_JS__
@@ -6575,29 +6575,26 @@ __CAT_JS__
 </html>
 """
 
-SCENE_COPY = {
-    "landing": (
-        '<div class="badge">&gt; CYBERSECURITY AI AGENT</div>'
-        '<h1>Meet <span>Nashmi Agent</span></h1>'
-        '<p>An AI agent built only for cybersecurity. Analyse incidents, '
-        'look up vulnerabilities, solve CTFs and practise for exams, with '
-        'your own API key and your data kept private.</p>'
-    ),
-    "login": (
-        '<h1><span>&gt;_</span> Welcome back</h1>'
-        '<p>Sign in to pick up where you left off.</p>'
-    ),
-    "signup": (
-        '<h1><span>&gt;_</span> Join Nashmi</h1>'
-        '<p>Create your account in one tap with Google.</p>'
-    ),
-}
+def scene_copy(kind: str) -> str:
+    """The words on the banner, in the current language."""
+    if kind == "landing":
+        return (
+            f'<div class="badge">{html.escape(tr("hero_badge"))}</div>'
+            f'<h1>{html.escape(tr("hero_a"))} <span>{html.escape(tr("hero_b"))}</span></h1>'
+            f'<p>{html.escape(tr("hero_sub"))}</p>'
+        )
+    return (
+        f'<h1><span>&gt;_</span> {html.escape(tr("scene_" + kind + "_h"))}</h1>'
+        f'<p>{html.escape(tr("scene_" + kind + "_p"))}</p>'
+    )
+
+
 # height, scene offset, scene scale, cat width (phone / wide screen), cat
 # vertical position, extra height factor on wide screens
 SCENE_SIZES = {
     "landing": (470, 0.9, 1.0, (230, 250), "37%", 1.2),
-    "login": (290, 0.6, 0.66, (150, 150), "36%", 1.0),
-    "signup": (290, 0.6, 0.66, (150, 150), "36%", 1.0),
+    "login": (330, 0.5, 0.82, (190, 230), "35%", 1.3),
+    "signup": (330, 0.5, 0.82, (190, 230), "35%", 1.3),
 }
 
 
@@ -6605,7 +6602,8 @@ def render_scene(kind: str) -> None:
     """Show the animated 3D banner for the landing or sign-in page."""
     height, offset, scale, (cat_w, cat_wd), cat_top, desk_k = SCENE_SIZES[kind]
     markup = (
-        SCENE_TEMPLATE.replace("__COPY__", SCENE_COPY[kind])
+        SCENE_TEMPLATE.replace("__DIR__", dir_attr())
+        .replace("__COPY__", scene_copy(kind))
         .replace("__THREE_URL__", THREE_URL)
         .replace("__THREE_SRI__", THREE_SRI)
         .replace("__OFFSET_Y__", str(offset))
@@ -6782,6 +6780,12 @@ div:has(> .st-key-topbar) { position: sticky; top: 10px; z-index: 60; }
     background: linear-gradient(135deg, #ff5256, #d6243f); transform: translateY(-1px);
     box-shadow: 0 10px 26px rgba(229, 56, 59, 0.55);
 }
+[data-testid="stImage"] { display: flex; justify-content: center; }
+.st-key-login_card { margin-top: 0.4rem; }
+@media (max-width: 480px) {
+    .st-key-topbar button { padding: 0 0.75rem; min-width: 0; }
+    .st-key-topbar { padding-left: 0.5rem; }
+}
 .lp-footer-note {
     max-width: 640px; margin: 0 auto 1.1rem; color: var(--muted);
     font-size: 0.85rem; line-height: 1.5;
@@ -6796,33 +6800,62 @@ div:has(> .st-key-topbar) { position: sticky; top: 10px; z-index: 60; }
 
 # The scroll story on the landing page: a cat slides down a line as the
 # visitor scrolls, and each card lights up when the cat reaches it.
-STORY_CARDS = (
-    ("WHO", "Meet Nashmi",
-     "Nashmi is an AI agent built only for cybersecurity. Ask in Arabic or "
-     "English and get answers that use the field's own language."),
-    ("NAME", "Why the name?",
-     "In Jordanian Arabic a nashmi is someone gallant and dependable. That "
-     "is why the cat wears the red and white shemagh."),
-    ("SOC", "SOC Analyzer",
-     "Drop in logs, PCAPs, screenshots or alerts. Nashmi writes a structured "
-     "incident report with IoCs, MITRE ATT&CK mapping and remediation steps."),
-    ("CTF", "CTF Coach",
-     "Web, crypto, pwn, reverse, forensics, stego and OSINT. Describe the "
-     "challenge and get a step-by-step plan with exact commands, tuned to "
-     "the category."),
-    ("TOOLS", "Security Toolbox",
-     "CVE lookups from the NVD, hashing and encoding, and an IOC extractor. "
-     "No AI needed, and everything can be exported."),
-    ("EXAM", "Practice Exams",
-     "Build an exam from a topic or your own slides and PDFs, take it, and "
-     "get it graded."),
-    ("PRIVACY", "Your key, your data",
-     "Bring your own API key (Gemini, Groq, OpenAI or Claude). Your chats "
-     "and saved keys are encrypted."),
-    ("MAKER", "Built by Hassan Aldajah",
-     "A fourth-year student at the University of Jordan with a deep "
-     "interest in the SOC field and in cybersecurity."),
-)
+STORY_CARDS = {
+    "en": (
+        ("WHO", "Meet Nashmi",
+         "Nashmi is an AI agent built only for cybersecurity. Ask in Arabic or "
+         "English and get answers that use the field's own language."),
+        ("NAME", "Why the name?",
+         "In Jordanian Arabic a nashmi is someone gallant and dependable. That "
+         "is why the cat wears the red and white shemagh."),
+        ("SOC", "SOC Analyzer",
+         "Drop in logs, PCAPs, screenshots or alerts. Nashmi writes a structured "
+         "incident report with IoCs, MITRE ATT&CK mapping and remediation steps."),
+        ("CTF", "CTF Coach",
+         "Web, crypto, pwn, reverse, forensics, stego and OSINT. Describe the "
+         "challenge and get a step-by-step plan with exact commands, tuned to "
+         "the category."),
+        ("TOOLS", "Security Toolbox",
+         "CVE lookups from the NVD, hashing and encoding, and an IOC extractor. "
+         "No AI needed, and everything can be exported."),
+        ("EXAM", "Practice Exams",
+         "Build an exam from a topic or your own slides and PDFs, take it, and "
+         "get it graded."),
+        ("PRIVACY", "Your key, your data",
+         "Bring your own API key (Gemini, Groq, OpenAI or Claude). Your chats "
+         "and saved keys are encrypted."),
+        ("MAKER", "Built by Hassan Aldajah",
+         "A fourth-year student at the University of Jordan with a deep "
+         "interest in the SOC field and in cybersecurity."),
+    ),
+    "ar": (
+        ("\u0645\u0646 \u0647\u0648", "\u062a\u0639\u0631\u0651\u0641 \u0639\u0644\u0649 \u0646\u0634\u0645\u064a",
+         "\u0646\u0634\u0645\u064a \u0648\u0643\u064a\u0644 \u0630\u0643\u0627\u0621 \u0627\u0635\u0637\u0646\u0627\u0639\u064a \u0645\u062e\u0635\u0635 \u0644\u0644\u0623\u0645\u0646 \u0627\u0644\u0633\u064a\u0628\u0631\u0627\u0646\u064a \u0641\u0642\u0637. "
+         "\u0627\u0633\u0623\u0644\u0647 \u0628\u0627\u0644\u0639\u0631\u0628\u064a\u0629 \u0623\u0648 \u0628\u0627\u0644\u0625\u0646\u062c\u0644\u064a\u0632\u064a\u0629 \u0648\u0633\u064a\u062c\u064a\u0628\u0643 \u0628\u0644\u063a\u0629 \u0627\u0644\u0645\u062c\u0627\u0644."),
+        ("\u0627\u0644\u0627\u0633\u0645", "\u0644\u064a\u0634 \u0647\u0627\u0644\u0627\u0633\u0645\u061f",
+         "\u0641\u064a \u0627\u0644\u0644\u0647\u062c\u0629 \u0627\u0644\u0623\u0631\u062f\u0646\u064a\u0629\u060c \u0627\u0644\u0646\u0634\u0645\u064a \u0647\u0648 \u0627\u0644\u0634\u0647\u0645 \u0627\u0644\u0630\u064a \u064a\u064f\u0639\u062a\u0645\u062f \u0639\u0644\u064a\u0647. "
+         "\u0648\u0644\u0647\u0630\u0627 \u062a\u0631\u062a\u062f\u064a \u0627\u0644\u0642\u0637\u0629 \u0627\u0644\u0634\u0645\u0627\u063a \u0627\u0644\u0623\u062d\u0645\u0631 \u0648\u0627\u0644\u0623\u0628\u064a\u0636."),
+        ("SOC", "\u0645\u062d\u0644\u0651\u0644 SOC",
+         "\u0627\u0631\u0641\u0639 \u0633\u062c\u0644\u0627\u062a (logs) \u0623\u0648 \u0645\u0644\u0641\u0627\u062a PCAP \u0623\u0648 \u0644\u0642\u0637\u0627\u062a \u0634\u0627\u0634\u0629 \u0623\u0648 \u062a\u0646\u0628\u064a\u0647\u0627\u062a\u060c "
+         "\u0648\u064a\u0643\u062a\u0628 \u0644\u0643 \u0646\u0634\u0645\u064a \u062a\u0642\u0631\u064a\u0631 \u062d\u0627\u062f\u062b\u0629 \u0645\u0646\u0638\u0651\u0645\u0627\u064b \u0641\u064a\u0647 \u0645\u0624\u0634\u0631\u0627\u062a \u0627\u0644\u0627\u062e\u062a\u0631\u0627\u0642 (IoCs) "
+         "\u0648\u062a\u0635\u0646\u064a\u0641 MITRE ATT&CK \u0648\u062e\u0637\u0648\u0627\u062a \u0627\u0644\u0645\u0639\u0627\u0644\u062c\u0629."),
+        ("CTF", "\u0645\u062f\u0631\u0651\u0628 CTF",
+         "Web \u0648Crypto \u0648Pwn \u0648Reverse \u0648Forensics \u0648Stego \u0648OSINT. \u0635\u0650\u0641 \u0627\u0644\u062a\u062d\u062f\u064a "
+         "\u0648\u0633\u064a\u0639\u0637\u064a\u0643 \u062e\u0637\u0629 \u062e\u0637\u0648\u0629 \u0628\u062e\u0637\u0648\u0629 \u0645\u0639 \u0627\u0644\u0623\u0648\u0627\u0645\u0631 \u0627\u0644\u062f\u0642\u064a\u0642\u0629 \u062d\u0633\u0628 \u0627\u0644\u0641\u0626\u0629."),
+        ("\u0627\u0644\u0623\u062f\u0648\u0627\u062a", "\u0635\u0646\u062f\u0648\u0642 \u0623\u062f\u0648\u0627\u062a \u0627\u0644\u0623\u0645\u0646",
+         "\u0628\u062d\u062b CVE \u0645\u0646 NVD\u060c \u0648\u062a\u062c\u0632\u0626\u0629 (hash) \u0648\u062a\u0631\u0645\u064a\u0632\u060c \u0648\u0645\u0633\u062a\u062e\u0631\u062c IOC. "
+         "\u0628\u062f\u0648\u0646 \u0630\u0643\u0627\u0621 \u0627\u0635\u0637\u0646\u0627\u0639\u064a\u060c \u0648\u064a\u0645\u0643\u0646 \u062a\u0635\u062f\u064a\u0631 \u0643\u0644 \u0634\u064a\u0621."),
+        ("\u0627\u0644\u0627\u0645\u062a\u062d\u0627\u0646\u0627\u062a", "\u0627\u0645\u062a\u062d\u0627\u0646\u0627\u062a \u062a\u062f\u0631\u064a\u0628\u064a\u0629",
+         "\u0627\u0628\u0646\u0650 \u0627\u0645\u062a\u062d\u0627\u0646\u0627\u064b \u0645\u0646 \u0645\u0648\u0636\u0648\u0639 \u0623\u0648 \u0645\u0646 \u0634\u0631\u0627\u0626\u062d\u0643 \u0648\u0645\u0644\u0641\u0627\u062a PDF\u060c "
+         "\u0648\u0642\u062f\u0651\u0645\u0647\u060c \u062b\u0645 \u0627\u062d\u0635\u0644 \u0639\u0644\u0649 \u062a\u0635\u062d\u064a\u062d\u0647."),
+        ("\u0627\u0644\u062e\u0635\u0648\u0635\u064a\u0629", "\u0645\u0641\u062a\u0627\u062d\u0643 \u0648\u0628\u064a\u0627\u0646\u0627\u062a\u0643",
+         "\u0627\u0633\u062a\u062e\u062f\u0645 \u0645\u0641\u062a\u0627\u062d API \u0627\u0644\u062e\u0627\u0635 \u0628\u0643 (Gemini \u0623\u0648 Groq \u0623\u0648 OpenAI \u0623\u0648 Claude). "
+         "\u0645\u062d\u0627\u062f\u062b\u0627\u062a\u0643 \u0648\u0645\u0641\u0627\u062a\u064a\u062d\u0643 \u0627\u0644\u0645\u062d\u0641\u0648\u0638\u0629 \u0645\u0634\u0641\u0651\u0631\u0629."),
+        ("\u0627\u0644\u0645\u0637\u0648\u0651\u0631", "\u0645\u0646 \u062a\u0637\u0648\u064a\u0631 \u062d\u0633\u0646 \u0627\u0644\u062f\u0639\u062c\u0629",
+         "\u0637\u0627\u0644\u0628 \u0641\u064a \u0627\u0644\u0633\u0646\u0629 \u0627\u0644\u0631\u0627\u0628\u0639\u0629 \u0628\u0627\u0644\u062c\u0627\u0645\u0639\u0629 \u0627\u0644\u0623\u0631\u062f\u0646\u064a\u0629\u060c "
+         "\u0645\u0647\u062a\u0645 \u0628\u0639\u0645\u0642 \u0628\u0645\u062c\u0627\u0644 \u0645\u0631\u0643\u0632 \u0627\u0644\u0639\u0645\u0644\u064a\u0627\u062a \u0627\u0644\u0623\u0645\u0646\u064a\u0629 (SOC) \u0648\u0627\u0644\u0623\u0645\u0646 \u0627\u0644\u0633\u064a\u0628\u0631\u0627\u0646\u064a."),
+    ),
+}
 STORY_HEIGHT = 2100  # first guess; the page shrinks it to fit its content
 
 STORY_TEMPLATE = """<!DOCTYPE html>
@@ -7106,20 +7139,175 @@ __CAT_JS__
 def render_story() -> None:
     """The scrolling 'who is Nashmi' story with the cat on the line."""
     cards = "".join(
-        '<div class="row"><i class="node"></i><article class="card">'
+        f'<div class="row"><i class="node"></i><article class="card"{dir_attr()}>'
         f'<span class="tag">{html.escape(tag)}</span>'
         f'<h3>{html.escape(title)}</h3><p>{html.escape(text)}</p>'
         '</article></div>'
-        for tag, title, text in STORY_CARDS
+        for tag, title, text in STORY_CARDS[lang()]
     )
     markup = (STORY_TEMPLATE.replace("__CARDS__", cards)
               .replace("__CAT_JS__", CAT_JS + WALKER_JS))
     embed_html(markup, STORY_HEIGHT)
 
-PRIVACY_NOTE = (
-    "Signing in stores your name, e-mail address and sign-in times. Your "
-    "chats and saved keys are encrypted."
-)
+STRINGS = {
+    "en": {
+        "sign_in": "Sign in", "sign_up": "Sign up", "start": "Start", "back": "Back",
+        "sign_out": "Sign out", "lang_btn": "\u0627\u0644\u0639\u0631\u0628\u064a\u0629",
+        "hero_badge": "> CYBERSECURITY AI AGENT", "hero_a": "Meet", "hero_b": "Nashmi Agent",
+        "hero_sub": ("An AI agent built only for cybersecurity. Analyse incidents, look up "
+                     "vulnerabilities, solve CTFs and practise for exams, with your own API "
+                     "key and your data kept private."),
+        "scene_login_h": "Welcome back", "scene_login_p": "Sign in to pick up where you left off.",
+        "scene_signup_h": "Join Nashmi", "scene_signup_p": "Create your account in one tap with Google.",
+        "login_title": "Welcome back",
+        "login_sub": "Sign in with Google to pick up where you left off.",
+        "signup_title": "Create your account",
+        "signup_sub": "One tap with Google, so there is no password to invent.",
+        "signup_steps": ("Continue with Google, which checks your e-mail for us",
+                         "Choose your name and a username", "Start using Nashmi"),
+        "login_steps": ("Sign in works only with an account you already created",
+                        "Your chats and projects are saved", "Usage history across devices"),
+        "google_note": "You will be sent to Google to verify who you are. Nashmi never sees your password.",
+        "continue_google": "Continue with Google",
+        "privacy": ("Signing in stores your name, e-mail address and sign-in times. Your chats "
+                    "and saved keys are encrypted."),
+        "rights": "&copy; 2026 Hassan Aldajah. All rights reserved.",
+        "questions": "Questions or feedback?",
+        "fs_title": "Finish creating your account",
+        "fs_p": "No Nashmi account exists yet for {email}. Choose your name and username to create it.",
+        "fs_email": "E-mail (checked by Google)", "fs_name": "Full name", "fs_username": "Username",
+        "fs_user_help": "3 to 24 characters: lowercase letters, digits, . or _",
+        "fs_ph": "e.g. hassan.sec", "fs_create": "Create account",
+        "fs_accept": "Please accept the note above to continue.",
+        "fs_cancel": "Cancel and sign out",
+        "mfa_title": "Turn on two-step verification",
+        "mfa_steps": ("1. Open Google Authenticator (or any authenticator app) and scan this "
+                      "code.<br>2. Type the 6-digit code the app shows."),
+        "mfa_cant": "Cannot scan? Type this key into the app:",
+        "mfa_code": "6-digit code", "mfa_verify": "Verify and turn on",
+        "mfa_bad": "That code is not right. Wait for the next one and try again.",
+        "codes_title": "Save your backup codes",
+        "codes_p": ("Each code works once if you lose your phone. They are shown <b>only now</b>, "
+                    "so copy them somewhere safe."),
+        "codes_saved": "I saved these codes", "codes_continue": "Continue",
+        "ch_title": "Enter your verification code",
+        "ch_p": ("Open your authenticator app and type the 6-digit code. Lost your phone? Use one "
+                 "of your backup codes."),
+        "ch_locked": "Too many wrong codes. Try again at {t} UTC.",
+        "ch_code": "Code", "ch_ph": "123456 or backup code", "ch_verify": "Verify",
+        "ch_bad": "That code is not right.",
+    },
+    "ar": {
+        "sign_in": "\u062a\u0633\u062c\u064a\u0644 \u0627\u0644\u062f\u062e\u0648\u0644",
+        "sign_up": "\u0625\u0646\u0634\u0627\u0621 \u062d\u0633\u0627\u0628",
+        "start": "\u0627\u0628\u062f\u0623", "back": "\u0631\u062c\u0648\u0639",
+        "sign_out": "\u062a\u0633\u062c\u064a\u0644 \u0627\u0644\u062e\u0631\u0648\u062c",
+        "lang_btn": "English",
+        "hero_badge": "> \u0648\u0643\u064a\u0644 \u0623\u0645\u0646 \u0633\u064a\u0628\u0631\u0627\u0646\u064a \u0628\u0627\u0644\u0630\u0643\u0627\u0621 \u0627\u0644\u0627\u0635\u0637\u0646\u0627\u0639\u064a",
+        "hero_a": "\u062a\u0639\u0631\u0651\u0641 \u0639\u0644\u0649", "hero_b": "\u0646\u0634\u0645\u064a",
+        "hero_sub": ("\u0648\u0643\u064a\u0644 \u0630\u0643\u0627\u0621 \u0627\u0635\u0637\u0646\u0627\u0639\u064a \u0645\u062e\u0635\u0635 \u0644\u0644\u0623\u0645\u0646 \u0627\u0644\u0633\u064a\u0628\u0631\u0627\u0646\u064a \u0641\u0642\u0637. "
+                     "\u062d\u0644\u0651\u0644 \u0627\u0644\u062d\u0648\u0627\u062f\u062b\u060c \u0648\u0627\u0628\u062d\u062b \u0639\u0646 \u0627\u0644\u062b\u063a\u0631\u0627\u062a\u060c \u0648\u062d\u0644\u0651 \u062a\u062d\u062f\u064a\u0627\u062a CTF\u060c "
+                     "\u0648\u062a\u062f\u0631\u0651\u0628 \u0644\u0644\u0627\u0645\u062a\u062d\u0627\u0646\u0627\u062a\u060c \u0628\u0645\u0641\u062a\u0627\u062d API \u0627\u0644\u062e\u0627\u0635 \u0628\u0643 "
+                     "\u0648\u0628\u064a\u0627\u0646\u0627\u062a \u062a\u0628\u0642\u0649 \u062e\u0627\u0635\u0629 \u0628\u0643."),
+        "scene_login_h": "\u0623\u0647\u0644\u0627\u064b \u0628\u0639\u0648\u062f\u062a\u0643",
+        "scene_login_p": "\u0633\u062c\u0651\u0644 \u0627\u0644\u062f\u062e\u0648\u0644 \u0644\u062a\u0643\u0645\u0644 \u0645\u0646 \u062d\u064a\u062b \u062a\u0648\u0642\u0641\u062a.",
+        "scene_signup_h": "\u0627\u0646\u0636\u0645 \u0625\u0644\u0649 \u0646\u0634\u0645\u064a",
+        "scene_signup_p": "\u0623\u0646\u0634\u0626 \u062d\u0633\u0627\u0628\u0643 \u0628\u0636\u063a\u0637\u0629 \u0648\u0627\u062d\u062f\u0629 \u0639\u0628\u0631 Google.",
+        "login_title": "\u0623\u0647\u0644\u0627\u064b \u0628\u0639\u0648\u062f\u062a\u0643",
+        "login_sub": "\u0633\u062c\u0651\u0644 \u0627\u0644\u062f\u062e\u0648\u0644 \u0639\u0628\u0631 Google \u0644\u062a\u0643\u0645\u0644 \u0645\u0646 \u062d\u064a\u062b \u062a\u0648\u0642\u0641\u062a.",
+        "signup_title": "\u0623\u0646\u0634\u0626 \u062d\u0633\u0627\u0628\u0643",
+        "signup_sub": "\u0628\u0636\u063a\u0637\u0629 \u0648\u0627\u062d\u062f\u0629 \u0639\u0628\u0631 Google\u060c \u0628\u0644\u0627 \u0643\u0644\u0645\u0629 \u0633\u0631 \u062c\u062f\u064a\u062f\u0629 \u062a\u062e\u062a\u0627\u0631\u0647\u0627.",
+        "signup_steps": ("\u062a\u0627\u0628\u0639 \u0639\u0628\u0631 Google\u060c \u0641\u0647\u0648 \u064a\u062a\u062d\u0642\u0642 \u0645\u0646 \u0628\u0631\u064a\u062f\u0643 \u0627\u0644\u0625\u0644\u0643\u062a\u0631\u0648\u0646\u064a",
+                         "\u0627\u062e\u062a\u0631 \u0627\u0633\u0645\u0643 \u0648\u0627\u0633\u0645 \u0645\u0633\u062a\u062e\u062f\u0645", "\u0627\u0628\u062f\u0623 \u0627\u0633\u062a\u062e\u062f\u0627\u0645 \u0646\u0634\u0645\u064a"),
+        "login_steps": ("\u062a\u0633\u062c\u064a\u0644 \u0627\u0644\u062f\u062e\u0648\u0644 \u064a\u0639\u0645\u0644 \u0641\u0642\u0637 \u0645\u0639 \u062d\u0633\u0627\u0628 \u0623\u0646\u0634\u0623\u062a\u0647 \u0645\u0633\u0628\u0642\u0627\u064b",
+                        "\u0645\u062d\u0627\u062f\u062b\u0627\u062a\u0643 \u0648\u0645\u0634\u0627\u0631\u064a\u0639\u0643 \u0645\u062d\u0641\u0648\u0638\u0629",
+                        "\u0633\u062c\u0644 \u0627\u0644\u0627\u0633\u062a\u062e\u062f\u0627\u0645 \u0639\u0628\u0631 \u0623\u062c\u0647\u0632\u062a\u0643"),
+        "google_note": "\u0633\u064a\u062a\u0645 \u062a\u062d\u0648\u064a\u0644\u0643 \u0625\u0644\u0649 Google \u0644\u0644\u062a\u062d\u0642\u0642 \u0645\u0646 \u0647\u0648\u064a\u062a\u0643. \u0644\u0627 \u064a\u0637\u0651\u0644\u0639 \u0646\u0634\u0645\u064a \u0639\u0644\u0649 \u0643\u0644\u0645\u0629 \u0627\u0644\u0633\u0631 \u0623\u0628\u062f\u0627\u064b.",
+        "continue_google": "\u0627\u0644\u0645\u062a\u0627\u0628\u0639\u0629 \u0639\u0628\u0631 Google",
+        "privacy": ("\u064a\u062d\u0641\u0638 \u062a\u0633\u062c\u064a\u0644 \u0627\u0644\u062f\u062e\u0648\u0644 \u0627\u0633\u0645\u0643 \u0648\u0628\u0631\u064a\u062f\u0643 \u0627\u0644\u0625\u0644\u0643\u062a\u0631\u0648\u0646\u064a \u0648\u0623\u0648\u0642\u0627\u062a \u0627\u0644\u062f\u062e\u0648\u0644. "
+                    "\u0645\u062d\u0627\u062f\u062b\u0627\u062a\u0643 \u0648\u0645\u0641\u0627\u062a\u064a\u062d\u0643 \u0627\u0644\u0645\u062d\u0641\u0648\u0638\u0629 \u0645\u0634\u0641\u0651\u0631\u0629."),
+        "rights": "&copy; 2026 \u062d\u0633\u0646 \u0627\u0644\u062f\u0639\u062c\u0629. \u062c\u0645\u064a\u0639 \u0627\u0644\u062d\u0642\u0648\u0642 \u0645\u062d\u0641\u0648\u0638\u0629.",
+        "questions": "\u0623\u0633\u0626\u0644\u0629 \u0623\u0648 \u0645\u0644\u0627\u062d\u0638\u0627\u062a\u061f",
+        "fs_title": "\u0623\u0643\u0645\u0644 \u0625\u0646\u0634\u0627\u0621 \u062d\u0633\u0627\u0628\u0643",
+        "fs_p": "\u0644\u0627 \u064a\u0648\u062c\u062f \u062d\u0633\u0627\u0628 \u0641\u064a \u0646\u0634\u0645\u064a \u0644\u0640 {email} \u0628\u0639\u062f. \u0627\u062e\u062a\u0631 \u0627\u0633\u0645\u0643 \u0648\u0627\u0633\u0645 \u0627\u0644\u0645\u0633\u062a\u062e\u062f\u0645 \u0644\u0625\u0646\u0634\u0627\u0626\u0647.",
+        "fs_email": "\u0627\u0644\u0628\u0631\u064a\u062f \u0627\u0644\u0625\u0644\u0643\u062a\u0631\u0648\u0646\u064a (\u062a\u062d\u0642\u0651\u0642\u062a \u0645\u0646\u0647 Google)",
+        "fs_name": "\u0627\u0644\u0627\u0633\u0645 \u0627\u0644\u0643\u0627\u0645\u0644", "fs_username": "\u0627\u0633\u0645 \u0627\u0644\u0645\u0633\u062a\u062e\u062f\u0645",
+        "fs_user_help": "\u0645\u0646 3 \u0625\u0644\u0649 24 \u062d\u0631\u0641\u0627\u064b: \u0623\u062d\u0631\u0641 \u0625\u0646\u062c\u0644\u064a\u0632\u064a\u0629 \u0635\u063a\u064a\u0631\u0629 \u0648\u0623\u0631\u0642\u0627\u0645 \u0648\u0646\u0642\u0637\u0629 \u0623\u0648 \u0634\u0631\u0637\u0629 \u0633\u0641\u0644\u064a\u0629",
+        "fs_ph": "\u0645\u062b\u0627\u0644: hassan.sec", "fs_create": "\u0625\u0646\u0634\u0627\u0621 \u0627\u0644\u062d\u0633\u0627\u0628",
+        "fs_accept": "\u064a\u0631\u062c\u0649 \u0627\u0644\u0645\u0648\u0627\u0641\u0642\u0629 \u0639\u0644\u0649 \u0627\u0644\u0645\u0644\u0627\u062d\u0638\u0629 \u0623\u0639\u0644\u0627\u0647 \u0644\u0644\u0645\u062a\u0627\u0628\u0639\u0629.",
+        "fs_cancel": "\u0625\u0644\u063a\u0627\u0621 \u0648\u062a\u0633\u062c\u064a\u0644 \u0627\u0644\u062e\u0631\u0648\u062c",
+        "mfa_title": "\u0641\u0639\u0651\u0644 \u0627\u0644\u062a\u062d\u0642\u0642 \u0628\u062e\u0637\u0648\u062a\u064a\u0646",
+        "mfa_steps": ("1. \u0627\u0641\u062a\u062d \u062a\u0637\u0628\u064a\u0642 Google Authenticator (\u0623\u0648 \u0623\u064a \u062a\u0637\u0628\u064a\u0642 \u0645\u0635\u0627\u062f\u0642\u0629) "
+                      "\u0648\u0627\u0645\u0633\u062d \u0647\u0630\u0627 \u0627\u0644\u0631\u0645\u0632.<br>2. \u0627\u0643\u062a\u0628 \u0627\u0644\u0631\u0645\u0632 \u0627\u0644\u0645\u0643\u0648\u0651\u0646 \u0645\u0646 6 \u0623\u0631\u0642\u0627\u0645 \u0627\u0644\u0630\u064a \u064a\u0639\u0631\u0636\u0647 \u0627\u0644\u062a\u0637\u0628\u064a\u0642."),
+        "mfa_cant": "\u0644\u0627 \u062a\u0633\u062a\u0637\u064a\u0639 \u0627\u0644\u0645\u0633\u062d\u061f \u0627\u0643\u062a\u0628 \u0647\u0630\u0627 \u0627\u0644\u0645\u0641\u062a\u0627\u062d \u0641\u064a \u0627\u0644\u062a\u0637\u0628\u064a\u0642:",
+        "mfa_code": "\u0627\u0644\u0631\u0645\u0632 \u0627\u0644\u0645\u0643\u0648\u0651\u0646 \u0645\u0646 6 \u0623\u0631\u0642\u0627\u0645", "mfa_verify": "\u062a\u062d\u0642\u0651\u0642 \u0648\u0641\u0639\u0651\u0644",
+        "mfa_bad": "\u0627\u0644\u0631\u0645\u0632 \u063a\u064a\u0631 \u0635\u062d\u064a\u062d. \u0627\u0646\u062a\u0638\u0631 \u0627\u0644\u0631\u0645\u0632 \u0627\u0644\u062a\u0627\u0644\u064a \u0648\u062d\u0627\u0648\u0644 \u0645\u062c\u062f\u062f\u0627\u064b.",
+        "codes_title": "\u0627\u062d\u0641\u0638 \u0623\u0643\u0648\u0627\u062f \u0627\u0644\u0627\u062d\u062a\u064a\u0627\u0637",
+        "codes_p": ("\u0643\u0644 \u0643\u0648\u062f \u064a\u0639\u0645\u0644 \u0645\u0631\u0629 \u0648\u0627\u062d\u062f\u0629 \u0625\u0630\u0627 \u0641\u0642\u062f\u062a \u0647\u0627\u062a\u0641\u0643. \u062a\u0638\u0647\u0631 <b>\u0627\u0644\u0622\u0646 \u0641\u0642\u0637</b>\u060c "
+                    "\u0641\u0627\u0646\u0633\u062e\u0647\u0627 \u0641\u064a \u0645\u0643\u0627\u0646 \u0622\u0645\u0646."),
+        "codes_saved": "\u062d\u0641\u0638\u062a \u0647\u0630\u0647 \u0627\u0644\u0623\u0643\u0648\u0627\u062f", "codes_continue": "\u0645\u062a\u0627\u0628\u0639\u0629",
+        "ch_title": "\u0623\u062f\u062e\u0644 \u0631\u0645\u0632 \u0627\u0644\u062a\u062d\u0642\u0642",
+        "ch_p": ("\u0627\u0641\u062a\u062d \u062a\u0637\u0628\u064a\u0642 \u0627\u0644\u0645\u0635\u0627\u062f\u0642\u0629 \u0648\u0627\u0643\u062a\u0628 \u0627\u0644\u0631\u0645\u0632 \u0627\u0644\u0645\u0643\u0648\u0651\u0646 \u0645\u0646 6 \u0623\u0631\u0642\u0627\u0645. "
+                 "\u0641\u0642\u062f\u062a \u0647\u0627\u062a\u0641\u0643\u061f \u0627\u0633\u062a\u062e\u062f\u0645 \u0623\u062d\u062f \u0623\u0643\u0648\u0627\u062f \u0627\u0644\u0627\u062d\u062a\u064a\u0627\u0637."),
+        "ch_locked": "\u0645\u062d\u0627\u0648\u0644\u0627\u062a \u062e\u0627\u0637\u0626\u0629 \u0643\u062b\u064a\u0631\u0629. \u062d\u0627\u0648\u0644 \u0645\u062c\u062f\u062f\u0627\u064b \u0639\u0646\u062f {t} (UTC).",
+        "ch_code": "\u0627\u0644\u0631\u0645\u0632", "ch_ph": "123456 \u0623\u0648 \u0643\u0648\u062f \u0627\u062d\u062a\u064a\u0627\u0637", "ch_verify": "\u062a\u062d\u0642\u0651\u0642",
+        "ch_bad": "\u0627\u0644\u0631\u0645\u0632 \u063a\u064a\u0631 \u0635\u062d\u064a\u062d.",
+    },
+}
+
+# messages from the database layer, translated for the sign-up form
+DB_ERRORS_AR = {
+    "Please enter your name.": "\u064a\u0631\u062c\u0649 \u0625\u062f\u062e\u0627\u0644 \u0627\u0633\u0645\u0643.",
+    "The username needs 3 to 24 characters: lowercase letters, digits, dot or underscore.":
+        "\u0627\u0633\u0645 \u0627\u0644\u0645\u0633\u062a\u062e\u062f\u0645 \u0645\u0646 3 \u0625\u0644\u0649 24 \u062d\u0631\u0641\u0627\u064b: \u0623\u062d\u0631\u0641 \u0625\u0646\u062c\u0644\u064a\u0632\u064a\u0629 \u0635\u063a\u064a\u0631\u0629 \u0648\u0623\u0631\u0642\u0627\u0645 \u0648\u0646\u0642\u0637\u0629 \u0623\u0648 \u0634\u0631\u0637\u0629 \u0633\u0641\u0644\u064a\u0629.",
+    "That username is reserved. Please pick another one.":
+        "\u0647\u0630\u0627 \u0627\u0644\u0627\u0633\u0645 \u0645\u062d\u062c\u0648\u0632\u060c \u0627\u062e\u062a\u0631 \u0627\u0633\u0645\u0627\u064b \u0622\u062e\u0631.",
+    "That username is already taken.": "\u0627\u0633\u0645 \u0627\u0644\u0645\u0633\u062a\u062e\u062f\u0645 \u0645\u0633\u062a\u062e\u062f\u0645 \u0628\u0627\u0644\u0641\u0639\u0644.",
+}
+
+
+def lang() -> str:
+    """'en' or 'ar'. The first visit follows the browser language; the language
+    button changes it. Switching only changes words and text direction, never
+    the layout or the pictures."""
+    current = st.session_state.get("lang")
+    if current in ("en", "ar"):
+        return current
+    guess = "en"
+    try:
+        if str(st.context.headers.get("Accept-Language", "")).lower().startswith("ar"):
+            guess = "ar"
+    except Exception:  # noqa: BLE001 - no browser headers (tests)
+        pass
+    st.session_state["lang"] = guess
+    return guess
+
+
+def tr(key: str, **fmt):
+    value = STRINGS[lang()].get(key, STRINGS["en"][key])
+    return value.format(**fmt) if fmt and isinstance(value, str) else value
+
+
+def dir_attr() -> str:
+    return ' dir="rtl" lang="ar"' if lang() == "ar" else ' lang="en"'
+
+
+def db_error(message: str) -> str:
+    return DB_ERRORS_AR.get(message, message) if lang() == "ar" else message
+
+
+# Arabic text sits inside the same boxes; only the reading direction of the words changes
+RTL_CSS = """
+.st-key-login_card [data-testid="stCaptionContainer"],
+.st-key-login_card [data-testid="stWidgetLabel"], .st-key-login_card label,
+.st-key-login_card button, .st-key-topbar button, .lp-signin { direction: rtl; }
+.st-key-login_card input { direction: ltr; text-align: left; }
+.st-key-login_card [data-testid="stCaptionContainer"] { text-align: center; }
+"""
+
+
+def toggle_lang() -> None:
+    st.session_state["lang"] = "en" if lang() == "ar" else "ar"
 
 
 def go_gate(name: str) -> None:
@@ -7177,14 +7365,14 @@ def render_footer() -> None:
         f'aria-hidden="true"><path d="{path}"/></svg></a>'
         for label, url, path in OWNER_LINKS
     )
-    note = (f'<div class="lp-footer-note">{html.escape(PRIVACY_NOTE)}</div>'
+    note = (f'<div class="lp-footer-note"{dir_attr()}>{html.escape(tr("privacy"))}</div>'
             if accounts_enabled() else "")
     st.markdown(
         '<div class="lp-footer">' + note +
         f'<div class="lp-social">{icons}</div>'
-        f'<div>&copy; 2026 {html.escape(OWNER_NAME)}. All rights reserved.</div>'
-        '<div class="lp-footer-sub">Questions or feedback? '
-        '<a href="mailto:hassanaldajah2004@gmail.com">'
+        f'<div{dir_attr()}>{tr("rights")}</div>'
+        f'<div class="lp-footer-sub"{dir_attr()}>{html.escape(tr("questions"))} '
+        '<a href="mailto:hassanaldajah2004@gmail.com" dir="ltr">'
         'hassanaldajah2004@gmail.com</a></div></div>',
         unsafe_allow_html=True,
     )
@@ -7206,6 +7394,8 @@ MINI_LOGO_TEMPLATE = """<!DOCTYPE html>
         box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.16), 0 0 14px rgba(255, 59, 63, 0.55); }
     .name { color: #fff; font-weight: 800; font-size: 19px; letter-spacing: 0.01em; white-space: nowrap; }
     .name span { color: #E5383B; font-family: ui-monospace, Consolas, monospace; }
+    @media (max-width: 170px) { .name span { display: none; } .name { font-size: 16px; } }
+    @media (max-width: 135px) { .name { display: none; } }
 </style></head>
 <body><div class="row"><div class="logo"><canvas id="c"></canvas><img alt="Nashmi" src="__AVATAR__"></div>
 <div class="name"><span>&gt;_</span> Nashmi</div></div>
@@ -7250,43 +7440,49 @@ MINI_LOGO_TEMPLATE = """<!DOCTYPE html>
 """
 
 
-def render_topbar() -> None:
-    """Floating pill bar: 3D logo and name on the left, sign-in on the right."""
+def render_topbar(mode: str = "landing") -> None:
+    """Floating pill bar: 3D logo and name on the left, language button and the
+    actions that make sense on this page on the right."""
+    if mode == "landing":
+        actions = ([("landing_signin", "sign_in", "tertiary", "login", None),
+                    ("landing_signup", "sign_up", "primary", "signup", None)]
+                   if accounts_enabled() else
+                   [("landing_guest", "start", "primary", "app", None)])
+    elif mode == "login":
+        actions = [("topbar_back", "back", "tertiary", "landing", ":material/arrow_back:"),
+                   ("topbar_switch", "sign_up", "primary", "signup", None)]
+    elif mode == "signup":
+        actions = [("topbar_back", "back", "tertiary", "landing", ":material/arrow_back:"),
+                   ("topbar_switch", "sign_in", "primary", "login", None)]
+    else:                                                  # finishing sign-up / two-step
+        actions = [("topbar_signout", "sign_out", "tertiary", None, ":material/logout:")]
     with st.container(key="topbar"):
-        brand, first, second = st.columns(
-            [6, 2, 2], vertical_alignment="center", gap="small")
-        with brand:
+        cols = st.columns([6, 1.7] + [2] * len(actions),
+                          vertical_alignment="center", gap="small")
+        with cols[0]:
             # the page style rides with the first element so nothing sits above the bar
-            st.markdown(f'<style>{LANDING_CSS}</style>', unsafe_allow_html=True)
+            st.markdown(f'<style>{LANDING_CSS}{RTL_CSS if lang() == "ar" else ""}</style>',
+                        unsafe_allow_html=True)
             embed_html(MINI_LOGO_TEMPLATE.replace("__THREE_URL__", THREE_URL)
                        .replace("__THREE_SRI__", THREE_SRI)
                        .replace("__AVATAR__", avatar_data_uri()), 48)
-        if accounts_enabled():
-            first.button("Sign in", key="landing_signin", type="tertiary",
-                         on_click=go_gate, args=("login",), width="stretch")
-            second.button("Sign up", key="landing_signup", type="primary",
-                          on_click=go_gate, args=("signup",), width="stretch")
-        else:
-            second.button("Start", key="landing_guest", type="primary",
-                          on_click=go_gate, args=("app",), width="stretch")
+        cols[1].button(tr("lang_btn"), key="topbar_lang", type="tertiary",
+                       on_click=toggle_lang, width="stretch")
+        for col, (key, label, kind, target, icon) in zip(cols[2:], actions):
+            if target is None:
+                col.button(tr(label), key=key, type=kind, on_click=sign_out,
+                           icon=icon, width="stretch")
+            else:
+                col.button(tr(label), key=key, type=kind, on_click=go_gate,
+                           args=(target,), icon=icon, width="stretch")
 
 
 def render_landing() -> None:
     """First page a visitor of the public site sees."""
-    render_topbar()
+    render_topbar("landing")
     render_scene("landing")
     render_story()
     render_footer()
-
-
-AUTH_TEXT = {
-    "login": ("Welcome back",
-              "Sign in with Google to pick up where you left off.",
-              "New to Nashmi?", "Create an account", "signup"),
-    "signup": ("Create your account",
-               "One tap with Google, so there is no password to invent.",
-               "Already have an account?", "Sign in", "login"),
-}
 
 
 def needs_signup(user_id: int | None) -> bool:
@@ -7306,43 +7502,41 @@ def needs_signup(user_id: int | None) -> bool:
     return True
 
 
+def narrow_page() -> None:
+    """Single-column pages (finishing sign-up, two-step) use a narrower page."""
+    st.markdown("<style>.block-container { max-width: 620px !important; }</style>",
+                unsafe_allow_html=True)
+
+
 def render_complete_signup(user_id: int, user: dict) -> None:
     """Mandatory last step: nobody gets into the app without an account."""
-    st.markdown(
-        f'<style>{LANDING_CSS}.block-container {{ max-width: 620px !important; }}</style>',
-        unsafe_allow_html=True)
+    render_topbar("onboarding")
+    narrow_page()
     render_scene("signup")
     st.markdown(
-        '<div class="lp-signin"><h2>Finish creating your account</h2>'
-        f'<p>No Nashmi account exists yet for '
-        f'<b>{html.escape(user["email"] or "this Google account")}</b>. '
-        'Choose your name and username to create it.</p></div>',
+        f'<div class="lp-signin"{dir_attr()}><h2>{html.escape(tr("fs_title"))}</h2>'
+        f'<p>{tr("fs_p", email="<b>" + html.escape(user["email"] or "Google") + "</b>")}</p></div>',
         unsafe_allow_html=True)
     with st.container(key="login_card"):
         with st.form("complete_signup", border=False):
-            st.text_input("E-mail (checked by Google)", value=user["email"],
-                          disabled=True)
-            full_name = st.text_input("Full name", value=user["name"],
-                                      max_chars=120)
-            username = st.text_input(
-                "Username", max_chars=24, placeholder="e.g. hassan.sec",
-                help="3 to 24 characters: lowercase letters, digits, . or _")
-            agree = st.checkbox(PRIVACY_NOTE)
-            go = st.form_submit_button("Create account", type="primary",
-                                       width="stretch")
+            st.text_input(tr("fs_email"), value=user["email"], disabled=True)
+            full_name = st.text_input(tr("fs_name"), value=user["name"], max_chars=120)
+            username = st.text_input(tr("fs_username"), max_chars=24,
+                                     placeholder=tr("fs_ph"), help=tr("fs_user_help"))
+            agree = st.checkbox(tr("privacy"))
+            go = st.form_submit_button(tr("fs_create"), type="primary", width="stretch")
         if go:
             if not agree:
-                st.error("Please accept the note above to continue.")
+                st.error(tr("fs_accept"))
             else:
                 error = get_db().create_profile(user_id, username, full_name)
                 if error:
-                    st.error(error)
+                    st.error(db_error(error))
                 else:
                     st.session_state["_profile_ok"] = user_id
                     st.rerun()
-        st.button("Cancel and sign out", key="signup_cancel", on_click=sign_out,
-                  type="tertiary", width="stretch",
-                  icon=":material/logout:")
+        st.button(tr("fs_cancel"), key="signup_cancel", on_click=sign_out,
+                  type="tertiary", width="stretch", icon=":material/logout:")
     render_footer()
 
 
@@ -7402,9 +7596,8 @@ def qr_png(uri: str) -> bytes:
 
 
 def _mfa_page_start() -> None:
-    st.markdown(
-        f'<style>{LANDING_CSS}.block-container {{ max-width: 620px !important; }}</style>',
-        unsafe_allow_html=True)
+    render_topbar("onboarding")
+    narrow_page()
 
 
 def render_mfa_setup(user_id: int, user: dict) -> None:
@@ -7414,14 +7607,12 @@ def render_mfa_setup(user_id: int, user: dict) -> None:
     codes = st.session_state.get("_mfa_codes")
     if codes:
         st.markdown(
-            '<div class="lp-signin"><h2>Save your backup codes</h2>'
-            '<p>Each code works once if you lose your phone. They are shown '
-            '<b>only now</b>, so copy them somewhere safe.</p></div>',
-            unsafe_allow_html=True)
+            f'<div class="lp-signin"{dir_attr()}><h2>{html.escape(tr("codes_title"))}</h2>'
+            f'<p>{tr("codes_p")}</p></div>', unsafe_allow_html=True)
         with st.container(key="login_card"):
             st.code("\n".join(codes), language=None)
-            saved = st.checkbox("I saved these codes")
-            if st.button("Continue", type="primary", width="stretch",
+            saved = st.checkbox(tr("codes_saved"))
+            if st.button(tr("codes_continue"), type="primary", width="stretch",
                          disabled=not saved, key="mfa_codes_done"):
                 st.session_state.pop("_mfa_codes", None)
                 st.session_state["_mfa_ok"] = user_id
@@ -7432,31 +7623,27 @@ def render_mfa_setup(user_id: int, user: dict) -> None:
     uri = pyotp.TOTP(secret).provisioning_uri(
         name=user["email"] or user["name"], issuer_name=MFA_ISSUER)
     st.markdown(
-        '<div class="lp-signin"><h2>Turn on two-step verification</h2>'
-        '<p>1. Open Google Authenticator (or any authenticator app) and scan '
-        'this code.<br>2. Type the 6-digit code the app shows.</p></div>',
-        unsafe_allow_html=True)
+        f'<div class="lp-signin"{dir_attr()}><h2>{html.escape(tr("mfa_title"))}</h2>'
+        f'<p>{tr("mfa_steps")}</p></div>', unsafe_allow_html=True)
     with st.container(key="login_card"):
         st.image(qr_png(uri), width=220)
-        st.caption("Cannot scan? Type this key into the app:")
+        st.caption(tr("mfa_cant"))
         st.code(secret, language=None)
         with st.form("mfa_setup", border=False):
-            code = st.text_input("6-digit code", max_chars=7,
-                                 placeholder="123456")
-            go = st.form_submit_button("Verify and turn on", type="primary",
-                                       width="stretch")
+            code = st.text_input(tr("mfa_code"), max_chars=7, placeholder="123456")
+            go = st.form_submit_button(tr("mfa_verify"), type="primary", width="stretch")
         if go:
-            if totp_step(secret, code) is None:
-                st.error("That code is not right. Wait for the next one and try again.")
+            step = totp_step(secret, code)
+            if step is None:
+                st.error(tr("mfa_bad"))
             else:
                 codes = new_backup_codes()
                 get_db().save_mfa(user_id, secret, [_code_hash(c) for c in codes])
-                step = totp_step(secret, code)
                 get_db().mfa_success(user_id, step)
                 st.session_state.pop("_mfa_secret", None)
                 st.session_state["_mfa_codes"] = codes
                 st.rerun()
-        st.button("Cancel and sign out", key="mfa_cancel", on_click=sign_out,
+        st.button(tr("fs_cancel"), key="mfa_cancel", on_click=sign_out,
                   type="tertiary", width="stretch", icon=":material/logout:")
     render_footer()
 
@@ -7465,20 +7652,16 @@ def render_mfa_challenge(user_id: int, state: dict) -> None:
     """Every sign-in: ask for the code from the authenticator app."""
     _mfa_page_start()
     st.markdown(
-        '<div class="lp-signin"><h2>Enter your verification code</h2>'
-        '<p>Open your authenticator app and type the 6-digit code. Lost your '
-        'phone? Use one of your backup codes.</p></div>',
-        unsafe_allow_html=True)
+        f'<div class="lp-signin"{dir_attr()}><h2>{html.escape(tr("ch_title"))}</h2>'
+        f'<p>{html.escape(tr("ch_p"))}</p></div>', unsafe_allow_html=True)
     locked = _as_utc(state["locked_until"])
     waiting = locked is not None and locked > datetime.now(timezone.utc)
     with st.container(key="login_card"):
         if waiting:
-            st.error("Too many wrong codes. Try again at "
-                     f"{locked:%H:%M} UTC.")
+            st.error(tr("ch_locked", t=f"{locked:%H:%M}"))
         with st.form("mfa_challenge", border=False):
-            code = st.text_input("Code", max_chars=12,
-                                 placeholder="123456 or backup code")
-            go = st.form_submit_button("Verify", type="primary", width="stretch",
+            code = st.text_input(tr("ch_code"), max_chars=12, placeholder=tr("ch_ph"))
+            go = st.form_submit_button(tr("ch_verify"), type="primary", width="stretch",
                                        disabled=waiting)
         if go and not waiting:
             db = get_db()
@@ -7493,8 +7676,8 @@ def render_mfa_challenge(user_id: int, state: dict) -> None:
                 st.rerun()
             else:
                 db.mfa_failure(user_id)
-                st.error("That code is not right.")
-        st.button("Sign out", key="mfa_signout", on_click=sign_out,
+                st.error(tr("ch_bad"))
+        st.button(tr("sign_out"), key="mfa_signout", on_click=sign_out,
                   type="tertiary", width="stretch", icon=":material/logout:")
     render_footer()
 
@@ -7516,39 +7699,24 @@ def mfa_gate(user_id: int | None, user: dict | None) -> bool:
 
 
 def render_auth_page(mode: str) -> None:
-    """Sign-in and sign-up page. Google shows its own password / 2-step
-    screen and Nashmi never sees or stores a password. A new Google account
-    becomes a Nashmi account the first time it signs in."""
-    title, sub, ask, switch_label, switch_to = AUTH_TEXT[mode]
-    st.markdown(
-        f'<style>{LANDING_CSS}.block-container {{ max-width: 620px !important; }}</style>',
-        unsafe_allow_html=True)
-    render_scene(mode)
-    steps = (
-        ("Continue with Google, which checks your e-mail for us",
-         "Choose your name and a username",
-         "Start using Nashmi")
-        if mode == "signup" else
-        ("Sign in works only with an account you already created",
-         "Your chats and projects are saved",
-         "Usage history across devices")
-    )
-    items = "".join(f"<li>{html.escape(item)}</li>" for item in steps)
-    st.markdown(
-        f'<div class="lp-signin"><h2>{html.escape(title)}</h2>'
-        f'<p>{html.escape(sub)}</p><ul>{items}</ul></div>',
-        unsafe_allow_html=True,
-    )
-    with st.container(key="login_card"):
-        render_login_buttons(mode)
-        st.caption("You will be sent to Google to verify who you are. "
-                   "Nashmi never sees your password.")
-        st.caption(ask)
-        st.button(switch_label, key=f"auth_switch_{mode}", on_click=go_gate,
-                  args=(switch_to,), width="stretch")
-        st.button("Back", key=f"auth_back_{mode}", on_click=go_gate,
-                  args=("landing",), type="tertiary", width="stretch",
-                  icon=":material/arrow_back:")
+    """Sign-in and sign-up page. On a wide screen the cat banner sits on the
+    left and the form on the right; on a phone they stack. Google shows its own
+    password / 2-step screen and Nashmi never sees a password. A new Google
+    account must finish the sign-up step before it can use the app."""
+    render_topbar(mode)
+    banner, form = st.columns([1, 1], gap="large", vertical_alignment="center")
+    with banner:
+        render_scene(mode)
+    with form:
+        steps = "".join(f"<li>{html.escape(item)}</li>" for item in tr(mode + "_steps"))
+        st.markdown(
+            f'<div class="lp-signin"{dir_attr()}><h2>{html.escape(tr(mode + "_title"))}</h2>'
+            f'<p>{html.escape(tr(mode + "_sub"))}</p><ul>{steps}</ul></div>',
+            unsafe_allow_html=True,
+        )
+        with st.container(key="login_card"):
+            render_login_buttons(mode)
+            st.caption(tr("google_note"))
     render_footer()
 
 
