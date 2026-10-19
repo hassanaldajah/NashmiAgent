@@ -1392,8 +1392,12 @@ def generate_stream(
     system_prompt: str,
     messages: list[dict],
     files: PreparedFiles | None = None,
+    guard: bool = True,
 ) -> Iterator[str]:
-    """Stream the reply text for the conversation from any provider."""
+    """Stream the reply text for the conversation from any provider.
+
+    ``guard`` cuts replies that loop on the same sentence; structured output
+    (the exam JSON) turns it off because JSON may repeat lines on purpose."""
     if guest_viewer():  # the interface blocks this too; this is the real lock
         raise ProviderError("Sign in to use Nashmi.")
     files = files or PreparedFiles()
@@ -1402,11 +1406,110 @@ def generate_stream(
         raise ProviderError("There is no message to send.")
     streamer = STREAMERS[provider.kind]
     counted = False
-    for chunk in streamer(provider, api_key, model, system_prompt, msgs, files):
-        if not counted:
-            counted = True
-            record_usage(provider, model)
-        yield chunk
+
+    def raw():
+        nonlocal counted
+        for chunk in streamer(provider, api_key, model, system_prompt, msgs, files):
+            if not counted:
+                counted = True
+                record_usage(provider, model)
+            yield chunk
+
+    yield from (without_loops(raw()) if guard else raw())
+
+
+REPEAT_MIN_CHARS = 25       # shorter lines (braces, "---", list bullets) may repeat
+REPEAT_LIMIT = 2            # repeated prose lines dropped before the reply is cut
+SAME_LINE_LIMIT = 4         # the same short line (one word...) many times in a row
+WORD_RUN_RE = re.compile(r"(?<!\S)(\S+)(?:\s+\1(?!\S)){2,}")  # "word word word ..."
+MAX_REPLY_CHARS = 60_000    # a reply never grows past this
+
+
+def without_loops(stream: Iterator[str]) -> Iterator[str]:
+    """Pass a reply through line by line and stop it when the model starts
+    repeating itself (small models sometimes loop on the same sentence).
+
+    * A long prose line that already appeared in the reply is dropped.
+    * The same line under itself (even a single word) is shown once; the
+      copies are dropped.
+    * One word repeated three or more times in a row inside a line is shown
+      once ("the the the" -> "the").
+    After a few dropped lines the stream is closed with a short note.
+    Inside a fenced code block lines may repeat on purpose, so only a long
+    line coming again and again (a model stuck inside an unclosed block) is
+    caught there.
+    """
+    code_seen: dict[str, int] = {}
+    seen: set[str] = set()
+    in_code = False
+    dropped = 0
+    run = 0          # how many times the previous prose line came again in a row
+    last = None
+    total = 0
+    buf = ""
+
+    def judge(line: str) -> str | None:
+        nonlocal in_code, dropped, run, last
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_code = not in_code
+            last = None
+            return line
+        if in_code:
+            norm = re.sub(r"\s+", " ", stripped).lower()
+            if len(norm) >= REPEAT_MIN_CHARS:
+                code_seen[norm] = code_seen.get(norm, 0) + 1
+                if code_seen[norm] > SAME_LINE_LIMIT:      # the same long line 5+ times
+                    dropped = REPEAT_LIMIT
+                    return None
+                if norm == last and code_seen[norm] > 2:
+                    return None
+            last = norm
+            return line
+        if not stripped:
+            return line
+        line = WORD_RUN_RE.sub(r"\1", line)
+        norm = re.sub(r"\s+", " ", line.strip()).lower()
+        if norm == last:                       # same line right under itself
+            run += 1
+            if run >= SAME_LINE_LIMIT:
+                dropped = REPEAT_LIMIT             # a word looping down the page
+            return None
+        last, run = norm, 0
+        if len(norm) >= REPEAT_MIN_CHARS:
+            if norm in seen:
+                dropped += 1
+                return None
+            seen.add(norm)
+        return line
+
+    stopped = ""
+    for chunk in stream:
+        buf += chunk
+        while "\n" in buf:
+            line, buf = buf.split("\n", 1)
+            kept = judge(line + "\n")
+            if dropped >= REPEAT_LIMIT:
+                stopped = tt("The reply started repeating itself, so Nashmi stopped it.",
+                             "بدأ الرد يكرر نفسه، فأوقفه نشمي.")
+                break
+            if kept is not None:
+                total += len(kept)
+                yield kept
+            if total > MAX_REPLY_CHARS:
+                stopped = tt("The reply was too long, so Nashmi stopped it.",
+                             "الرد طويل جداً، فأوقفه نشمي.")
+                break
+        if stopped:
+            break
+    if not stopped and buf:
+        kept = judge(buf)
+        if kept is not None and dropped < REPEAT_LIMIT:
+            yield kept
+    if stopped:
+        if in_code:
+            yield "```\n"          # close an open code block before the note
+        yield f"\n\n_{stopped}_"
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -3095,8 +3198,16 @@ pre, [data-testid="stCode"] {
     box-shadow: 0 10px 34px rgba(0, 0, 0, 0.50),
         0 2px 8px rgba(0, 0, 0, 0.35),
         inset 0 1px 0 rgba(255, 255, 255, 0.06);
-    transition: box-shadow 0.2s ease, border-color 0.2s ease;
+    transition: box-shadow 0.35s ease, border-color 0.35s ease;
     cursor: text;
+}
+/* hover / typing: a red glow rising from inside the bottom edge */
+[data-testid="stChatInput"]:hover {
+    border-color: rgba(255, 51, 68, 0.45);
+    box-shadow: 0 10px 34px rgba(0, 0, 0, 0.50),
+        inset 0 -18px 26px -16px rgba(255, 51, 68, 0.55),
+        inset 0 -2px 0 rgba(255, 51, 68, 0.55),
+        0 0 22px rgba(255, 51, 68, 0.14);
 }
 [data-testid="stChatInput"] > div {
     background: transparent !important;
@@ -3104,10 +3215,12 @@ pre, [data-testid="stCode"] {
     box-shadow: none !important;
 }
 [data-testid="stChatInput"]:focus-within {
-    border-color: rgba(229, 56, 59, 0.45);
+    border-color: rgba(255, 51, 68, 0.6);
     box-shadow: 0 10px 34px rgba(0, 0, 0, 0.50),
-        0 0 0 3px rgba(229, 56, 59, 0.10),
-        0 0 26px rgba(91, 124, 255, 0.16);
+        inset 0 -20px 28px -16px rgba(255, 51, 68, 0.6),
+        inset 0 -2px 0 rgba(255, 51, 68, 0.7),
+        0 0 0 3px rgba(255, 51, 68, 0.10),
+        0 0 26px rgba(255, 51, 68, 0.18);
 }
 [data-testid="stChatInput"] textarea {
     color: var(--white) !important;
@@ -3400,6 +3513,47 @@ pre, [data-testid="stCode"] {
 .st-key-user_actions [data-testid="stColumn"]:last-child {
     flex: 0 0 52px !important; width: 52px !important; min-width: 52px !important;
 }
+
+/* ---- Sidebar: one text size, one icon size ---- */
+[data-testid="stSidebar"] button p,
+[data-testid="stSidebar"] button,
+[data-testid="stSidebar"] input,
+[data-testid="stSidebar"] [data-testid="stRadioOption"] p,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary p,
+[data-testid="stSidebar"] .stLinkButton a p,
+[data-testid="stSidebar"] .stLinkButton a {
+    font-size: 0.9rem !important; line-height: 1.3 !important;
+}
+.st-key-track_box input, .st-key-lang_box input { font-weight: 600 !important; }
+[data-testid="stSidebar"] [data-testid="stRadio"] label,
+[data-testid="stSidebar"] [data-testid="stRadio"] label p,
+[data-testid="stSidebar"] [data-testid="stRadio"] [data-testid="stMarkdownContainer"] p {
+    font-size: 0.9rem !important; line-height: 1.3 !important;
+}
+[data-testid="stSidebar"] [data-testid="stIconMaterial"] { font-size: 0.95rem !important; }
+/* logo and name up in the corner, beside the collapse button */
+.st-key-side_brand { margin-top: -3.15rem; width: calc(100% - 52px) !important; position: relative; z-index: 3; }
+.st-key-side_brand .brand img { width: 26px; height: 26px; }
+/* Track / Language: a plain pill button, the choices open below it */
+.st-key-track_box, .st-key-lang_box { padding: 0 !important; border: 0 !important; background: transparent !important; }
+.st-key-track_box [data-testid="stPopoverButton"],
+.st-key-lang_box [data-testid="stPopoverButton"] {
+    width: 100%; min-height: 40px; border-radius: 999px !important; justify-content: flex-start;
+    background: rgba(255, 255, 255, 0.05) !important; border: 1px solid var(--line) !important;
+    font-weight: 600;
+}
+.st-key-track_box [data-testid="stPopoverButton"]:hover,
+.st-key-lang_box [data-testid="stPopoverButton"]:hover {
+    border-color: rgba(255, 51, 68, 0.6) !important; box-shadow: 0 0 16px rgba(255, 51, 68, 0.18) !important;
+}
+[data-testid="stSidebar"] .brand span { font-size: 1.05rem; }
+[data-testid="stSidebar"] [data-testid="stCaptionContainer"],
+[data-testid="stSidebar"] .user-card span,
+[data-testid="stSidebar"] .user-card em { font-size: 0.76rem !important; }
+[data-testid="stSidebar"] .user-card b { font-size: 0.88rem; }
+[data-testid="stSidebar"] .side-label,
+[data-testid="stSidebar"] .box-label,
+[data-testid="stSidebar"] label p { font-size: 0.64rem !important; letter-spacing: 1.5px; }
 
 /* ---- Scrollbar (desktop) ---- */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -4366,16 +4520,16 @@ def render_nav(box) -> str:
             tt("New chat", "محادثة جديدة"), key="new_chat", icon=":material/add:",
             on_click=on_new_chat, disabled=mode in (MODE_SOC, MODE_TOOLS, MODE_EXAM),
         )
+        # the button says "Track"; the tracks themselves live in its list
         with st.container(key="track_box"):
-            st.markdown(
-                f'<div class="box-label">{tt("Track", "التراك")}</div>',
-                unsafe_allow_html=True,
-            )
-            return st.selectbox(
-                "Track", MODES, key="track", label_visibility="collapsed",
-                on_change=close_account,
-                format_func=lambda name: tt(name, TRACK_AR.get(name, name)),
-            )
+            with st.popover(tt("Track", "التراك"), icon=":material/apps:",
+                            width="stretch"):
+                st.radio(
+                    "Track", MODES, key="track", label_visibility="collapsed",
+                    on_change=close_account,
+                    format_func=lambda name: tt(name, TRACK_AR.get(name, name)),
+                )
+        return current_mode()
 
 
 def render_projects_panel() -> None:
@@ -4581,10 +4735,10 @@ def render_user_card(box) -> None:
 def render_side_language(box) -> None:
     """Language dropdown for the signed-in app (same choice as on the public pages)."""
     with box, st.container(key="lang_box"):
-        st.markdown(f'<div class="box-label">{tt("Language", "اللغة")}</div>',
-                    unsafe_allow_html=True)
-        st.session_state["side_lang"] = lang()
-        st.selectbox(tt("Language", "اللغة"), ["en", "ar"], key="side_lang",
+        st.session_state["side_lang"] = lang()          # English unless picked
+        with st.popover(tt("Language", "اللغة"), icon=":material/translate:",
+                        width="stretch"):
+            st.radio(tt("Language", "اللغة"), ["en", "ar"], key="side_lang",
                      label_visibility="collapsed",
                      format_func=lambda c: {"en": "English", "ar": "العربية"}[c],
                      on_change=on_app_lang_pick)
@@ -5546,7 +5700,7 @@ def ask_model(settings: Settings, system: str, user: str,
     prepared = PreparedFiles(media=list(media or []))
     stream = generate_stream(
         settings.provider, settings.api_key, settings.model, system,
-        [{"role": "user", "content": user}], prepared,
+        [{"role": "user", "content": user}], prepared, guard=False,
     )
     return "".join(stream)
 
