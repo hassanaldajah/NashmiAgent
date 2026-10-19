@@ -243,6 +243,7 @@ PROVIDER_LIST = (
 )
 PROVIDERS = {p.label: p for p in PROVIDER_LIST}
 PROVIDERS_BY_ID = {p.id: p for p in PROVIDER_LIST}
+DEFAULT_PROVIDER_ID = "groq"  # preselected; the others stay in the list
 OPENROUTER_FALLBACK = ("openai/gpt-oss-20b:free",)
 
 # ---------------------------------------------------------------------------
@@ -4221,7 +4222,7 @@ def render_login_buttons(key_prefix: str) -> None:
             key=f"{key_prefix}_login_{provider}",
             on_click=start_login, args=(provider,),
             icon=":material/login:",
-            width="stretch" if key_prefix == "login" else "content",
+            width="stretch" if key_prefix in ("login", "signup") else "content",
         )
 
 
@@ -4512,7 +4513,11 @@ def render_settings(box, mode: str):
                     "Public demo: paste your own API key below. It "
                     "stays in your browser session and is never stored."
                 )
-            label = st.selectbox("Provider", list(PROVIDERS))
+            labels = list(PROVIDERS)
+            label = st.selectbox(
+                "Provider", labels,
+                index=labels.index(PROVIDERS_BY_ID[DEFAULT_PROVIDER_ID].label),
+            )
             provider = PROVIDERS[label]
 
             typed_key = st.text_input(
@@ -5884,6 +5889,108 @@ def render_exam_track(settings: Settings) -> None:
 # ---------------------------------------------------------------------------
 # Landing page, sign-in page and admin screen
 # ---------------------------------------------------------------------------
+# Shared by the landing banner and the scroll story. drawCat paints the pixel
+# cat; makeLook gives it eyes that follow the pointer (also the pointer over the
+# rest of the page) and glance around by themselves when nobody is moving one.
+CAT_JS = """var CW = 40, CH = 46;
+var K = '#0b0b10', WH = '#ffffff', GR = '#d3d8e3', RD = '#E5383B';
+function drawCat(ctx, t, vel, lx, ly, rope) {
+    function px(x, y, w, h, c) { ctx.fillStyle = c; ctx.fillRect(Math.round(x), Math.round(y), w, h); }
+    function cloth(x, y) { return (((x >> 1) + (y >> 1)) & 1) ? RD : WH; }
+    ctx.clearRect(0, 0, CW, CH);
+    var flap = Math.round(Math.sin(t * 2.4));
+    var blink = (t % 3.6) > 3.45;
+    var swing = Math.max(-1, Math.min(1, Math.round(vel * 0.05)));
+    var k, tx, ty;
+    if (rope) { px(20, 0, 1, 5, '#a4b1cd'); }
+    for (k = 0; k < 10; k++) {
+        tx = 29 + k * 0.9; ty = 41 - k * 1.15 + Math.sin(t * 4.2 + k * 0.55) * k * 0.3;
+        px(tx - 1, ty - 1, 4, 4, K);
+    }
+    for (k = 0; k < 10; k++) {
+        tx = 29 + k * 0.9; ty = 41 - k * 1.15 + Math.sin(t * 4.2 + k * 0.55) * k * 0.3;
+        px(tx, ty, 2, 2, WH);
+    }
+    var y, hw, x0, x1;
+    for (y = 24; y <= 41; y++) {
+        hw = y < 28 ? 6 : (y < 33 ? 8 : (y < 38 ? 9 : 10));
+        x0 = 20 - hw; x1 = 20 + hw;
+        px(x0 - 1, y, 1, 1, K); px(x1 + 1, y, 1, 1, K);
+        px(x0, y, x1 - x0 + 1, 1, WH);
+    }
+    px(10, 42, 21, 1, K);
+    px(14, 25, 13, 1, GR);
+    px(20, 34, 1, 8, K);
+    px(14, 41 + swing, 6, 1, K); px(21, 41 - swing, 6, 1, K);
+    for (y = 9; y <= 24; y++) {
+        var ins = y <= 10 ? 2 : (y === 11 ? 1 : (y >= 24 ? 1 : 0));
+        x0 = 9 + ins; x1 = 30 - ins;
+        px(x0 - 1, y, 1, 1, K); px(x1 + 1, y, 1, 1, K);
+        px(x0, y, x1 - x0 + 1, 1, WH);
+    }
+    px(10, 25, 20, 1, K);
+    for (y = 9; y <= 30; y++) {
+        var w = 4 + Math.floor((y - 9) / 6), sh = y > 18 ? flap : 0;
+        var lx1 = 11 + sh, lx0 = lx1 - w + 1, rx0 = 28 + sh, rx1 = rx0 + w - 1;
+        px(lx0 - 1, y, 1, 1, K); px(rx1 + 1, y, 1, 1, K);
+        for (x0 = lx0; x0 <= lx1; x0++) { px(x0, y, 1, 1, cloth(x0, y)); }
+        for (x0 = rx0; x0 <= rx1; x0++) { px(x0, y, 1, 1, cloth(x0, y)); }
+        if (y === 30) { px(lx0, y + 1, w, 1, K); px(rx0, y + 1, w, 1, K); }
+    }
+    for (y = 7; y <= 11; y++) {
+        x0 = y === 7 ? 10 : 8; x1 = y === 7 ? 29 : 31;
+        for (var x = x0; x <= x1; x++) { px(x, y, 1, 1, cloth(x, y)); }
+        px(x0 - 1, y, 1, 1, K); px(x1 + 1, y, 1, 1, K);
+    }
+    for (var f = 12; f <= 27; f += 2) { px(f, 12, 1, 1, RD); }
+    px(12, 4, 16, 1, K); px(8, 5, 24, 2, K);
+    px(11, 5, 2, 1, '#3a3a46'); px(26, 5, 2, 1, '#3a3a46');
+    var ox = Math.round((lx || 0) * 2), oy = Math.round((ly || 0) * 1.5);
+    var nx = Math.round(lx || 0), ny = Math.round(ly || 0);
+    var eh = blink ? 1 : 5, ey = (blink ? 16 : 14) + oy;
+    px(14 + ox, ey, 2, eh, K); px(24 + ox, ey, 2, eh, K);
+    px(19 + nx, 19 + ny, 2, 1, K);
+    px(18 + nx, 21 + ny, 1, 1, K); px(19 + nx, 22 + ny, 2, 1, K); px(21 + nx, 21 + ny, 1, 1, K);
+}
+
+function trackPointer(cb) {
+    var own = function (e) { cb(e.clientX, e.clientY); };
+    document.addEventListener('pointermove', own, { passive: true });
+    document.addEventListener('pointerdown', own, { passive: true });
+    try {
+        var fe = window.frameElement, pd = window.parent.document;
+        var outer = function (e) {
+            var f = fe.getBoundingClientRect();
+            cb(e.clientX - f.left, e.clientY - f.top);
+        };
+        pd.addEventListener('pointermove', outer, { passive: true });
+        pd.addEventListener('pointerdown', outer, { passive: true });
+    } catch (err) { }
+}
+
+function makeLook(el, getCenter) {
+    var L = { x: 0, y: 0 }, tgt = { x: 0, y: 0 }, last = -1e9, nextWander = 0;
+    trackPointer(function (px, py) {
+        var c = getCenter();
+        var rx = Math.max(140, el.clientWidth / 2);
+        var ry = Math.min(320, Math.max(140, el.clientHeight / 2));
+        tgt.x = Math.max(-1, Math.min(1, (px - c.x) / rx * 1.8));
+        tgt.y = Math.max(-1, Math.min(1, (py - c.y) / ry * 1.8));
+        last = performance.now();
+    });
+    L.update = function (now) {
+        if (now - last > 2600 && now > nextWander) {
+            tgt.x = (Math.random() * 2 - 1) * 0.9;
+            tgt.y = (Math.random() * 2 - 1) * 0.5;
+            nextWander = now + 1300 + Math.random() * 1700;
+        }
+        L.x += (tgt.x - L.x) * 0.16;
+        L.y += (tgt.y - L.y) * 0.16;
+    };
+    return L;
+}
+"""
+
 THREE_URL = "https://cdn.jsdelivr.net/npm/three@0.150.1/build/three.min.js"
 THREE_SRI = "sha384-eWPGgBROV7OvRpuavxpzaTSoHT/gkcVjZ94JzXW7WDFZB9qEb4Q9k+8bfx/c1rTM"
 
@@ -5905,6 +6012,7 @@ SCENE_TEMPLATE = """<!DOCTYPE html>
     #stage {
         position: relative; box-sizing: border-box; width: 100%;
         height: calc(100% - 4px); overflow: hidden; border-radius: 18px;
+        animation: stageIn 0.6s cubic-bezier(.22, 1, .36, 1) both;
         border: 1px solid rgba(229, 56, 59, 0.4);
         background: radial-gradient(circle at 50% __CAT_TOP__, #7d1020 0%,
             #3b0d19 26%, #121827 62%, #070b12 100%);
@@ -5920,17 +6028,14 @@ SCENE_TEMPLATE = """<!DOCTYPE html>
     }
     .catbox {
         position: absolute; left: 50%; top: __CAT_TOP__; z-index: 2;
-        width: __CAT_W__; transform: translate(-50%, -50%);
+        width: __CAT_W__; height: __CAT_H__; transform: translate(-50%, -50%);
         animation: floaty 4.2s ease-in-out infinite;
     }
     #cat {
-        display: block; width: 100%; height: auto; will-change: transform;
+        display: block; width: 100%; height: 100%;
+        will-change: transform;
         image-rendering: pixelated; image-rendering: crisp-edges;
-        -webkit-mask-image: radial-gradient(ellipse at center, #000 52%,
-            transparent 80%);
-        mask-image: radial-gradient(ellipse at center, #000 52%,
-            transparent 80%);
-        filter: drop-shadow(0 0 14px rgba(255, 255, 255, 0.28));
+        filter: drop-shadow(0 0 14px rgba(255, 59, 63, 0.5));
     }
     @keyframes pulse { 0%, 100% { opacity: 0.75; transform: translate(-50%, -50%) scale(0.96); }
                        50% { opacity: 1; transform: translate(-50%, -50%) scale(1.06); } }
@@ -5957,8 +6062,10 @@ SCENE_TEMPLATE = """<!DOCTYPE html>
         font-size: clamp(0.88rem, 3.3vw, 1.02rem); }
     @keyframes rise { from { opacity: 0; transform: translateY(16px); }
                       to { opacity: 1; transform: none; } }
+    @keyframes stageIn { from { opacity: 0; transform: scale(0.985); }
+                         to { opacity: 1; transform: none; } }
     @media (prefers-reduced-motion: reduce) {
-        .copy, .glow, .catbox { animation: none; }
+        #stage, .copy, .glow, .catbox { animation: none; }
     }
 </style>
 </head>
@@ -5966,9 +6073,36 @@ SCENE_TEMPLATE = """<!DOCTYPE html>
 <div id="stage">
     <div class="glow"></div>
     <canvas id="c"></canvas>
-    <div class="catbox"><img id="cat" alt="Nashmi, the cat in a red and white shemagh" src="data:image/png;base64,__CAT__"></div>
+    <div class="catbox"><canvas id="cat" width="40" height="46" role="img" aria-label="Nashmi, the cat in a red and white shemagh"></canvas></div>
     <div class="copy">__COPY__</div>
 </div>
+<script>
+__CAT_JS__
+</script>
+<script>
+(function () {
+    var cat = document.getElementById('cat'), stage = document.getElementById('stage');
+    var box = document.querySelector('.catbox'), cctx = cat.getContext('2d');
+    var reduce = window.matchMedia &&
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var saved = null;
+    try { saved = JSON.parse(sessionStorage.getItem('nashmi_scene') || 'null'); } catch (err) {}
+    var phase0 = saved && saved.p ? saved.p : 0, start = performance.now();
+    var look = makeLook(stage, function () {
+        var r = box.getBoundingClientRect();
+        return { x: r.left + r.width / 2, y: r.top + r.height * 0.45 };
+    });
+    function paint(now) {
+        look.update(now);
+        drawCat(cctx, phase0 + (now - start) / 1000, 0, look.x, look.y, false);
+        cat.style.transform = 'translate(' + (-look.x * 7).toFixed(1) + 'px,' +
+                              (-look.y * 5).toFixed(1) + 'px)';
+        if (!reduce) { requestAnimationFrame(paint); }
+    }
+    paint(start);
+    if (!reduce) { requestAnimationFrame(paint); }
+})();
+</script>
 <script src="__THREE_URL__" integrity="__THREE_SRI__" crossorigin="anonymous"></script>
 <script>
 (function () {
@@ -6047,31 +6181,40 @@ SCENE_TEMPLATE = """<!DOCTYPE html>
     ring2.rotation.x = 1.9;
     ring2.rotation.y = 0.5;
     group.add(ring, ring2);
-    var catEl = document.getElementById('cat'), sx = 0, sy = 0;
+    var saved = null;
+    try { saved = JSON.parse(sessionStorage.getItem('nashmi_scene') || 'null'); } catch (err) {}
+    var phase0 = saved && saved.p ? saved.p : 0, lastSave = 0, baseZ = 8.6;
+    if (saved) { group.rotation.y = saved.ry || 0; group.rotation.x = saved.rx || 0; }
 
     function resize() {
         var w = stage.clientWidth, h = stage.clientHeight;
         if (!w || !h) { return; }
         renderer.setSize(w, h, false);
         camera.aspect = w / h;
-        camera.position.set(0, 0, w / h < 0.9 ? 10.5 : (w / h < 1.6 ? 8.6 : 7.2));
+        baseZ = w / h < 0.9 ? 10.5 : (w / h < 1.6 ? 8.6 : 7.2);
+        camera.position.set(0, 0, baseZ);
         camera.updateProjectionMatrix();
     }
     resize();
     if (window.ResizeObserver) { new ResizeObserver(resize).observe(stage); }
     else { window.addEventListener('resize', resize); }
 
-    var tx = 0, ty = 0;
-    stage.addEventListener('pointermove', function (e) {
+    var tx = 0, ty = 0, lastPtr = -1e9;
+    trackPointer(function (x, y) {
         var rc = stage.getBoundingClientRect();
-        tx = (e.clientX - rc.left) / rc.width - 0.5;
-        ty = (e.clientY - rc.top) / rc.height - 0.5;
+        tx = Math.max(-0.5, Math.min(0.5, (x - rc.left) / rc.width - 0.5));
+        ty = Math.max(-0.5, Math.min(0.5, (y - rc.top) / rc.height - 0.5));
+        lastPtr = performance.now();
     });
-    stage.addEventListener('pointerleave', function () { tx = 0; ty = 0; });
 
     var start = performance.now(), running = false;
     function frame(now) {
-        var t = (now - start) / 1000;
+        var t = phase0 + (now - start) / 1000;
+        var kIn = Math.min(1, (now - start) / 900), ease = 1 - Math.pow(1 - kIn, 3);
+        camera.position.z = baseZ + (saved ? 0.7 : 1.9) * (1 - ease);   // gentle push-in
+        var idle = now - lastPtr > 2600;
+        var ex = idle ? Math.sin(t * 0.4) * 0.22 : tx;
+        var ey = idle ? Math.cos(t * 0.33) * 0.12 : ty;
         coreWire.rotation.y = t * 0.35;
         coreWire.rotation.x = t * 0.2;
         coreWire.scale.setScalar(1 + Math.sin(t * 1.6) * 0.03);
@@ -6080,12 +6223,14 @@ SCENE_TEMPLATE = """<!DOCTYPE html>
         net.rotation.x = Math.sin(t * 0.2) * 0.1;
         ring.rotation.z = t * 0.25;
         ring2.rotation.z = -t * 0.18;
-        group.rotation.y += (tx * 0.9 - group.rotation.y) * 0.05;
-        group.rotation.x += (ty * 0.6 - group.rotation.x) * 0.05;
-        sx += (tx - sx) * 0.06; sy += (ty - sy) * 0.06;
-        if (catEl) {
-            catEl.style.transform = 'translate(' + (-sx * 14).toFixed(1) + 'px,' +
-                                    (-sy * 10).toFixed(1) + 'px)';
+        group.rotation.y += (ex * 0.9 - group.rotation.y) * 0.05;
+        group.rotation.x += (ey * 0.6 - group.rotation.x) * 0.05;
+        if (now - lastSave > 400) {      // lets the next page continue this motion
+            lastSave = now;
+            try {
+                sessionStorage.setItem('nashmi_scene', JSON.stringify(
+                    { p: t, ry: group.rotation.y, rx: group.rotation.x }));
+            } catch (err) {}
         }
         renderer.render(scene, camera);
         if (running) { requestAnimationFrame(frame); }
@@ -6115,29 +6260,35 @@ SCENE_COPY = {
         'your own API key and your data kept private.</p>'
     ),
     "login": (
-        '<h1><span>&gt;_</span> Nashmi</h1>'
-        '<p>Sign in to keep your work between visits.</p>'
+        '<h1><span>&gt;_</span> Welcome back</h1>'
+        '<p>Sign in to pick up where you left off.</p>'
+    ),
+    "signup": (
+        '<h1><span>&gt;_</span> Join Nashmi</h1>'
+        '<p>Create your account in one tap with Google.</p>'
     ),
 }
-# height, scene offset, scene scale, cat width, cat vertical position
+# height, scene offset, scene scale, cat pixel scale, cat vertical position
 SCENE_SIZES = {
-    "landing": (470, 0.9, 1.0, "min(210px, 56%)", "37%"),
-    "login": (270, 0.6, 0.66, "min(138px, 40%)", "38%"),
+    "landing": (470, 0.9, 1.0, 4, "37%"),
+    "login": (290, 0.6, 0.66, 3, "36%"),
+    "signup": (290, 0.6, 0.66, 3, "36%"),
 }
 
 
 def render_scene(kind: str) -> None:
     """Show the animated 3D banner for the landing or sign-in page."""
-    height, offset, scale, cat_width, cat_top = SCENE_SIZES[kind]
+    height, offset, scale, cat_scale, cat_top = SCENE_SIZES[kind]
     markup = (
         SCENE_TEMPLATE.replace("__COPY__", SCENE_COPY[kind])
         .replace("__THREE_URL__", THREE_URL)
         .replace("__THREE_SRI__", THREE_SRI)
         .replace("__OFFSET_Y__", str(offset))
         .replace("__GSCALE__", str(scale))
-        .replace("__CAT_W__", cat_width)
+        .replace("__CAT_W__", f"{40 * cat_scale}px")
+        .replace("__CAT_H__", f"{46 * cat_scale}px")
         .replace("__CAT_TOP__", cat_top)
-        .replace("__CAT__", CAT_B64)
+        .replace("__CAT_JS__", CAT_JS)
     )
     embed_html(markup, height)
 
@@ -6276,8 +6427,8 @@ STORY_CARDS = (
      "Build an exam from a topic or your own slides and PDFs, take it, and "
      "get it graded."),
     ("PRIVACY", "Your key, your data",
-     "Bring your own API key (Gemini, Groq, OpenAI or Claude). Signed-in "
-     "chats and saved keys are encrypted, and guests store nothing."),
+     "Bring your own API key (Gemini, Groq, OpenAI or Claude). Your chats "
+     "and saved keys are encrypted."),
     ("MAKER", "Built by Hassan Aldajah",
      "A fourth-year Cybersecurity student at the University of Jordan, "
      "building tools for SOC analysts and CTF players."),
@@ -6376,6 +6527,9 @@ STORY_TEMPLATE = """<!DOCTYPE html>
     <canvas id="cat" width="40" height="46" role="img" aria-label="Nashmi the cat sliding down the line"></canvas>
 </div>
 <script>
+__CAT_JS__
+</script>
+<script>
 (function () {
     var reduce = window.matchMedia &&
         window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -6389,79 +6543,12 @@ STORY_TEMPLATE = """<!DOCTYPE html>
     catch (err) { P = null; fe = null; }
     var H = 0, W = 0, x = 0, y0 = 0, y1 = 0, centers = [], skyH = 0;
 
-    // the cat is drawn pixel by pixel (see drawCat) so it can move
     var cctx = cat.getContext('2d');
-    var CW = 40, CH = 46;
-    var K = '#0b0b10', WH = '#ffffff', GR = '#d3d8e3', RD = '#E5383B';
-    function drawCat(ctx, t, vel) {
-        function px(x, y, w, h, c) { ctx.fillStyle = c; ctx.fillRect(Math.round(x), Math.round(y), w, h); }
-        function cloth(x, y) { return (((x >> 1) + (y >> 1)) & 1) ? RD : WH; }
-        ctx.clearRect(0, 0, CW, CH);
-        var flap = Math.round(Math.sin(t * 2.4));
-        var blink = (t % 3.6) > 3.45;
-        var swing = Math.max(-1, Math.min(1, Math.round(vel * 0.05)));
-        var k, tx, ty;
+    var look = makeLook(wrap, function () {
+        var r = cat.getBoundingClientRect();
+        return { x: r.left + r.width / 2, y: r.top + r.height * 0.4 };
+    });
 
-        px(20, 0, 1, 5, '#a4b1cd');                       // rope to the line
-
-        for (k = 0; k < 10; k++) {                         // tail (wags)
-            tx = 29 + k * 0.9; ty = 41 - k * 1.15 + Math.sin(t * 4.2 + k * 0.55) * k * 0.3;
-            px(tx - 1, ty - 1, 4, 4, K);
-        }
-        for (k = 0; k < 10; k++) {
-            tx = 29 + k * 0.9; ty = 41 - k * 1.15 + Math.sin(t * 4.2 + k * 0.55) * k * 0.3;
-            px(tx, ty, 2, 2, WH);
-        }
-
-        var y, hw, x0, x1;
-        for (y = 24; y <= 41; y++) {                       // body
-            hw = y < 28 ? 6 : (y < 33 ? 8 : (y < 38 ? 9 : 10));
-            x0 = 20 - hw; x1 = 20 + hw;
-            px(x0 - 1, y, 1, 1, K); px(x1 + 1, y, 1, 1, K);
-            px(x0, y, x1 - x0 + 1, 1, WH);
-        }
-        px(10, 42, 21, 1, K);
-        px(14, 25, 13, 1, GR);                             // soft shade under the head
-        px(20, 34, 1, 8, K);                               // gap between the front legs
-        px(14, 41 + swing, 6, 1, K); px(21, 41 - swing, 6, 1, K);
-
-        for (y = 9; y <= 24; y++) {                        // head
-            var ins = y <= 10 ? 2 : (y === 11 ? 1 : (y >= 24 ? 1 : 0));
-            x0 = 9 + ins; x1 = 30 - ins;
-            px(x0 - 1, y, 1, 1, K); px(x1 + 1, y, 1, 1, K);
-            px(x0, y, x1 - x0 + 1, 1, WH);
-        }
-        px(10, 25, 20, 1, K);
-
-        for (y = 9; y <= 30; y++) {                        // shemagh flaps (sway)
-            var w = 4 + Math.floor((y - 9) / 6), sh = y > 18 ? flap : 0;
-            var lx1 = 11 + sh, lx0 = lx1 - w + 1, rx0 = 28 + sh, rx1 = rx0 + w - 1;
-            px(lx0 - 1, y, 1, 1, K); px(rx1 + 1, y, 1, 1, K);
-            for (x0 = lx0; x0 <= lx1; x0++) px(x0, y, 1, 1, cloth(x0, y));
-            for (x0 = rx0; x0 <= rx1; x0++) px(x0, y, 1, 1, cloth(x0, y));
-            if (y === 30) { px(lx0, y + 1, w, 1, K); px(rx0, y + 1, w, 1, K); }
-        }
-
-        for (y = 7; y <= 11; y++) {                        // cap
-            x0 = y === 7 ? 10 : 8; x1 = y === 7 ? 29 : 31;
-            for (var x = x0; x <= x1; x++) px(x, y, 1, 1, cloth(x, y));
-            px(x0 - 1, y, 1, 1, K); px(x1 + 1, y, 1, 1, K);
-        }
-        for (var f = 12; f <= 27; f += 2) px(f, 12, 1, 1, RD);   // fringe on the forehead
-
-        px(12, 4, 16, 1, K); px(8, 5, 24, 2, K);           // black agal (ring) on top
-        px(11, 5, 2, 1, '#3a3a46'); px(26, 5, 2, 1, '#3a3a46');
-
-        var eh = blink ? 1 : 5, ey = blink ? 16 : 14;      // tall black eyes, they blink
-        px(14, ey, 2, eh, K); px(24, ey, 2, eh, K);
-        px(19, 19, 2, 1, K);                               // nose
-        px(18, 21, 1, 1, K); px(19, 22, 2, 1, K); px(21, 21, 1, 1, K);   // mouth
-    }
-
-    function rng(seed) {
-        var s = seed;
-        return function () { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
-    }
     var TOKENS = ['T1059', 'T1566', 'T1021', 'CVE-2021-44228', '0x4E41534D49',
         'nashmi{shemagh_cat}', 'SOC>', 'IOC', 'SHA256', 'nc -lvnp 4444', 'TCP/443',
         'XOR 0x5A', 'base64 -d', 'SELECT * FROM logs', 'ssh -p 22', '10.0.0.0/8',
@@ -6525,7 +6612,8 @@ STORY_TEMPLATE = """<!DOCTYPE html>
         if (Math.abs(d) < 0.05) { cy = tgt; }
         var rot = Math.max(-14, Math.min(14, d * 0.1)) + Math.sin(now / 650) * 2.2;
         cat.style.top = cy + 'px';
-        drawCat(cctx, now / 1000, d);
+        look.update(now);
+        drawCat(cctx, now / 1000, d, look.x, look.y, true);
         cat.style.transform = 'translate(-50%, 0) rotate(' + rot.toFixed(2) + 'deg)';
         fill.style.height = Math.max(0, cy - y0) + 'px';
         var best = 0, bd = 1e9;
@@ -6567,12 +6655,13 @@ def render_story() -> None:
         '</article></div>'
         for tag, title, text in STORY_CARDS
     )
-    markup = STORY_TEMPLATE.replace("__CARDS__", cards)
+    markup = (STORY_TEMPLATE.replace("__CARDS__", cards)
+              .replace("__CAT_JS__", CAT_JS))
     embed_html(markup, STORY_HEIGHT)
 
 PRIVACY_NOTE = (
     "Signing in stores your name, e-mail address and sign-in times. Your "
-    "chats and saved keys are encrypted. Guests store nothing."
+    "chats and saved keys are encrypted."
 )
 
 
@@ -6581,10 +6670,14 @@ def go_gate(name: str) -> None:
 
 
 def current_gate() -> str:
-    """'landing', 'login' or 'app'. Only a shared (public) server gates."""
+    """'landing', 'login', 'signup' or 'app'. Only a shared (public) server
+    gates, and once accounts work there is no guest way in."""
     if not is_public() or current_user():
         return "app"
-    return st.session_state.get("gate", "landing")
+    gate = st.session_state.get("gate", "landing")
+    if gate == "app" and accounts_enabled():
+        return "landing"
+    return gate
 
 
 OWNER_NAME = "Hassan Aldajah"
@@ -6639,16 +6732,16 @@ def render_footer() -> None:
 
 
 def render_landing_buttons(suffix: str) -> None:
-    """Sign in / guest buttons. The page shows them above and below the
+    """Sign up / sign in buttons. The page shows them above and below the
     story, so each copy needs its own widget keys."""
     with st.container(key=f"landing_cta{suffix}"):
         if accounts_enabled():
+            st.button("Sign up", key=f"landing_signup{suffix}",
+                      type="primary", on_click=go_gate, args=("signup",),
+                      icon=":material/person_add:", width="stretch")
             st.button("Sign in", key=f"landing_signin{suffix}",
-                      type="primary", on_click=go_gate, args=("login",),
+                      on_click=go_gate, args=("login",),
                       icon=":material/login:", width="stretch")
-            st.button("Continue as guest", key=f"landing_guest{suffix}",
-                      on_click=go_gate, args=("app",),
-                      icon=":material/arrow_forward:", width="stretch")
         else:
             st.button("Start", key=f"landing_guest{suffix}", type="primary",
                       on_click=go_gate, args=("app",),
@@ -6668,25 +6761,39 @@ def render_landing() -> None:
     render_footer()
 
 
-def render_login_page() -> None:
-    """Focused sign-in page. Google shows its own password / 2-step screen;
-    Nashmi never sees or stores a password."""
+AUTH_TEXT = {
+    "login": ("Welcome back",
+              "Sign in with Google to pick up where you left off.",
+              "New to Nashmi?", "Create an account", "signup"),
+    "signup": ("Create your account",
+               "One tap with Google, so there is no password to invent.",
+               "Already have an account?", "Sign in", "login"),
+}
+
+
+def render_auth_page(mode: str) -> None:
+    """Sign-in and sign-up page. Google shows its own password / 2-step
+    screen and Nashmi never sees or stores a password. A new Google account
+    becomes a Nashmi account the first time it signs in."""
+    title, sub, ask, switch_label, switch_to = AUTH_TEXT[mode]
     st.markdown(f'<style>{LANDING_CSS}</style>', unsafe_allow_html=True)
-    render_scene("login")
+    render_scene(mode)
     st.markdown(
-        '<div class="lp-signin"><h2>Sign in</h2><ul>'
+        f'<div class="lp-signin"><h2>{html.escape(title)}</h2>'
+        f'<p>{html.escape(sub)}</p><ul>'
         '<li>Your chats and projects are saved</li>'
         '<li>Usage history across devices</li>'
         '<li>Optionally save API keys, encrypted</li></ul></div>',
         unsafe_allow_html=True,
     )
     with st.container(key="login_card"):
-        render_login_buttons("login")
-        st.caption("You will be sent to your provider to verify who you "
-                   "are. Nashmi never sees your password.")
-        st.button("Continue as guest", key="login_guest", on_click=go_gate,
-                  args=("app",), width="stretch")
-        st.button("Back", key="login_back", on_click=go_gate,
+        render_login_buttons(mode)
+        st.caption("You will be sent to Google to verify who you are. "
+                   "Nashmi never sees your password.")
+        st.caption(ask)
+        st.button(switch_label, key=f"auth_switch_{mode}", on_click=go_gate,
+                  args=(switch_to,), width="stretch")
+        st.button("Back", key=f"auth_back_{mode}", on_click=go_gate,
                   args=("landing",), type="tertiary", width="stretch",
                   icon=":material/arrow_back:")
     st.markdown(f'<p class="lp-note">{html.escape(PRIVACY_NOTE)}</p>',
@@ -6910,8 +7017,8 @@ def main() -> None:
     if gate == "landing":
         render_landing()
         return
-    if gate == "login":
-        render_login_page()
+    if gate in ("login", "signup"):
+        render_auth_page(gate)
         return
     nav_box = st.sidebar.container(key="side_nav")
     chats_box = st.sidebar.container(key="side_chats")
