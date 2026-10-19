@@ -6200,6 +6200,28 @@ LANDING_CSS = """
 }
 .st-key-landing_cta, .st-key-login_card { max-width: 440px; margin: 0 auto; }
 
+.lp-footer {
+    margin: 2.2rem auto 0.4rem; padding-top: 1.2rem; text-align: center;
+    border-top: 1px solid var(--line); color: var(--muted);
+    font-size: 0.85rem; line-height: 1.7;
+}
+.lp-footer a { color: var(--text); text-decoration: none; }
+.lp-footer a:hover { color: var(--accent); }
+.lp-footer-sub { margin-top: 0.15rem; }
+.lp-social { display: flex; justify-content: center; gap: 0.7rem; margin-bottom: 0.8rem; }
+.lp-social a {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 44px; height: 44px; border-radius: 50%;
+    background: var(--panel); border: 1px solid var(--line);
+    transition: transform 0.25s cubic-bezier(.22, 1, .36, 1),
+                border-color 0.25s ease, background 0.25s ease;
+}
+.lp-social a:hover {
+    transform: translateY(-3px); border-color: var(--accent);
+    background: var(--accent-soft);
+}
+.lp-social svg { width: 20px; height: 20px; fill: var(--white); }
+
 /* Smooth entrance and hover motion */
 .lp-card {
     animation: lpUp 0.7s cubic-bezier(.22, 1, .36, 1) both;
@@ -6271,6 +6293,57 @@ def current_gate() -> str:
     return st.session_state.get("gate", "landing")
 
 
+OWNER_NAME = "Hassan Aldajah"
+OWNER_LINKS = (
+    ("GitHub", "https://github.com/hassanaldajah",
+     "M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113"
+     ".82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042"
+     "-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 "
+     "1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998."
+     "108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31."
+     "465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 "
+     "1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 "
+     "3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 "
+     "1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 "
+     "1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 "
+     "17.592 24 12.297c0-6.627-5.373-12-12-12"),
+    ("LinkedIn", "https://www.linkedin.com/in/hassan-aldajah04",
+     "M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-"
+     "2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-"
+     "1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-"
+     "1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 "
+     "2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H"
+     "3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 "
+     "23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 "
+     ".774 23.2 0 22.222 0h.003z"),
+    ("Email", "mailto:hassanaldajah2004@gmail.com",
+     "M2 5.5A2.5 2.5 0 0 1 4.5 3h15A2.5 2.5 0 0 1 22 5.5v13a2.5 2.5 0 0 1-"
+     "2.5 2.5h-15A2.5 2.5 0 0 1 2 18.5v-13zm2.2.3L12 11.9l7.8-6.1H4.2zM20 "
+     "7.9l-7.4 5.8a1 1 0 0 1-1.2 0L4 7.9v10.6c0 .3.2.5.5.5h15c.3 0 .5-.2."
+     "5-.5V7.9z"),
+)
+
+
+def render_footer() -> None:
+    """Copyright line and the owner's contact links."""
+    icons = "".join(
+        f'<a href="{html.escape(url, quote=True)}" target="_blank" '
+        f'rel="noopener noreferrer" aria-label="{html.escape(label)}" '
+        f'title="{html.escape(label)}"><svg viewBox="0 0 24 24" '
+        f'aria-hidden="true"><path d="{path}"/></svg></a>'
+        for label, url, path in OWNER_LINKS
+    )
+    st.markdown(
+        '<div class="lp-footer">'
+        f'<div class="lp-social">{icons}</div>'
+        f'<div>&copy; 2026 {html.escape(OWNER_NAME)}. All rights reserved.</div>'
+        '<div class="lp-footer-sub">Questions or feedback? '
+        '<a href="mailto:hassanaldajah2004@gmail.com">'
+        'hassanaldajah2004@gmail.com</a></div></div>',
+        unsafe_allow_html=True,
+    )
+
+
 def render_landing() -> None:
     """First page a visitor of the public site sees."""
     cards = "".join(
@@ -6298,6 +6371,7 @@ def render_landing() -> None:
     if accounts_enabled():
         st.markdown(f'<p class="lp-note">{html.escape(PRIVACY_NOTE)}</p>',
                     unsafe_allow_html=True)
+    render_footer()
 
 
 def render_login_page() -> None:
@@ -6323,6 +6397,7 @@ def render_login_page() -> None:
                   icon=":material/arrow_back:")
     st.markdown(f'<p class="lp-note">{html.escape(PRIVACY_NOTE)}</p>',
                 unsafe_allow_html=True)
+    render_footer()
 
 
 def _as_utc(value):
