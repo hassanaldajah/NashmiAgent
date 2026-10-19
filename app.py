@@ -2439,6 +2439,11 @@ def _sanitize_store(data) -> dict:
             store["prefs"]["detail"] = prefs["detail"]
         if prefs.get("language") in LANGUAGE_CHOICES:
             store["prefs"]["language"] = prefs["language"]
+        pinned = prefs.get("pinned")
+        if isinstance(pinned, list):
+            store["prefs"]["pinned"] = [
+                str(i)[:64] for i in pinned if isinstance(i, str) and i
+            ][:MAX_PINNED]
     projects = data.get("projects")
     seen: set[str] = set()
     for item in projects if isinstance(projects, list) else []:
@@ -2590,6 +2595,46 @@ def on_new_chat() -> None:
         chats[0]["project"] = project
     st.session_state[radio_key(mode)] = 0
     st.session_state[search_key(mode)] = ""
+    persist(st.session_state.saved_history)
+
+
+MAX_PINNED = 50
+
+
+def pinned_ids() -> list[str]:
+    return get_store()["prefs"].setdefault("pinned", [])
+
+
+def on_toggle_pin(chat_id: str) -> None:
+    pins = pinned_ids()
+    if chat_id in pins:
+        pins.remove(chat_id)
+    else:
+        pins.insert(0, chat_id)
+        del pins[MAX_PINNED:]
+    persist_store()
+
+
+def on_select_chat(mode: str, index: int) -> None:
+    st.session_state[radio_key(mode)] = index
+    close_account()
+
+
+def on_delete_chat_at(mode: str, chat_id: str) -> None:
+    chats = ensure_history(mode)
+    index = next((i for i, c in enumerate(chats) if c.get("id") == chat_id), None)
+    if index is None:
+        return
+    active = active_index(mode, len(chats))
+    chats.pop(index)
+    if chat_id in pinned_ids():
+        pinned_ids().remove(chat_id)
+        persist_store()
+    if not chats:
+        chats.append(new_chat_record())
+    # keep the same chat open when another one is deleted
+    st.session_state[radio_key(mode)] = (
+        0 if index == active else (active - 1 if index < active else active))
     persist(st.session_state.saved_history)
 
 
@@ -3554,6 +3599,38 @@ pre, [data-testid="stCode"] {
 [data-testid="stSidebar"] .side-label,
 [data-testid="stSidebar"] .box-label,
 [data-testid="stSidebar"] label p { font-size: 0.64rem !important; letter-spacing: 1.5px; }
+
+/* ---- Chat list: one row per chat with its own ... menu ---- */
+.st-key-chat_list { max-height: 36vh; overflow-y: auto; gap: 0.15rem !important; padding-right: 2px; }
+[class*="st-key-chatrow_"] [data-testid="stHorizontalBlock"] { flex-wrap: nowrap; gap: 0.2rem; align-items: center; }
+[class*="st-key-chatrow_"] [data-testid="stColumn"]:first-child { flex: 1 1 auto !important; min-width: 0 !important; width: auto !important; }
+[class*="st-key-chatrow_"] [data-testid="stColumn"]:last-child { flex: 0 0 34px !important; width: 34px !important; min-width: 34px !important; }
+[class*="st-key-chatrow_"] [data-testid="stColumn"]:first-child button {
+    justify-content: flex-start; text-align: left; padding: 6px 12px; min-height: 34px;
+    border-radius: 999px !important; color: var(--text);
+}
+[class*="st-key-chatrow_"] [data-testid="stColumn"]:first-child button > div,
+[class*="st-key-chatrow_"] [data-testid="stColumn"]:first-child button > div > div {
+    justify-content: flex-start !important; width: 100%; min-width: 0;
+}
+[class*="st-key-chatrow_"] [data-testid="stColumn"]:first-child button [data-testid="stMarkdownContainer"] {
+    text-align: start; min-width: 0; overflow: hidden;
+}
+[class*="st-key-chatrow_"] [data-testid="stPopoverButton"]:focus { box-shadow: none !important; }
+[class*="st-key-chatrow_"] [data-testid="stColumn"]:first-child button p {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+[class*="st-key-chatrow_on_"] [data-testid="stColumn"]:first-child button {
+    background: linear-gradient(90deg, rgba(255, 51, 68, 0.22), rgba(255, 51, 68, 0.06)) !important;
+    color: var(--white) !important; box-shadow: inset 3px 0 0 #ff3344 !important;
+}
+[class*="st-key-chatrow_"] [data-testid="stPopoverButton"] {
+    width: 30px; min-height: 30px; padding: 0; border: 0 !important; border-radius: 999px !important;
+    background: transparent !important; color: var(--muted); opacity: 0.55;
+}
+[class*="st-key-chatrow_"]:hover [data-testid="stPopoverButton"],
+[class*="st-key-chatrow_on_"] [data-testid="stPopoverButton"] { opacity: 1; }
+[class*="st-key-chatrow_"] [data-testid="stPopoverButton"] > div > div[aria-hidden="true"] { display: none; }
 
 /* ---- Scrollbar (desktop) ---- */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -5085,19 +5162,11 @@ def render_chat_sidebar(box, mode: str, chats: list[dict]) -> int:
         if project:
             found = [(i, h) for i, h in found
                      if chats[i].get("project") == project]
-        with st.container(key="chat_head"):
-            title, more = st.columns([4, 1])
-            title.markdown(
-                f'<div class="side-label">'
-                f'{tt("Results", "النتائج") if query.strip() else tt("Recent", "الأخيرة")}</div>',
-                unsafe_allow_html=True,
-            )
-            with more:
-                with st.popover(" ", icon=":material/more_horiz:"):
-                    st.button(
-                        tt("Delete this chat", "حذف هذه المحادثة"), key=f"delete_chat_{mode}",
-                        icon=":material/delete:", on_click=on_delete_chat,
-                    )
+        st.markdown(
+            f'<div class="side-label">'
+            f'{tt("Results", "النتائج") if query.strip() else tt("Recent", "الأخيرة")}</div>',
+            unsafe_allow_html=True,
+        )
         if not found:
             st.caption(tt("No chats match your search.", "لا توجد محادثات مطابقة لبحثك."))
             return active_index(mode, len(chats))
@@ -5106,17 +5175,43 @@ def render_chat_sidebar(box, mode: str, chats: list[dict]) -> int:
         hits = dict(found)
         if st.session_state.get(key) not in indices:
             st.session_state[key] = indices[0]
+        index = st.session_state[key]
+        pins = pinned_ids()
+        for chat in chats:
+            chat.setdefault("id", uuid.uuid4().hex)
+        # pinned chats first, the rest in their usual order
+        ordered = ([i for i in indices if chats[i]["id"] in pins]
+                   + [i for i in indices if chats[i]["id"] not in pins])
 
-        def chat_label(i: int) -> str:
-            label = md_escape(chats[i]["title"])
-            if query.strip() and hits[i]:
-                label += f"  ({hits[i]})"
-            return label
-
-        index = st.radio(
-            "Chats", indices, key=key, format_func=chat_label,
-            label_visibility="collapsed",
-        )
+        with st.container(key="chat_list"):
+            for i in ordered:
+                chat = chats[i]
+                cid = chat["id"]
+                pinned = cid in pins
+                label = md_escape(chat["title"] or NEW_CHAT_TITLE)
+                if query.strip() and hits[i]:
+                    label += f"  ({hits[i]})"
+                row_key = f"chatrow_{'on' if i == index else 'off'}_{cid[:12]}"
+                with st.container(key=row_key):
+                    name_col, menu_col = st.columns([6, 1], vertical_alignment="center",
+                                                    gap="small")
+                    name_col.button(
+                        label, key=f"open_chat_{cid}", width="stretch",
+                        icon=":material/push_pin:" if pinned else None,
+                        on_click=on_select_chat, args=(mode, i), type="tertiary",
+                    )
+                    with menu_col.popover(" ", icon=":material/more_horiz:"):
+                        st.button(
+                            tt("Unpin", "إلغاء التثبيت") if pinned else tt("Pin", "تثبيت"),
+                            key=f"pin_chat_{cid}", width="stretch",
+                            icon=":material/push_pin:",
+                            on_click=on_toggle_pin, args=(cid,),
+                        )
+                        st.button(
+                            tt("Delete", "حذف"), key=f"del_chat_{cid}", width="stretch",
+                            icon=":material/delete:",
+                            on_click=on_delete_chat_at, args=(mode, cid),
+                        )
         snippets = message_snippets(chats[index], query)
         if snippets:
             with st.expander(tt(f"Matches in this chat ({len(snippets)})",
