@@ -3714,9 +3714,10 @@ HERO_TEMPLATE = """<!DOCTYPE html>
     const reduceMotion =
         window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-    // Eye rectangles measured on the original picture (x, y, w, h)
+    // Eye rectangles measured on the original picture (x, y, w, h).
+    // The left eye is covered by the pirate patch that is part of the picture,
+    // so only the right eye is drawn and moves.
     const EYES = [
-        {x: 169, y: 91, w: 10, h: 27},
         {x: 227, y: 91, w: 10, h: 27}
     ];
     const STEP = 3, MAX_DX = 14, UP = 3, DOWN = 6;
@@ -6903,12 +6904,12 @@ __CAT_JS__
         cctx.drawImage(img, 0, 0);
         var blink = (t % 3.8) > 3.66;
         cctx.fillStyle = '#ffffff';
-        cctx.fillRect(167, 88, 14, 32); cctx.fillRect(225, 88, 14, 32);
+        cctx.fillRect(225, 88, 14, 32);   // right eye only: the left one is under the pirate patch
         cctx.fillRect(196, 125, 14, 15);
         var ex = Math.round(lx * 11), ey = Math.round(ly * 7);
         cctx.fillStyle = '#0a0a0a';
         var h = blink ? 3 : 27, y = blink ? 102 : 91;
-        cctx.fillRect(169 + ex, y + ey, 10, h); cctx.fillRect(227 + ex, y + ey, 10, h);
+        cctx.fillRect(227 + ex, y + ey, 10, h);
         cctx.drawImage(img, 198, 127, 10, 11,
                        198 + Math.round(ex * 0.5), 127 + Math.round(ey * 0.5), 10, 11);
     }
