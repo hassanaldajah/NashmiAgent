@@ -7838,8 +7838,17 @@ __LOOK_JS__
         var d = 'M ' + nx[0] + ',' + ny[0];
         for (var i = 1; i < nx.length; i++) {
             var st = Math.round((ny[i] - ny[i - 1]) * 0.3 / 4) * 4;
-            d += ' L ' + nx[i - 1] + ',' + (ny[i - 1] + st) +
-                 ' L ' + nx[i] + ',' + (ny[i] - st) + ' L ' + nx[i] + ',' + ny[i];
+            if (W < 700) {
+                // a phone's line is one straight column, so the fox would only ever walk towards you:
+                // between two cards it steps out to the right and back to the left, almost level
+                var gap = ny[i] - ny[i - 1], J = 28, jy = 14, x0 = nx[i - 1], x1 = nx[i];
+                var a = ny[i - 1] + gap * 0.22, b = ny[i - 1] + gap * 0.52;
+                d += ' L ' + x0 + ',' + a + ' L ' + (x0 + J) + ',' + (a + jy) +
+                     ' L ' + (x0 + J) + ',' + b + ' L ' + x1 + ',' + (b + jy) + ' L ' + x1 + ',' + ny[i];
+            } else {
+                d += ' L ' + nx[i - 1] + ',' + (ny[i - 1] + st) +
+                     ' L ' + nx[i] + ',' + (ny[i] - st) + ' L ' + nx[i] + ',' + ny[i];
+            }
         }
         pathBg.setAttribute('d', d); pathFill.setAttribute('d', d);
         pathLen = pathBg.getTotalLength();
@@ -7945,7 +7954,7 @@ __LOOK_JS__
         }
         // a new facing has to hold for a moment before it is shown, so it does not flicker at the corners
         if (view !== wantView) { wantView = view; wantSince = now; }
-        if (view !== curView && now - wantSince < 260) { view = curView; }
+        if (view !== curView && now - wantSince < 110) { view = curView; }
         // the stride is as long as the figure on show is wide: a longer body takes a longer, slower step
         ph = gait / (W * (view === 'side' ? 1.7 : view === 'back' ? 1.2 : 0.95)) * 6.2832;
         s1 = Math.sin(ph);
