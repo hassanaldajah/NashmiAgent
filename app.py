@@ -45,6 +45,8 @@ from typing import Iterator
 
 import requests
 import streamlit as st
+
+import fox_sprite
 import streamlit.components.v1 as components
 from google import genai
 from google.genai import errors as genai_errors
@@ -2764,10 +2766,8 @@ def on_wipe_all() -> None:
 # ---------------------------------------------------------------------------
 @st.cache_resource
 def get_assistant_avatar() -> Image.Image:
-    """Head of the cat, cropped from the embedded picture."""
-    cat = Image.open(io.BytesIO(base64.b64decode(CAT_B64))).convert("RGB")
-    head = cat.crop((95, 28, 321, 254))
-    return head.resize((120, 120), Image.Resampling.LANCZOS)
+    """Head of the fox (fox_sprite.py), for the chat avatar."""
+    return fox_sprite.head_image(120)
 
 
 @st.cache_resource
@@ -3657,15 +3657,14 @@ HERO_TEMPLATE = """<!DOCTYPE html>
             #0f1724 55%, #070b12 100%);
     }
     #bg { position: absolute; inset: 0; width: 100%; height: 100%; }
-    #cat {
+    #fox {
         position: absolute; left: 50%; top: 41%;
-        width: min(328px, 96%); height: auto;
-        image-rendering: pixelated; image-rendering: crisp-edges;
+        width: min(220px, 62%); height: auto;
+        image-rendering: pixelated;
         transform: translate(-50%, -50%); will-change: transform;
-        -webkit-mask-image: radial-gradient(ellipse at center, #000 52%,
-            transparent 78%);
-        mask-image: radial-gradient(ellipse at center, #000 52%,
-            transparent 78%);
+        /* a hair-thin light rim and a soft red glow keep the white fox readable on the dark */
+        filter: drop-shadow(0 0 0.6px rgba(225, 225, 225, 0.95))
+                drop-shadow(0 0 14px rgba(229, 56, 59, 0.55));
     }
     .overlay {
         position: absolute; left: 50%; bottom: 10px;
@@ -3698,7 +3697,7 @@ HERO_TEMPLATE = """<!DOCTYPE html>
 <body>
 <div id="stage">
     <canvas id="bg"></canvas>
-    <canvas id="cat" width="416" height="292"></canvas>
+    __FOX_SVG__
     <div class="overlay">
         <h1 class="title">__HERO_TITLE__<span class="caret"></span></h1>
         <p class="subtitle">__HERO_SUB__</p>
@@ -3708,24 +3707,14 @@ HERO_TEMPLATE = """<!DOCTYPE html>
 (() => {
     'use strict';
     const stage = document.getElementById('stage');
-    const cat = document.getElementById('cat');
-    const ctx = cat.getContext('2d');
-    ctx.imageSmoothingEnabled = false;
+    const fox = document.getElementById('fox');
     const reduceMotion =
         window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-    // Eye rectangles measured on the original picture (x, y, w, h).
-    // The left eye is covered by the pirate patch that is part of the picture,
-    // so only the right eye is drawn and moves.
-    const EYES = [
-        {x: 227, y: 91, w: 10, h: 27}
-    ];
-    const STEP = 3, MAX_DX = 14, UP = 3, DOWN = 6;
-    const img = new Image();
-    img.src = 'data:image/png;base64,__CAT_B64__';
+    const eyes = fox.querySelector('.fox-eyes');
+    const eyesOpen = fox.querySelector('.fox-open'), eyesShut = fox.querySelector('.fox-shut');
 
     // ---- pointer tracking (mouse, pen and touch; also outside the banner)
-    let pointer = null;
+    let pointer = null, lastMove = -1e9;
     const frameBox = () => {
         try { return window.frameElement.getBoundingClientRect(); }
         catch (_) { return {left: 0, top: 0}; }
@@ -3734,6 +3723,7 @@ HERO_TEMPLATE = """<!DOCTYPE html>
         const set = (x, y) => {
             const o = insideFrame ? frameBox() : {left: 0, top: 0};
             pointer = {x: x + o.left, y: y + o.top};
+            lastMove = performance.now();
         };
         target.addEventListener('pointermove',
             (e) => set(e.clientX, e.clientY), {passive: true});
@@ -3750,36 +3740,31 @@ HERO_TEMPLATE = """<!DOCTYPE html>
         bind(window.parent.document, false);
     } catch (_) { /* cross-origin */ }
 
-    // ---- eyes
+    // ---- eyes: the eye layer moves at most 2 fox pixels (1 up or down) towards the pointer,
+    // snapped to the pixel grid; after 3 s without movement it drifts back to the middle.
     let ex = 0, ey = 0, blinkUntil = 0;
-    let nextBlink = performance.now() + 2500;
-    const clamp = (v) => Math.max(-1, Math.min(1, v));
-
-    function drawCat(t) {
-        ctx.drawImage(img, 0, 0);
+    let nextBlink = performance.now() + 3000;
+    function drawEyes(t) {
         let tx = 0, ty = 0;
-        if (pointer) {
+        if (pointer && t - lastMove < 3000) {
             const fb = frameBox();
-            const r = cat.getBoundingClientRect();
-            tx = clamp((pointer.x - fb.left - (r.left + r.width / 2)) / 320);
-            ty = clamp((pointer.y - fb.top - (r.top + r.height * 0.38)) / 220);
+            const r = fox.getBoundingClientRect();
+            const vx = pointer.x - fb.left - (r.left + r.width * 0.42);
+            const vy = pointer.y - fb.top - (r.top + r.height * 0.34);
+            const len = Math.hypot(vx, vy) || 1, k = Math.min(1, len / 160);
+            tx = vx / len * k * 2;
+            ty = vy / len * k;
         }
-        ex += (tx * MAX_DX - ex) * 0.18;
-        ey += ((ty < 0 ? ty * UP : ty * DOWN) - ey) * 0.18;
-        const ox = Math.round(ex / STEP) * STEP;
-        const oy = Math.round(ey / STEP) * STEP;
+        ex += (tx - ex) * 0.18;
+        ey += (ty - ey) * 0.18;
+        eyes.setAttribute('transform', 'translate(' + Math.round(ex) + ' ' + Math.round(ey) + ')');
         if (t > nextBlink) {
-            blinkUntil = t + 130;
-            nextBlink = t + 2500 + Math.random() * 3500;
+            blinkUntil = t + 120;
+            nextBlink = t + 3000 + Math.random() * 3000;
         }
-        const blinking = t < blinkUntil;
-        for (const e of EYES) {
-            ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(e.x - 3, e.y - 1, e.w + 6, e.h + 2);
-            ctx.fillStyle = '#000000';
-            if (blinking) ctx.fillRect(e.x + ox, e.y + oy + e.h - 5, e.w, 4);
-            else ctx.fillRect(e.x + ox, e.y + oy, e.w, e.h);
-        }
+        const shut = t < blinkUntil;
+        eyesOpen.style.display = shut ? 'none' : '';
+        eyesShut.style.display = shut ? '' : 'none';
     }
 
     // ---- falling pixel bricks (fewer on small screens)
@@ -3824,9 +3809,9 @@ HERO_TEMPLATE = """<!DOCTYPE html>
             bctx.fillRect(Math.round(k.x), Math.round(k.y), k.s, k.s);
         }
         bctx.globalAlpha = 1;
-        if (img.complete) drawCat(t);
+        drawEyes(t);
         const bob = reduceMotion ? 0 : Math.sin(t * 0.003) * 4;
-        cat.style.transform = 'translate(-50%, calc(-50% + ' + bob + 'px))';
+        fox.style.transform = 'translate(-50%, calc(-50% + ' + bob + 'px))';
     }
     requestAnimationFrame(loop);
 })();
@@ -3846,7 +3831,7 @@ def embed_html(markup: str, height: int) -> None:
     """Render an HTML page in an iframe.
 
     Newer Streamlit versions deprecate ``components.html`` in favour of
-    ``st.iframe``; both keep same-origin access, which the cat needs to
+    ``st.iframe``; both keep same-origin access, which the fox needs to
     follow the pointer outside the banner.
     """
     if hasattr(st, "iframe"):
@@ -3856,12 +3841,13 @@ def embed_html(markup: str, height: int) -> None:
 
 
 def render_hero() -> None:
-    """Show the animated banner with the eye-tracking cat."""
-    embed_html(HERO_TEMPLATE.replace("__CAT_B64__", CAT_B64)
+    """Show the animated banner with the eye-tracking fox."""
+    embed_html(HERO_TEMPLATE.replace("__FOX_SVG__", fox_sprite.sit_svg("fox-hero").replace(
+                   '<svg class="fox-hero"', '<svg id="fox" class="fox-hero"', 1))
                .replace("__HERO_TITLE__", tt("NASHMI AGENT", "نشمي"))
                .replace("__HERO_SUB__", tt(
-                   "Your friendly SOC and security coding buddy. The cat is watching your pointer.",
-                   "رفيقك في الـ SOC وبرمجة الأمن. القطة بتتابع مؤشرك.")),
+                   "Your friendly SOC and security coding buddy. The fox is watching your pointer.",
+                   "رفيقك في الـ SOC وبرمجة الأمن. الثعلب بيتابع مؤشرك.")),
                HERO_HEIGHT)
 
 
@@ -4457,12 +4443,8 @@ class Settings:
 
 @st.cache_resource
 def avatar_data_uri() -> str:
-    """Small cat head as a data URI for the sidebar logo."""
-    buf = io.BytesIO()
-    get_assistant_avatar().resize((64, 64), Image.Resampling.LANCZOS).save(
-        buf, "PNG"
-    )
-    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+    """Fox head as an SVG data URI for the round navbar logo."""
+    return fox_sprite.head_svg_uri()
 
 
 def md_escape(text: str) -> str:
@@ -6468,10 +6450,10 @@ def render_exam_track(settings: Settings) -> None:
 # ---------------------------------------------------------------------------
 # Landing page, sign-in page and admin screen
 # ---------------------------------------------------------------------------
-# Shared by the landing banner and the scroll story. makeLook gives a cat eyes
+# Shared by the landing banner and the scroll story. makeLook gives the fox eyes
 # that follow the pointer (also the pointer over the rest of the page) and
 # glance around by themselves when nobody is moving one.
-CAT_JS = """function sizeFrame(h) {
+FOX_JS = """function sizeFrame(h) {
     // Streamlit keeps its own height on the wrapper around this frame, so the wrapper
     // is sized here too, and again after every re-render
     var fe = null;
@@ -6517,7 +6499,7 @@ function trackPointer(cb) {
 }
 
 function makeLook(el, getCenter) {
-    var L = { x: 0, y: 0 }, tgt = { x: 0, y: 0 }, last = -1e9, nextWander = 0;
+    var L = { x: 0, y: 0 }, tgt = { x: 0, y: 0 }, last = -1e9;
     trackPointer(function (px, py) {
         var c = getCenter();
         var rx = Math.max(140, el.clientWidth / 2);
@@ -6527,70 +6509,85 @@ function makeLook(el, getCenter) {
         last = performance.now();
     });
     L.update = function (now) {
-        if (now - last > 2600 && now > nextWander) {
-            tgt.x = (Math.random() * 2 - 1) * 0.9;
-            tgt.y = (Math.random() * 2 - 1) * 0.5;
-            nextWander = now + 1300 + Math.random() * 1700;
+        if (now - last > 3000) {               // idle: look back to the middle
+            tgt.x = 0;
+            tgt.y = 0;
         }
         L.x += (tgt.x - L.x) * 0.16;
         L.y += (tgt.y - L.y) * 0.16;
     };
     return L;
 }
+
+// The eye layer of a fox SVG (fox_sprite.sit_svg): moves at most 2 fox pixels sideways and
+// 1 up or down, snapped to whole pixels, and blinks for 120 ms every 3 to 6 seconds.
+function foxEyes(svg) {
+    var eyes = svg.querySelector('.fox-eyes'), op = svg.querySelector('.fox-open'),
+        sh = svg.querySelector('.fox-shut'), nextBlink = performance.now() + 3000, until = 0;
+    return function (now, lx, ly) {
+        var dx = Math.max(-2, Math.min(2, Math.round(lx * 2))),
+            dy = Math.max(-1, Math.min(1, Math.round(ly)));
+        eyes.setAttribute('transform', 'translate(' + dx + ' ' + dy + ')');
+        if (now > nextBlink) { until = now + 120; nextBlink = now + 3000 + Math.random() * 3000; }
+        var shut = now < until;
+        op.style.display = shut ? 'none' : '';
+        sh.style.display = shut ? '' : 'none';
+    };
+}
 """
 
-# The cat on the line in the story. It has no shemagh. Like a desktop-pet cat it
-# runs along the line in the direction it travels (front, back or side view),
-# and when it stops it sits, scratches, gets tired and finally falls asleep.
-WALKER_JS = """var WW = 40, WHT = 46;
-var K = '#0b0b10', WH = '#ffffff', GR = '#d3d8e3', RD = '#E5383B', PK = '#f4a3a8';
+# The little fox on the line in the story. Like a desktop pet it runs along the
+# line in the direction it travels (front, back or side view), and when it stops it
+# sits, scratches, gets tired and finally falls asleep. Tall ears, a black nose and a
+# bushy tail with a black tip make it a fox.
+FOX_WALKER_JS = """var WW = 40, WHT = 46;
+var K = '#0b0b10', WH = '#ffffff', GR = '#d3d8e3', RD = '#E5383B', TIP = '#111111';
 
-function catPx(ctx) {
+function foxPx(ctx) {
     return function (x, y, w, h, c) { ctx.fillStyle = c; ctx.fillRect(Math.round(x), Math.round(y), w, h); };
 }
 
-function catHead(px, B, mode, blink, ox, oy, nx, ny) {
+function foxHead(px, B, mode, blink, ox, oy, nx, ny) {
     var y, x0, x1;
     function pb(x, y2, w, h, c) { px(x, y2 + B, w, h, c); }
     for (y = 12; y <= 27; y++) {
-        var ins = (y <= 13 || y >= 26) ? 2 : (y === 14 || y === 25 ? 1 : 0);
+        var ins = y <= 13 ? 2 : (y === 14 ? 1 : (y >= 23 ? (y - 22) * 2 : 0));
         x0 = 7 + ins; x1 = 32 - ins;
         pb(x0 - 1, y, 1, 1, K); pb(x1 + 1, y, 1, 1, K);
         pb(x0, y, x1 - x0 + 1, 1, WH);
     }
-    pb(9, 11, 22, 1, K); pb(9, 28, 22, 1, K);
-    var ew = [1, 2, 4, 5, 7], up = mode === 'alert' ? 1 : 0;
-    for (y = 6; y <= 10; y++) {
-        var w = ew[y - 6], e0 = 11 - Math.floor(w / 2), f0 = 28 - Math.floor(w / 2);
-        pb(e0 - 1, y - up, 1, 1, K); pb(e0, y - up, w, 1, WH); pb(e0 + w, y - up, 1, 1, K);
-        pb(f0 - 1, y - up, 1, 1, K); pb(f0, y - up, w, 1, WH); pb(f0 + w, y - up, 1, 1, K);
+    pb(9, 11, 22, 1, K); pb(17, 28, 6, 1, K);
+    var ew = [1, 1, 2, 3, 3, 4, 5, 6, 7], up = mode === 'alert' ? 1 : 0;   // tall pointed ears
+    for (y = 2; y <= 10; y++) {
+        var w = ew[y - 2], e0 = 11 - Math.floor(w / 2), f0 = 28 - Math.floor(w / 2);
+        var ec = y <= 4 ? TIP : WH;                    // black ear tips
+        pb(e0 - 1, y - up, 1, 1, K); pb(e0, y - up, w, 1, ec); pb(e0 + w, y - up, 1, 1, K);
+        pb(f0 - 1, y - up, 1, 1, K); pb(f0, y - up, w, 1, ec); pb(f0 + w, y - up, 1, 1, K);
     }
-    pb(11, 5 - up, 1, 1, K); pb(28, 5 - up, 1, 1, K);
-    pb(11, 8 - up, 1, 2, PK); pb(28, 8 - up, 1, 2, PK);
+    pb(11, 1 - up, 1, 1, K); pb(28, 1 - up, 1, 1, K);
+    pb(11, 6 - up, 1, 4, GR); pb(28, 6 - up, 1, 4, GR);
     var eh = blink ? 1 : 5, ey = blink ? 18 : 16;
     if (mode === 'alert') { eh = 6; ey = 15; }
     if (mode === 'tired') { eh = 2; ey = 19; }
     pb(13 + ox, ey + oy, 2, eh, K); pb(25 + ox, ey + oy, 2, eh, K);
-    pb(19 + nx, 22 + ny, 2, 1, RD);
-    if (mode === 'tired') { pb(19 + nx, 24 + ny, 2, 2, K); }
-    else { pb(18 + nx, 24 + ny, 1, 1, K); pb(19 + nx, 25 + ny, 2, 1, K); pb(21 + nx, 24 + ny, 1, 1, K); }
-    pb(3 + nx, 22, 4, 1, GR); pb(4 + nx, 24, 3, 1, GR);
-    pb(33 + nx, 22, 4, 1, GR); pb(33 + nx, 24, 3, 1, GR);
+    pb(19 + nx, 22 + ny, 2, 2, K);                     // black nose
+    if (mode === 'tired') { pb(19 + nx, 25 + ny, 2, 1, K); }
+    else { pb(18 + nx, 25 + ny, 1, 1, K); pb(21 + nx, 25 + ny, 1, 1, K); }
 }
 
-function drawCatSit(ctx, t, lx, ly, mode) {
-    var px = catPx(ctx), k, y;
+function drawFoxSit(ctx, t, lx, ly, mode) {
+    var px = foxPx(ctx), k, y;
     ctx.clearRect(0, 0, WW, WHT);
     var B = (mode === 'tired') ? 1 : (Math.sin(t * 1.6) > 0.75 ? 1 : 0);
     function pb(x, y2, w, h, c) { px(x, y2 + B, w, h, c); }
     var blink = (t % 3.6) > 3.45;
     for (k = 0; k < 11; k++) {
         var u = k / 10, wg = Math.sin(t * 3.2 + k * 0.5) * u * 2.2;
-        px(28 + 8 * Math.sin(u * 2.0) + wg - 1, 43 - 15 * u + B - 1, 4, 4, K);
+        px(28 + 8 * Math.sin(u * 2.0) + wg - 2, 43 - 15 * u + B - 2, 6, 6, K);
     }
     for (k = 0; k < 11; k++) {
         var v = k / 10, wg2 = Math.sin(t * 3.2 + k * 0.5) * v * 2.2;
-        px(28 + 8 * Math.sin(v * 2.0) + wg2, 43 - 15 * v + B, 2, 2, WH);
+        px(28 + 8 * Math.sin(v * 2.0) + wg2 - 1, 43 - 15 * v + B - 1, 4, 4, k >= 8 ? TIP : WH);
     }
     for (y = 29; y <= 43; y++) {
         var hw = y < 32 ? 6 : (y < 37 ? 7 : 9);
@@ -6598,6 +6595,7 @@ function drawCatSit(ctx, t, lx, ly, mode) {
         pb(20 - hw, y, hw * 2, 1, WH);
     }
     pb(10, 44, 20, 1, K);
+    pb(12, 24, 16, 5, WH); pb(11, 24, 1, 5, K); pb(28, 24, 1, 5, K);
     pb(16, 34, 8, 6, GR);
     pb(13, 40, 5, 4, WH);
     pb(12, 40, 1, 5, K); pb(18, 40, 1, 5, K); pb(15, 42, 1, 2, K);
@@ -6610,14 +6608,14 @@ function drawCatSit(ctx, t, lx, ly, mode) {
         pb(22, 40, 5, 4, WH);
         pb(21, 40, 1, 5, K); pb(27, 40, 1, 5, K); pb(24, 42, 1, 2, K);
     }
-    pb(13, 28, 14, 2, RD); pb(13, 28, 1, 2, K); pb(26, 28, 1, 2, K);
-    catHead(px, B, mode, blink, Math.round((lx || 0) * 2), Math.round((ly || 0) * 1.5),
+    pb(14, 29, 12, 1, GR);
+    foxHead(px, B, mode, blink, Math.round((lx || 0) * 2), Math.round((ly || 0) * 1.5),
             Math.round(lx || 0), Math.round(ly || 0));
     if (mode === 'alert') { px(33, 1, 2, 6, RD); px(33, 8, 2, 2, RD); }
 }
 
-function drawCatSleep(ctx, t) {
-    var px = catPx(ctx), y, x;
+function drawFoxSleep(ctx, t) {
+    var px = foxPx(ctx), y, x;
     ctx.clearRect(0, 0, WW, WHT);
     var br = Math.sin(t * 2) > 0.5 ? 1 : 0;
     for (y = 26; y <= 41 + br; y++) {                  // curled body
@@ -6629,7 +6627,7 @@ function drawCatSleep(ctx, t) {
     for (y = 26; y <= 41; y++) {                       // the tail wraps round the front
         px(24, y, 0, 0, K);
     }
-    px(20, 39, 12, 3, K); px(21, 40, 10, 2, WH); px(31, 37, 2, 4, K); px(30, 38, 2, 3, WH);
+    px(20, 39, 12, 3, K); px(21, 40, 7, 2, WH); px(28, 40, 3, 2, TIP); px(31, 37, 2, 4, K); px(30, 38, 2, 3, TIP);
     for (y = 26; y <= 40; y++) {                       // tucked head
         for (x = 5; x <= 21; x++) {
             var d = (x - 13) * (x - 13) + (y - 33) * (y - 33);
@@ -6639,7 +6637,7 @@ function drawCatSleep(ctx, t) {
     }
     px(8, 24, 4, 3, K); px(9, 25, 2, 2, WH); px(16, 24, 4, 3, K); px(17, 25, 2, 2, WH);
     px(9, 33, 3, 1, K); px(15, 33, 3, 1, K);           // closed eyes
-    px(13, 36, 2, 1, RD);                              // nose
+    px(13, 36, 2, 1, K);                               // nose
     var z = (t * 0.9) % 1;                             // floating Z letters
     function zed(zx, zy, a) {
         ctx.globalAlpha = a; px(zx, zy, 5, 1, WH); px(zx + 3, zy + 1, 1, 1, WH);
@@ -6650,17 +6648,17 @@ function drawCatSleep(ctx, t) {
     zed(32, 10 - Math.round(z * 6), Math.max(0, 0.8 - z));
 }
 
-function drawCatRunSide(ctx, t, gait) {
-    var px = catPx(ctx), y, k;
+function drawFoxRunSide(ctx, t, gait) {
+    var px = foxPx(ctx), y, k;
     ctx.clearRect(0, 0, WW, WHT);
     var g = Math.sin(gait * Math.PI), bob = Math.abs(g) > 0.6 ? 1 : 0;
     for (k = 0; k < 10; k++) {
         var u = k / 9, wv = Math.sin(t * 9 + k * 0.7) * u * 2;
-        px(8 - 7 * u - 1, 21 - 9 * u * u + wv - 1 + bob, 4, 4, K);
+        px(8 - 7 * u - 2, 21 - 9 * u * u + wv - 2 + bob, 6, 6, K);
     }
     for (k = 0; k < 10; k++) {
         var v = k / 9, wv2 = Math.sin(t * 9 + k * 0.7) * v * 2;
-        px(8 - 7 * v, 21 - 9 * v * v + wv2 + bob, 2, 2, WH);
+        px(8 - 7 * v - 1, 21 - 9 * v * v + wv2 - 1 + bob, 4, 4, k >= 7 ? TIP : WH);
     }
     function leg(x, phase) {
         var sw = Math.round(Math.sin(gait * Math.PI + phase) * 4);
@@ -6683,26 +6681,27 @@ function drawCatRunSide(ctx, t, gait) {
         px(26 + ins, y + bob, 12 - ins * 2, 1, WH);
     }
     px(28, 13 + bob, 8, 1, K); px(28, 27 + bob, 8, 1, K);
-    px(26, 20 + bob, 2, 7, RD);
-    px(28, 10 + bob, 3, 3, WH); px(28, 9 + bob, 3, 1, K); px(27, 10 + bob, 1, 3, K); px(31, 10 + bob, 1, 3, K);
-    px(33, 10 + bob, 3, 3, WH); px(33, 9 + bob, 3, 1, K); px(32, 10 + bob, 1, 3, K); px(36, 10 + bob, 1, 3, K);
-    px(29, 11 + bob, 1, 2, PK); px(34, 11 + bob, 1, 2, PK);
-    px(33, 17 + bob, 2, 4, K); px(37, 21 + bob, 2, 1, RD); px(36, 23 + bob, 2, 1, K);
-    px(38, 19 + bob, 2, 1, GR); px(38, 22 + bob, 2, 1, GR);
+    px(28, 7 + bob, 3, 6, WH); px(28, 6 + bob, 3, 1, K); px(27, 7 + bob, 1, 6, K); px(31, 7 + bob, 1, 6, K);
+    px(29, 5 + bob, 1, 1, K);
+    px(33, 7 + bob, 3, 6, WH); px(33, 6 + bob, 3, 1, K); px(32, 7 + bob, 1, 6, K); px(36, 7 + bob, 1, 6, K);
+    px(34, 5 + bob, 1, 1, K);
+    px(29, 9 + bob, 1, 3, GR); px(34, 9 + bob, 1, 3, GR);
+    px(28, 7 + bob, 3, 2, TIP); px(33, 7 + bob, 3, 2, TIP);
+    px(33, 17 + bob, 2, 4, K); px(37, 20 + bob, 2, 2, K); px(36, 23 + bob, 2, 1, K);
 }
 
-function drawCatRunFront(ctx, t, gait) {
-    var px = catPx(ctx), y, k;
+function drawFoxRunFront(ctx, t, gait) {
+    var px = foxPx(ctx), y, k;
     ctx.clearRect(0, 0, WW, WHT);
     var g = Math.sin(gait * Math.PI), B = Math.abs(g) > 0.6 ? 1 : 0;
     function pb(x, y2, w, h, c) { px(x, y2 + B, w, h, c); }
     for (k = 0; k < 9; k++) {
         var u = k / 8, wv = Math.sin(t * 8 + k * 0.6) * u * 2.5;
-        px(30 + 6 * Math.sin(u * 1.6) + wv - 1, 38 - 17 * u * u + B - 1, 4, 4, K);
+        px(30 + 6 * Math.sin(u * 1.6) + wv - 2, 38 - 17 * u * u + B - 2, 6, 6, K);
     }
     for (k = 0; k < 9; k++) {
         var v = k / 8, wv2 = Math.sin(t * 8 + k * 0.6) * v * 2.5;
-        px(30 + 6 * Math.sin(v * 1.6) + wv2, 38 - 17 * v * v + B, 2, 2, WH);
+        px(30 + 6 * Math.sin(v * 1.6) + wv2 - 1, 38 - 17 * v * v + B - 1, 4, 4, k >= 6 ? TIP : WH);
     }
     function paw(x, ph) {
         var s = Math.sin(gait * Math.PI + ph), len = 6 + Math.round(Math.max(0, s) * 4);
@@ -6713,23 +6712,24 @@ function drawCatRunFront(ctx, t, gait) {
         var hw = y < 31 ? 6 : 7;
         pb(20 - hw - 1, y, 1, 1, K); pb(20 + hw, y, 1, 1, K); pb(20 - hw, y, hw * 2, 1, WH);
     }
+    pb(12, 24, 16, 5, WH); pb(11, 24, 1, 5, K); pb(28, 24, 1, 5, K);
     pb(16, 31, 8, 4, GR);
-    pb(13, 28, 14, 2, RD); pb(13, 28, 1, 2, K); pb(26, 28, 1, 2, K);
-    catHead(px, B, 'run', false, 0, 0, 0, 0);
+    pb(14, 29, 12, 1, GR);
+    foxHead(px, B, 'run', false, 0, 0, 0, 0);
 }
 
-function drawCatRunBack(ctx, t, gait) {
-    var px = catPx(ctx), y, k;
+function drawFoxRunBack(ctx, t, gait) {
+    var px = foxPx(ctx), y, k;
     ctx.clearRect(0, 0, WW, WHT);
     var g = Math.sin(gait * Math.PI), B = Math.abs(g) > 0.6 ? 1 : 0;
     function pb(x, y2, w, h, c) { px(x, y2 + B, w, h, c); }
     for (k = 0; k < 9; k++) {                          // tail, drawn first so the body overlaps it
         var u = k / 8, wv = Math.sin(t * 8 + k * 0.6) * u * 2.5;
-        px(21 + 8 * Math.sin(u * 1.5) + wv - 1, 36 - 16 * u * u + B - 1, 4, 4, K);
+        px(21 + 8 * Math.sin(u * 1.5) + wv - 2, 36 - 16 * u * u + B - 2, 6, 6, K);
     }
     for (k = 0; k < 9; k++) {
         var v = k / 8, wv2 = Math.sin(t * 8 + k * 0.6) * v * 2.5;
-        px(21 + 8 * Math.sin(v * 1.5) + wv2, 36 - 16 * v * v + B, 2, 2, WH);
+        px(21 + 8 * Math.sin(v * 1.5) + wv2 - 1, 36 - 16 * v * v + B - 1, 4, 4, k >= 6 ? TIP : WH);
     }
     function paw(x, ph) {
         var s = Math.sin(gait * Math.PI + ph), len = 5 + Math.round(Math.max(0, s) * 3);
@@ -6747,28 +6747,29 @@ function drawCatRunBack(ctx, t, gait) {
         pb(x0 - 1, y, 1, 1, K); pb(x1 + 1, y, 1, 1, K); pb(x0, y, x1 - x0 + 1, 1, WH);
     }
     pb(9, 11, 22, 1, K); pb(9, 28, 22, 1, K);
-    var ew = [1, 2, 4, 5, 7];
-    for (y = 6; y <= 10; y++) {
-        var w = ew[y - 6], e0 = 11 - Math.floor(w / 2), f0 = 28 - Math.floor(w / 2);
-        pb(e0 - 1, y, 1, 1, K); pb(e0, y, w, 1, WH); pb(e0 + w, y, 1, 1, K);
-        pb(f0 - 1, y, 1, 1, K); pb(f0, y, w, 1, WH); pb(f0 + w, y, 1, 1, K);
+    var ew = [1, 1, 2, 3, 3, 4, 5, 6, 7];
+    for (y = 2; y <= 10; y++) {
+        var w = ew[y - 2], e0 = 11 - Math.floor(w / 2), f0 = 28 - Math.floor(w / 2);
+        var ec = y <= 4 ? TIP : WH;
+        pb(e0 - 1, y, 1, 1, K); pb(e0, y, w, 1, ec); pb(e0 + w, y, 1, 1, K);
+        pb(f0 - 1, y, 1, 1, K); pb(f0, y, w, 1, ec); pb(f0 + w, y, 1, 1, K);
     }
-    pb(11, 5, 1, 1, K); pb(28, 5, 1, 1, K);
-    pb(13, 28, 14, 2, RD); pb(13, 28, 1, 2, K); pb(26, 28, 1, 2, K);
+    pb(11, 1, 1, 1, K); pb(28, 1, 1, 1, K);
+    pb(14, 29, 12, 1, GR);
     pb(16, 18, 8, 1, GR);
 }
 
-// Same idea as the desktop-pet cats: sit when still, scratch, get tired, fall asleep,
+// Same idea as a desktop pet: sit when still, scratch, get tired, fall asleep,
 // run in the direction of travel.
-function drawCatState(ctx, state, t, gait, lx, ly) {
-    if (state === 'sleep') { drawCatSleep(ctx, t); }
-    else if (state === 'scratch') { drawCatSit(ctx, t, lx, ly, 'scratch'); }
-    else if (state === 'tired') { drawCatSit(ctx, t, lx, ly, 'tired'); }
-    else if (state === 'alert') { drawCatSit(ctx, t, lx, ly, 'alert'); }
-    else if (state === 'runS') { drawCatRunFront(ctx, t, gait); }
-    else if (state === 'runN') { drawCatRunBack(ctx, t, gait); }
-    else if (state === 'runE') { drawCatRunSide(ctx, t, gait); }
-    else { drawCatSit(ctx, t, lx, ly, 'sit'); }
+function drawFoxState(ctx, state, t, gait, lx, ly) {
+    if (state === 'sleep') { drawFoxSleep(ctx, t); }
+    else if (state === 'scratch') { drawFoxSit(ctx, t, lx, ly, 'scratch'); }
+    else if (state === 'tired') { drawFoxSit(ctx, t, lx, ly, 'tired'); }
+    else if (state === 'alert') { drawFoxSit(ctx, t, lx, ly, 'alert'); }
+    else if (state === 'runS') { drawFoxRunFront(ctx, t, gait); }
+    else if (state === 'runN') { drawFoxRunBack(ctx, t, gait); }
+    else if (state === 'runE') { drawFoxRunSide(ctx, t, gait); }
+    else { drawFoxSit(ctx, t, lx, ly, 'sit'); }
 }
 """
 
@@ -6798,35 +6799,30 @@ SCENE_TEMPLATE = """<!DOCTYPE html>
         background:
             radial-gradient(circle at 10% 70%, rgba(255, 59, 63, 0.30), transparent 38%),
             radial-gradient(circle at 92% 30%, rgba(255, 255, 255, 0.09), transparent 34%),
-            radial-gradient(circle at 50% __CAT_TOP__, #8a1223 0%,
+            radial-gradient(circle at 50% __FOX_TOP__, #8a1223 0%,
             #3f0e1b 28%, #121827 64%, #070b12 100%);
     }
     canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; z-index: 1; }
     .glow {
-        position: absolute; left: 50%; top: __CAT_TOP__; z-index: 0;
+        position: absolute; left: 50%; top: __FOX_TOP__; z-index: 0;
         width: 86%; aspect-ratio: 1; max-width: 340px;
         transform: translate(-50%, -50%); border-radius: 50%;
         background: radial-gradient(circle, rgba(255, 59, 63, 0.55) 0%,
             rgba(229, 56, 59, 0.22) 38%, transparent 68%);
         animation: pulse 3.2s ease-in-out infinite;
     }
-    .catbox {
-        position: absolute; left: 50%; top: __CAT_TOP__; z-index: 2;
-        width: __CAT_W__; height: __CAT_H__; transform: translate(-50%, -50%);
+    /* the fox sits in the middle of the network ball; its size is set from the ball's size
+       on screen (see resize below), so it always stays inside it */
+    .foxbox {
+        position: absolute; left: 50%; top: __FOX_TOP__; z-index: 2;
+        width: 200px; height: 200px; transform: translate(-50%, -50%);
         animation: floaty 4.2s ease-in-out infinite;
     }
-    #cat {
+    .foxbox svg {
         display: block; width: 100%; height: 100%;
-        will-change: transform;
-        image-rendering: pixelated; image-rendering: crisp-edges;
-        -webkit-mask-image: radial-gradient(ellipse at center, #000 52%,
-            transparent 80%);
-        mask-image: radial-gradient(ellipse at center, #000 52%,
-            transparent 80%);
-        filter: drop-shadow(0 0 14px rgba(255, 255, 255, 0.28));
-    }
-    @media (min-width: 900px) {
-        .catbox { width: __CAT_WD__; height: __CAT_HD__; }
+        image-rendering: pixelated;
+        filter: drop-shadow(0 0 0.6px rgba(225, 225, 225, 0.95))
+                drop-shadow(0 0 14px rgba(229, 56, 59, 0.6));
     }
     @keyframes pulse { 0%, 100% { opacity: 0.75; transform: translate(-50%, -50%) scale(0.96); }
                        50% { opacity: 1; transform: translate(-50%, -50%) scale(1.06); } }
@@ -6856,7 +6852,7 @@ SCENE_TEMPLATE = """<!DOCTYPE html>
     @keyframes stageIn { from { opacity: 0; transform: scale(0.985); }
                          to { opacity: 1; transform: none; } }
     @media (prefers-reduced-motion: reduce) {
-        #stage, .copy, .glow, .catbox { animation: none; }
+        #stage, .copy, .glow, .foxbox { animation: none; }
     }
 </style>
 </head>
@@ -6864,17 +6860,17 @@ SCENE_TEMPLATE = """<!DOCTYPE html>
 <div id="stage">
     <div class="glow"></div>
     <canvas id="c"></canvas>
-    <div class="catbox"><canvas id="cat" width="416" height="292" role="img" aria-label="Nashmi, the cat in a red and white shemagh"></canvas></div>
+    <div class="foxbox">__FOX_SVG__</div>
     <div class="copy"__DIR__>__COPY__</div>
 </div>
 <script>
-__CAT_JS__
+__FOX_JS__
 </script>
 <script>
 (function () {
     releaseFrameBoxOnExit();
-    var cat = document.getElementById('cat'), stage = document.getElementById('stage');
-    var box = document.querySelector('.catbox'), cctx = cat.getContext('2d');
+    var stage = document.getElementById('stage');
+    var box = document.querySelector('.foxbox'), fox = box.querySelector('svg');
     var reduce = window.matchMedia &&
         window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -6895,32 +6891,12 @@ __CAT_JS__
         return { x: r.left + r.width / 2, y: r.top + r.height * 0.45 };
     });
 
-    // the original logo cat; only its eyes, nose and mouth are redrawn so it can look around
-    var img = new Image(), ready = false;
-    img.onload = function () { ready = true; };
-    img.src = 'data:image/png;base64,__CAT__';
-    function drawLogoCat(t, lx, ly) {
-        cctx.imageSmoothingEnabled = false;
-        cctx.drawImage(img, 0, 0);
-        var blink = (t % 3.8) > 3.66;
-        cctx.fillStyle = '#ffffff';
-        cctx.fillRect(225, 88, 14, 32);   // right eye only: the left one is under the pirate patch
-        cctx.fillRect(196, 125, 14, 15);
-        var ex = Math.round(lx * 11), ey = Math.round(ly * 7);
-        cctx.fillStyle = '#0a0a0a';
-        var h = blink ? 3 : 27, y = blink ? 102 : 91;
-        cctx.fillRect(227 + ex, y + ey, 10, h);
-        cctx.drawImage(img, 198, 127, 10, 11,
-                       198 + Math.round(ex * 0.5), 127 + Math.round(ey * 0.5), 10, 11);
-    }
+    // the fox itself stays still (it only floats, in CSS); its eyes look at the pointer
+    var eyes = foxEyes(fox);
     function paint(now) {
         look.update(now);
-        if (ready) {
-            drawLogoCat(phase0 + (now - start) / 1000, look.x, look.y);
-            cat.style.transform = 'translate(' + (-look.x * 7).toFixed(1) + 'px,' +
-                                  (-look.y * 5).toFixed(1) + 'px)';
-        }
-        if (!reduce || !ready) { requestAnimationFrame(paint); }
+        eyes(now, look.x, look.y);
+        if (!reduce) { requestAnimationFrame(paint); }
     }
     paint(start);
 })();
@@ -6948,14 +6924,14 @@ __CAT_JS__
 
     group.scale.setScalar(__GSCALE__);
     var BRIGHT = 0xFF3B3F;
-    // the cat sits in the middle; a red shield and a white shell orbit it
+    // the fox sits in the middle; a red shield and a white shell orbit it
     var coreWire = new THREE.LineSegments(
         new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(2.05, 1)),
         new THREE.LineBasicMaterial({ color: BRIGHT, transparent: true, opacity: 0.8 }));
     var shell = new THREE.LineSegments(
         new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(2.7, 2)),
         new THREE.LineBasicMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0.2 }));
-    // a black round mesh hugging the cat, drawn under everything else
+    // a black round mesh round the fox, drawn under everything else
     var blackMesh = new THREE.LineSegments(
         new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(2.38, 2)),
         new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.85 }));
@@ -6966,7 +6942,7 @@ __CAT_JS__
     group.add(coreWire, shellWrap);
 
     // On a wide screen the red network is spread over the whole frame, edge to edge, so there
-    // are no empty corners. On a phone it stays a ball around the cat.
+    // are no empty corners. On a phone it stays a ball around the fox.
     var sw0 = stage.clientWidth || 400, sh0 = stage.clientHeight || 400, asp0 = sw0 / sh0;
     var wideNet = asp0 >= 1.25;
     var bz0 = asp0 < 0.9 ? 10.5 : (asp0 < 1.6 ? 8.6 : 7.2);
@@ -7065,10 +7041,12 @@ __CAT_JS__
         var fitK = Math.min(1, (baseZ * 0.4142 * 0.96) / ((3.6 + OFF) * GS));
         group.scale.setScalar(GS * fitK);
         group.position.y = OFF * fitK;
-        // centre the cat (and its glow) on the middle of the rings
+        // centre the fox (and its glow) on the middle of the rings, and size it to 58% of the
+        // black network ball (radius 2.38) as it appears on screen, so it is always inside it
         var ndcY = (OFF * fitK) / (0.4142 * baseZ), cy = ((1 - ndcY) / 2 * h).toFixed(1) + 'px';
-        var cb = document.querySelector('.catbox'), gl = document.querySelector('.glow');
-        if (cb) { cb.style.top = cy; }
+        var cb = document.querySelector('.foxbox'), gl = document.querySelector('.glow');
+        var ballPx = 2 * 2.38 * GS * fitK / (2 * 0.4142 * baseZ) * h;
+        if (cb) { cb.style.top = cy; cb.style.width = cb.style.height = Math.round(ballPx * 0.58) + 'px'; }
         if (gl) { gl.style.top = cy; }
 
         camera.updateProjectionMatrix();
@@ -7144,18 +7122,18 @@ def scene_copy(kind: str) -> str:
     )
 
 
-# height, scene offset, scene scale, cat width (phone / wide screen), cat
+# height, scene offset, scene scale, fox
 # vertical position, extra height factor on wide screens
 SCENE_SIZES = {
-    "landing": (470, 0.9, 1.0, (230, 250), "37%", 1.2),
-    "login": (482, 0.7, 1.0, (230, 250), "36%", 1.3),
-    "signup": (330, 0.5, 0.82, (190, 230), "35%", 1.3),
+    "landing": (470, 0.9, 1.0, "37%", 1.2),
+    "login": (482, 0.7, 1.0, "36%", 1.3),
+    "signup": (330, 0.5, 0.82, "35%", 1.3),
 }
 
 
 def render_scene(kind: str) -> None:
     """Show the animated 3D banner for the landing or sign-in page."""
-    height, offset, scale, (cat_w, cat_wd), cat_top, desk_k = SCENE_SIZES[kind]
+    height, offset, scale, fox_top, desk_k = SCENE_SIZES[kind]
     markup = (
         SCENE_TEMPLATE.replace("__DIR__", dir_attr())
         .replace("__COPY__", scene_copy(kind))
@@ -7163,15 +7141,11 @@ def render_scene(kind: str) -> None:
         .replace("__THREE_SRI__", THREE_SRI)
         .replace("__OFFSET_Y__", str(offset))
         .replace("__GSCALE__", str(scale))
-        .replace("__CAT_W__", f"{cat_w}px")
-        .replace("__CAT_H__", f"{round(cat_w * 292 / 416)}px")
-        .replace("__CAT_WD__", f"{cat_wd}px")
-        .replace("__CAT_HD__", f"{round(cat_wd * 292 / 416)}px")
-        .replace("__CAT_TOP__", cat_top)
+        .replace("__FOX_TOP__", fox_top)
         .replace("__HEIGHT__", str(height))
         .replace("__DESK_K__", str(desk_k))
-        .replace("__CAT_JS__", CAT_JS)
-        .replace("__CAT__", CAT_B64)
+        .replace("__FOX_JS__", FOX_JS)
+        .replace("__FOX_SVG__", fox_sprite.sit_svg("fox-scene"))
     )
     embed_html(markup, height)
 
@@ -7435,8 +7409,8 @@ div:has(> .st-key-topbar) { position: sticky; top: 10px; z-index: 60; }
 }
 """
 
-# The scroll story on the landing page: a cat slides down a line as the
-# visitor scrolls, and each card lights up when the cat reaches it.
+# The scroll story on the landing page: a fox slides down a line as the
+# visitor scrolls, and each card lights up when the fox reaches it.
 STORY_CARDS = {
     "en": (
         ("WHO", "Meet Nashmi",
@@ -7444,7 +7418,7 @@ STORY_CARDS = {
          "English and get answers that use the field's own language."),
         ("NAME", "Why the name?",
          "In Jordanian Arabic a nashmi is someone gallant and dependable. That "
-         "is why the cat wears the red and white shemagh."),
+         "is the spirit behind our white fox."),
         ("SOC", "SOC Analyzer",
          "Drop in logs, PCAPs, screenshots or alerts. Nashmi writes a structured "
          "incident report with IoCs, MITRE ATT&CK mapping and remediation steps."),
@@ -7563,7 +7537,7 @@ STORY_TEMPLATE = """<!DOCTYPE html>
     }
     h3 { margin: 8px 0 4px; color: #fff; font-size: 1.15rem; }
     p { margin: 0; font-size: 0.94rem; line-height: 1.55; }
-    #cat {
+    #fox {
         position: absolute; left: 0; top: 0; z-index: 3;
         width: 64px; height: 74px;
         transform: translate(-50%, -56%); transform-origin: 50% 60%;
@@ -7574,7 +7548,7 @@ STORY_TEMPLATE = """<!DOCTYPE html>
     @media (max-width: 699px) {
         :root { --tx: 40px; }
         .row { padding-left: 84px; }
-        #cat { width: 46px; height: 53px; }
+        #fox { width: 46px; height: 53px; }
     }
     @media (min-width: 700px) {
         :root { --tx: 50%; }
@@ -7595,10 +7569,10 @@ STORY_TEMPLATE = """<!DOCTYPE html>
     <div id="sky"><canvas id="far"></canvas><canvas id="near"></canvas></div>
     <svg id="pathsvg" aria-hidden="true"><path id="pathBg"></path><path id="pathFill"></path></svg>
     <div id="rows">__CARDS__</div>
-    <canvas id="cat" width="40" height="46" role="img" aria-label="Nashmi the cat walking down the line"></canvas>
+    <canvas id="fox" width="40" height="46" role="img" aria-label="Nashmi the fox walking down the line"></canvas>
 </div>
 <script>
-__CAT_JS__
+__FOX_JS__
 </script>
 <script>
 (function () {
@@ -7608,16 +7582,16 @@ __CAT_JS__
     var wrap = document.getElementById('wrap');
     var rows = Array.prototype.slice.call(document.querySelectorAll('.row'));
     var pathBg = document.getElementById('pathBg'), pathFill = document.getElementById('pathFill');
-    var cat = document.getElementById('cat'), sky = document.getElementById('sky');
+    var fox = document.getElementById('fox'), sky = document.getElementById('sky');
     var far = document.getElementById('far'), near = document.getElementById('near');
     var P = null, fe = null;
     try { P = window.parent; fe = window.frameElement; void P.document.body; }
     catch (err) { P = null; fe = null; }
     var H = 0, W = 0, y0 = 0, y1 = 0, centers = [], skyH = 0, pts = [], pathLen = 0;
 
-    var cctx = cat.getContext('2d');
+    var cctx = fox.getContext('2d');
     var look = makeLook(wrap, function () {
-        var r = cat.getBoundingClientRect();
+        var r = fox.getBoundingClientRect();
         return { x: r.left + r.width / 2, y: r.top + r.height * 0.4 };
     });
 
@@ -7687,7 +7661,7 @@ __CAT_JS__
         var f = Math.max(0, Math.min(1, (y - a.y) / ((b.y - a.y) || 1)));
         return { x: a.x + (b.x - a.x) * f, y: y, dist: a.dist + (b.dist - a.dist) * f };
     }
-    // eight directions like a desktop-pet cat: [pose, mirror, tilt]
+    // eight directions like a desktop pet: [pose, mirror, tilt]
     function dirOf(a) {
         if (a > -22.5 && a <= 22.5) { return ['runE', 1, 0]; }
         if (a > 22.5 && a <= 67.5) { return ['runE', 1, 25]; }
@@ -7711,7 +7685,7 @@ __CAT_JS__
         cy += d * 0.14;
         if (Math.abs(d) < 0.05) { cy = tgt; }
         var p = pointAtY(cy);
-        cat.style.left = p.x + 'px'; cat.style.top = p.y + 'px';
+        fox.style.left = p.x + 'px'; fox.style.top = p.y + 'px';
         pathFill.style.strokeDashoffset = (pathLen - p.dist) + 'px';
         if (prevX === null) { prevX = p.x; prevY = p.y; }
         svx += ((p.x - prevX) - svx) * 0.35; svy += ((p.y - prevY) - svy) * 0.35;
@@ -7733,8 +7707,8 @@ __CAT_JS__
         }
         rotCur += (rot - rotCur) * 0.3;
         look.update(now);
-        drawCatState(cctx, state, now / 1000, gait, look.x, look.y);
-        cat.style.transform = 'translate(-50%, -56%) scaleX(' + flip + ') rotate(' + rotCur.toFixed(1) + 'deg)';
+        drawFoxState(cctx, state, now / 1000, gait, look.x, look.y);
+        fox.style.transform = 'translate(-50%, -56%) scaleX(' + flip + ') rotate(' + rotCur.toFixed(1) + 'deg)';
         var best = 0, bd = 1e9;
         for (var i = 0; i < rows.length; i++) {
             var on = centers[i] <= cy + 14;
@@ -7766,7 +7740,7 @@ __CAT_JS__
 
 
 def render_story() -> None:
-    """The scrolling 'who is Nashmi' story with the cat on the line."""
+    """The scrolling 'who is Nashmi' story with the fox on the line."""
     cards = "".join(
         f'<div class="row"><i class="node"></i><article class="card"{dir_attr()}>'
         f'<span class="tag">{html.escape(tag)}</span>'
@@ -7775,7 +7749,7 @@ def render_story() -> None:
         for tag, title, text in STORY_CARDS[lang()]
     )
     markup = (STORY_TEMPLATE.replace("__CARDS__", cards)
-              .replace("__CAT_JS__", CAT_JS + WALKER_JS))
+              .replace("__FOX_JS__", FOX_JS + FOX_WALKER_JS))
     embed_html(markup, STORY_HEIGHT)
 
 STRINGS = {
@@ -8914,7 +8888,7 @@ def otp_gate(user_id: int | None, user: dict | None) -> bool:
 
 
 def render_auth_page(mode: str) -> None:
-    """Sign-in and sign-up page. On a wide screen the cat banner sits on the
+    """Sign-in and sign-up page. On a wide screen the fox banner sits on the
     left and the form on the right; on a phone they stack. Google shows its own
     password / 2-step screen and Nashmi never sees a password. A new Google
     account must finish the sign-up step before it can use the app."""
@@ -9215,13 +9189,6 @@ def main() -> None:
     embed_html(COMPOSER_FOCUS_TEMPLATE, 1)
 
 
-# ---------------------------------------------------------------------------
-# The cat picture (embedded so you only need this one file).
-# Do not edit the block below: it is the image data.
-# ---------------------------------------------------------------------------
-_CAT_B64_WRAPPED = """
-"""
-CAT_B64 = "".join(_CAT_B64_WRAPPED.split())
 
 if __name__ == "__main__":
     main()
