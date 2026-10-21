@@ -45,8 +45,6 @@ from typing import Iterator
 
 import requests
 import streamlit as st
-
-import fox_sprite
 import streamlit.components.v1 as components
 from google import genai
 from google.genai import errors as genai_errors
@@ -2762,12 +2760,80 @@ def on_wipe_all() -> None:
 
 
 # ---------------------------------------------------------------------------
+# The Nashmi logo: the fox picture in assets/ is shown as it is (its own pixels, nothing
+# redrawn) on a transparent background. Only its size changes, to fit each place.
+# ---------------------------------------------------------------------------
+LOGO_FILE = Path(__file__).resolve().parent / "assets" / "nashmi-fox.png"
+PANEL_RGB = (19, 26, 38)            # the app's dark panel colour, behind the round logo
+
+# Where the two eyes are in the picture (pixels of the file: x, y, width, height). The banners
+# cover them with white and draw them again on top, so they follow the pointer, one
+# pixel-block (37 px of the picture) at a time, and blink.
+LOGO_EYE_BOXES = ((503, 578, 74, 166), (878, 578, 70, 166))
+LOGO_EYE_STEP = 37
+
+
+@st.cache_resource
+def logo_image() -> Image.Image:
+    """The logo picture (RGBA). A missing file must not take the whole app down."""
+    try:
+        return Image.open(LOGO_FILE).convert("RGBA")
+    except OSError:
+        logging.warning("Logo file not found: %s", LOGO_FILE)
+        return Image.new("RGBA", (8, 8), (0, 0, 0, 0))
+
+
+def _scaled(img: Image.Image, size: tuple[int, int]) -> Image.Image:
+    """Smooth resize that keeps clean edges next to the transparent background."""
+    return img.convert("RGBa").resize(size, Image.Resampling.LANCZOS).convert("RGBA")
+
+
+@st.cache_resource
+def logo_data_uri(height: int) -> str:
+    """The logo at the given height as a PNG data URI (for the HTML banners)."""
+    img = logo_image()
+    buf = io.BytesIO()
+    _scaled(img, (max(1, round(img.width * height / img.height)), height)).save(
+        buf, "PNG", optimize=True)
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+@st.cache_resource
+def logo_badge(size: int) -> Image.Image:
+    """The whole logo fitted inside a round frame of the given size, on the panel colour
+    (the navbar logo and the chat avatar). Sized so the frame never cuts an ear or the tail."""
+    import numpy as np
+
+    img = logo_image()
+    ys, xs = np.nonzero(np.asarray(img.getchannel("A")) > 8)
+    badge = Image.new("RGB", (size, size), PANEL_RGB)
+    if not len(xs):
+        return badge
+    cx, cy = (xs.min() + xs.max()) / 2, (ys.min() + ys.max()) / 2
+    radius = float(np.hypot(xs - cx, ys - cy).max())
+    scale = size * 0.47 / radius
+    small = _scaled(img, (max(1, round(img.width * scale)), max(1, round(img.height * scale))))
+    badge.paste(small, (round(size / 2 - cx * scale), round(size / 2 - cy * scale)), small)
+    return badge
+
+
+def logo_eyes_json() -> str:
+    w, h = logo_image().size
+    return json.dumps({"w": w, "h": h, "boxes": LOGO_EYE_BOXES, "step": LOGO_EYE_STEP, "up": 30})
+
+
+def logo_ratio() -> str:
+    w, h = logo_image().size
+    return f"{w} / {h}"
+
+
+# ---------------------------------------------------------------------------
 # Images (avatars)
 # ---------------------------------------------------------------------------
 @st.cache_resource
 def get_assistant_avatar() -> Image.Image:
-    """Head of the fox (fox_sprite.py), for the chat avatar."""
-    return fox_sprite.head_image(120)
+    """The logo in a round frame, for the chat avatar."""
+    return logo_badge(120)
 
 
 @st.cache_resource
@@ -3657,15 +3723,13 @@ HERO_TEMPLATE = """<!DOCTYPE html>
             #0f1724 55%, #070b12 100%);
     }
     #bg { position: absolute; inset: 0; width: 100%; height: 100%; }
-    #fox {
+    #logo {
         position: absolute; left: 50%; top: 41%;
-        width: min(220px, 62%); height: auto;
-        image-rendering: pixelated;
+        height: min(176px, 60%); aspect-ratio: __LOGO_RATIO__;
         transform: translate(-50%, -50%); will-change: transform;
-        /* a hair-thin light rim and a soft red glow keep the white fox readable on the dark */
-        filter: drop-shadow(0 0 0.6px rgba(225, 225, 225, 0.95))
-                drop-shadow(0 0 14px rgba(229, 56, 59, 0.55));
+        filter: drop-shadow(0 0 14px rgba(229, 56, 59, 0.55));
     }
+    #logo img { display: block; width: 100%; height: 100%; }
     .overlay {
         position: absolute; left: 50%; bottom: 10px;
         transform: translateX(-50%); box-sizing: border-box;
@@ -3697,75 +3761,29 @@ HERO_TEMPLATE = """<!DOCTYPE html>
 <body>
 <div id="stage">
     <canvas id="bg"></canvas>
-    __FOX_SVG__
+    <div id="logo"><img src="__LOGO__" alt="Nashmi, a white fox in a red and white shemagh"></div>
     <div class="overlay">
         <h1 class="title">__HERO_TITLE__<span class="caret"></span></h1>
         <p class="subtitle">__HERO_SUB__</p>
     </div>
 </div>
 <script>
+__LOOK_JS__
+</script>
+<script>
 (() => {
     'use strict';
     const stage = document.getElementById('stage');
-    const fox = document.getElementById('fox');
+    const logo = document.getElementById('logo');
     const reduceMotion =
         window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const eyes = fox.querySelector('.fox-eyes');
-    const eyesOpen = fox.querySelector('.fox-open'), eyesShut = fox.querySelector('.fox-shut');
 
-    // ---- pointer tracking (mouse, pen and touch; also outside the banner)
-    let pointer = null, lastMove = -1e9;
-    const frameBox = () => {
-        try { return window.frameElement.getBoundingClientRect(); }
-        catch (_) { return {left: 0, top: 0}; }
-    };
-    const bind = (target, insideFrame) => {
-        const set = (x, y) => {
-            const o = insideFrame ? frameBox() : {left: 0, top: 0};
-            pointer = {x: x + o.left, y: y + o.top};
-            lastMove = performance.now();
-        };
-        target.addEventListener('pointermove',
-            (e) => set(e.clientX, e.clientY), {passive: true});
-        const touch = (e) => {
-            if (e.touches && e.touches[0]) {
-                set(e.touches[0].clientX, e.touches[0].clientY);
-            }
-        };
-        target.addEventListener('touchstart', touch, {passive: true});
-        target.addEventListener('touchmove', touch, {passive: true});
-    };
-    bind(window, true);
-    try {
-        bind(window.parent.document, false);
-    } catch (_) { /* cross-origin */ }
-
-    // ---- eyes: the eye layer moves at most 2 fox pixels (1 up or down) towards the pointer,
-    // snapped to the pixel grid; after 3 s without movement it drifts back to the middle.
-    let ex = 0, ey = 0, blinkUntil = 0;
-    let nextBlink = performance.now() + 3000;
-    function drawEyes(t) {
-        let tx = 0, ty = 0;
-        if (pointer && t - lastMove < 3000) {
-            const fb = frameBox();
-            const r = fox.getBoundingClientRect();
-            const vx = pointer.x - fb.left - (r.left + r.width * 0.42);
-            const vy = pointer.y - fb.top - (r.top + r.height * 0.34);
-            const len = Math.hypot(vx, vy) || 1, k = Math.min(1, len / 160);
-            tx = vx / len * k * 2;
-            ty = vy / len * k;
-        }
-        ex += (tx - ex) * 0.18;
-        ey += (ty - ey) * 0.18;
-        eyes.setAttribute('transform', 'translate(' + Math.round(ex) + ' ' + Math.round(ey) + ')');
-        if (t > nextBlink) {
-            blinkUntil = t + 120;
-            nextBlink = t + 3000 + Math.random() * 3000;
-        }
-        const shut = t < blinkUntil;
-        eyesOpen.style.display = shut ? 'none' : '';
-        eyesShut.style.display = shut ? '' : 'none';
-    }
+    // the eyes of the picture follow the pointer (also over the rest of the page)
+    const look = makeLook(stage, () => {
+        const r = logo.getBoundingClientRect();
+        return {x: r.left + r.width * 0.42, y: r.top + r.height * 0.4};
+    });
+    const eyes = logoEyes(logo, __LOGO_EYES__);
 
     // ---- falling pixel bricks (fewer on small screens)
     const bg = document.getElementById('bg');
@@ -3809,9 +3827,10 @@ HERO_TEMPLATE = """<!DOCTYPE html>
             bctx.fillRect(Math.round(k.x), Math.round(k.y), k.s, k.s);
         }
         bctx.globalAlpha = 1;
-        drawEyes(t);
+        look.update(t);
+        eyes(t, look.x, look.y);
         const bob = reduceMotion ? 0 : Math.sin(t * 0.003) * 4;
-        fox.style.transform = 'translate(-50%, calc(-50% + ' + bob + 'px))';
+        logo.style.transform = 'translate(-50%, calc(-50% + ' + bob + 'px))';
     }
     requestAnimationFrame(loop);
 })();
@@ -3842,8 +3861,10 @@ def embed_html(markup: str, height: int) -> None:
 
 def render_hero() -> None:
     """Show the animated banner with the eye-tracking fox."""
-    embed_html(HERO_TEMPLATE.replace("__FOX_SVG__", fox_sprite.sit_svg("fox-hero").replace(
-                   '<svg class="fox-hero"', '<svg id="fox" class="fox-hero"', 1))
+    embed_html(HERO_TEMPLATE.replace("__LOGO__", logo_data_uri(340))
+               .replace("__LOOK_JS__", LOOK_JS + LOGO_JS)
+               .replace("__LOGO_EYES__", logo_eyes_json())
+               .replace("__LOGO_RATIO__", logo_ratio())
                .replace("__HERO_TITLE__", tt("NASHMI AGENT", "نشمي"))
                .replace("__HERO_SUB__", tt(
                    "Your friendly SOC and security coding buddy. The fox is watching your pointer.",
@@ -4443,8 +4464,10 @@ class Settings:
 
 @st.cache_resource
 def avatar_data_uri() -> str:
-    """Fox head as an SVG data URI for the round navbar logo."""
-    return fox_sprite.head_svg_uri()
+    """The logo in a round frame as a PNG data URI, for the navbar."""
+    buf = io.BytesIO()
+    logo_badge(128).save(buf, "PNG", optimize=True)
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
 def md_escape(text: str) -> str:
@@ -6450,10 +6473,10 @@ def render_exam_track(settings: Settings) -> None:
 # ---------------------------------------------------------------------------
 # Landing page, sign-in page and admin screen
 # ---------------------------------------------------------------------------
-# Shared by the landing banner and the scroll story. makeLook gives the fox eyes
+# Shared by the landing banner and the scroll story. makeLook gives a cat eyes
 # that follow the pointer (also the pointer over the rest of the page) and
 # glance around by themselves when nobody is moving one.
-FOX_JS = """function sizeFrame(h) {
+LOOK_JS = """function sizeFrame(h) {
     // Streamlit keeps its own height on the wrapper around this frame, so the wrapper
     // is sized here too, and again after every re-render
     var fe = null;
@@ -6499,7 +6522,7 @@ function trackPointer(cb) {
 }
 
 function makeLook(el, getCenter) {
-    var L = { x: 0, y: 0 }, tgt = { x: 0, y: 0 }, last = -1e9;
+    var L = { x: 0, y: 0 }, tgt = { x: 0, y: 0 }, last = -1e9, nextWander = 0;
     trackPointer(function (px, py) {
         var c = getCenter();
         var rx = Math.max(140, el.clientWidth / 2);
@@ -6509,29 +6532,49 @@ function makeLook(el, getCenter) {
         last = performance.now();
     });
     L.update = function (now) {
-        if (now - last > 3000) {               // idle: look back to the middle
-            tgt.x = 0;
-            tgt.y = 0;
+        if (now - last > 2600 && now > nextWander) {
+            tgt.x = (Math.random() * 2 - 1) * 0.9;
+            tgt.y = (Math.random() * 2 - 1) * 0.5;
+            nextWander = now + 1300 + Math.random() * 1700;
         }
         L.x += (tgt.x - L.x) * 0.16;
         L.y += (tgt.y - L.y) * 0.16;
     };
     return L;
 }
+"""
 
-// The eye layer of a fox SVG (fox_sprite.sit_svg): moves at most 2 fox pixels sideways and
-// 1 up or down, snapped to whole pixels, and blinks for 120 ms every 3 to 6 seconds.
-function foxEyes(svg) {
-    var eyes = svg.querySelector('.fox-eyes'), op = svg.querySelector('.fox-open'),
-        sh = svg.querySelector('.fox-shut'), nextBlink = performance.now() + 3000, until = 0;
+# The eyes of the logo picture: the two black eyes are covered with white and drawn again on
+# top, so they follow the pointer (at most two blocks sideways, one up or down, in whole
+# blocks like the picture itself) and blink for 120 ms every 3 to 6 seconds.
+LOGO_JS = """function logoEyes(wrap, cfg) {
+    var pct = function (v, total) { return (v / total * 100).toFixed(3) + '%'; };
+    var pad = 12, eyes = cfg.boxes.map(function (b) {
+        var cover = document.createElement('i'), pupil = document.createElement('i');
+        cover.style.cssText = 'position:absolute;background:#fff;left:' + pct(b[0] - pad, cfg.w) +
+            ';top:' + pct(b[1] - pad, cfg.h) + ';width:' + pct(b[2] + 2 * pad, cfg.w) +
+            ';height:' + pct(b[3] + 2 * pad, cfg.h);
+        pupil.style.cssText = 'position:absolute;background:#000;left:' + pct(b[0], cfg.w) +
+            ';top:' + pct(b[1], cfg.h) + ';width:' + pct(b[2], cfg.w) + ';height:' + pct(b[3], cfg.h);
+        wrap.appendChild(cover);
+        wrap.appendChild(pupil);
+        return { b: b, pupil: pupil };
+    });
+    var nextBlink = performance.now() + 3000, until = 0, last = '';
     return function (now, lx, ly) {
-        var dx = Math.max(-2, Math.min(2, Math.round(lx * 2))),
-            dy = Math.max(-1, Math.min(1, Math.round(ly)));
-        eyes.setAttribute('transform', 'translate(' + dx + ' ' + dy + ')');
+        var dx = Math.max(-2, Math.min(2, Math.round(lx * 2))) * cfg.step;
+        var dy = Math.max(-1, Math.min(1, Math.round(ly * 1.5)));
+        dy = dy < 0 ? -cfg.up : dy * cfg.step;
         if (now > nextBlink) { until = now + 120; nextBlink = now + 3000 + Math.random() * 3000; }
-        var shut = now < until;
-        op.style.display = shut ? 'none' : '';
-        sh.style.display = shut ? '' : 'none';
+        var shut = now < until, key = dx + ',' + dy + ',' + shut;
+        if (key === last) { return; }
+        last = key;
+        eyes.forEach(function (e) {
+            var b = e.b, h = shut ? 22 : b[3];
+            e.pupil.style.left = pct(b[0] + dx, cfg.w);
+            e.pupil.style.top = pct(b[1] + dy + (b[3] - h), cfg.h);
+            e.pupil.style.height = pct(h, cfg.h);
+        });
     };
 }
 """
@@ -6795,29 +6838,27 @@ SCENE_TEMPLATE = """<!DOCTYPE html>
         background:
             radial-gradient(circle at 10% 70%, rgba(255, 59, 63, 0.30), transparent 38%),
             radial-gradient(circle at 92% 30%, rgba(255, 255, 255, 0.09), transparent 34%),
-            radial-gradient(circle at 50% __FOX_TOP__, #8a1223 0%,
+            radial-gradient(circle at 50% __LOGO_TOP__, #8a1223 0%,
             #3f0e1b 28%, #121827 64%, #070b12 100%);
     }
     canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; z-index: 1; }
     .glow {
-        position: absolute; left: 50%; top: __FOX_TOP__; z-index: 0;
+        position: absolute; left: 50%; top: __LOGO_TOP__; z-index: 0;
         width: 86%; aspect-ratio: 1; max-width: 340px;
         transform: translate(-50%, -50%); border-radius: 50%;
         background: radial-gradient(circle, rgba(255, 59, 63, 0.55) 0%,
             rgba(229, 56, 59, 0.22) 38%, transparent 68%);
         animation: pulse 3.2s ease-in-out infinite;
     }
-    /* the fox sits in the middle of the network ball; its size is set from the ball's size
+    /* the logo sits in the middle of the network ball; its width is set from the ball's size
        on screen (see resize below), so it always stays inside it */
-    .foxbox {
-        position: absolute; left: 50%; top: __FOX_TOP__; z-index: 2;
-        width: 200px; height: 200px; transform: translate(-50%, -50%);
+    .logobox {
+        position: absolute; left: 50%; top: __LOGO_TOP__; z-index: 2;
+        width: 160px; transform: translate(-50%, -50%);
     }
-    .foxbox svg {
-        display: block; width: 100%; height: 100%;
-        image-rendering: pixelated;
-        filter: drop-shadow(0 0 0.6px rgba(225, 225, 225, 0.95))
-                drop-shadow(0 0 14px rgba(229, 56, 59, 0.6));
+    .logobox img {
+        display: block; width: 100%; height: auto;
+        filter: drop-shadow(0 0 14px rgba(229, 56, 59, 0.6));
     }
     @keyframes pulse { 0%, 100% { opacity: 0.75; transform: translate(-50%, -50%) scale(0.96); }
                        50% { opacity: 1; transform: translate(-50%, -50%) scale(1.06); } }
@@ -6853,17 +6894,17 @@ SCENE_TEMPLATE = """<!DOCTYPE html>
 <div id="stage">
     <div class="glow"></div>
     <canvas id="c"></canvas>
-    <div class="foxbox">__FOX_SVG__</div>
+    <div class="logobox"><img src="__LOGO__" alt="Nashmi, a white fox in a red and white shemagh"></div>
     <div class="copy"__DIR__>__COPY__</div>
 </div>
 <script>
-__FOX_JS__
+__LOOK_JS__
 </script>
 <script>
 (function () {
     releaseFrameBoxOnExit();
     var stage = document.getElementById('stage');
-    var box = document.querySelector('.foxbox'), fox = box.querySelector('svg');
+    var box = document.querySelector('.logobox');
     var reduce = window.matchMedia &&
         window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -6881,11 +6922,11 @@ __FOX_JS__
     var phase0 = saved && saved.p ? saved.p : 0, start = performance.now();
     var look = makeLook(stage, function () {
         var r = box.getBoundingClientRect();
-        return { x: r.left + r.width / 2, y: r.top + r.height * 0.45 };
+        return { x: r.left + r.width * 0.42, y: r.top + r.height * 0.4 };
     });
 
-    // the fox sits still in the middle of the ball; only its eyes move, towards the pointer
-    var eyes = foxEyes(fox);
+    // the logo sits still in the middle of the ball; only its eyes move, towards the pointer
+    var eyes = logoEyes(box, __LOGO_EYES__);
     function paint(now) {
         look.update(now);
         eyes(now, look.x, look.y);
@@ -6917,14 +6958,14 @@ __FOX_JS__
 
     group.scale.setScalar(__GSCALE__);
     var BRIGHT = 0xFF3B3F;
-    // the fox sits in the middle; a red shield and a white shell orbit it
+    // the logo sits in the middle; a red shield and a white shell orbit it
     var coreWire = new THREE.LineSegments(
         new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(2.05, 1)),
         new THREE.LineBasicMaterial({ color: BRIGHT, transparent: true, opacity: 0.8 }));
     var shell = new THREE.LineSegments(
         new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(2.7, 2)),
         new THREE.LineBasicMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0.2 }));
-    // a black round mesh round the fox, drawn under everything else
+    // a black round mesh round the logo, drawn under everything else
     var blackMesh = new THREE.LineSegments(
         new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(2.38, 2)),
         new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.85 }));
@@ -6935,7 +6976,7 @@ __FOX_JS__
     group.add(coreWire, shellWrap);
 
     // On a wide screen the red network is spread over the whole frame, edge to edge, so there
-    // are no empty corners. On a phone it stays a ball around the fox.
+    // are no empty corners. On a phone it stays a ball around the logo.
     var sw0 = stage.clientWidth || 400, sh0 = stage.clientHeight || 400, asp0 = sw0 / sh0;
     var wideNet = asp0 >= 1.25;
     var bz0 = asp0 < 0.9 ? 10.5 : (asp0 < 1.6 ? 8.6 : 7.2);
@@ -7034,12 +7075,12 @@ __FOX_JS__
         var fitK = Math.min(1, (baseZ * 0.4142 * 0.96) / ((3.6 + OFF) * GS));
         group.scale.setScalar(GS * fitK);
         group.position.y = OFF * fitK;
-        // centre the fox (and its glow) on the middle of the rings, and size it to 58% of the
+        // centre the logo (and its glow) on the middle of the rings, and size it to 62% of the
         // black network ball (radius 2.38) as it appears on screen, so it is always inside it
         var ndcY = (OFF * fitK) / (0.4142 * baseZ), cy = ((1 - ndcY) / 2 * h).toFixed(1) + 'px';
-        var cb = document.querySelector('.foxbox'), gl = document.querySelector('.glow');
+        var cb = document.querySelector('.logobox'), gl = document.querySelector('.glow');
         var ballPx = 2 * 2.38 * GS * fitK / (2 * 0.4142 * baseZ) * h;
-        if (cb) { cb.style.top = cy; cb.style.width = cb.style.height = Math.round(ballPx * 0.58) + 'px'; }
+        if (cb) { cb.style.top = cy; cb.style.width = Math.round(ballPx * 0.62) + 'px'; }
         if (gl) { gl.style.top = cy; }
 
         camera.updateProjectionMatrix();
@@ -7115,7 +7156,7 @@ def scene_copy(kind: str) -> str:
     )
 
 
-# height, scene offset, scene scale, fox
+# height, scene offset, scene scale, logo
 # vertical position, extra height factor on wide screens
 SCENE_SIZES = {
     "landing": (470, 0.9, 1.0, "37%", 1.2),
@@ -7126,7 +7167,7 @@ SCENE_SIZES = {
 
 def render_scene(kind: str) -> None:
     """Show the animated 3D banner for the landing or sign-in page."""
-    height, offset, scale, fox_top, desk_k = SCENE_SIZES[kind]
+    height, offset, scale, logo_top, desk_k = SCENE_SIZES[kind]
     markup = (
         SCENE_TEMPLATE.replace("__DIR__", dir_attr())
         .replace("__COPY__", scene_copy(kind))
@@ -7134,11 +7175,12 @@ def render_scene(kind: str) -> None:
         .replace("__THREE_SRI__", THREE_SRI)
         .replace("__OFFSET_Y__", str(offset))
         .replace("__GSCALE__", str(scale))
-        .replace("__FOX_TOP__", fox_top)
+        .replace("__LOGO_TOP__", logo_top)
         .replace("__HEIGHT__", str(height))
         .replace("__DESK_K__", str(desk_k))
-        .replace("__FOX_JS__", FOX_JS)
-        .replace("__FOX_SVG__", fox_sprite.sit_svg("fox-scene"))
+        .replace("__LOOK_JS__", LOOK_JS + LOGO_JS)
+        .replace("__LOGO__", logo_data_uri(340))
+        .replace("__LOGO_EYES__", logo_eyes_json())
     )
     embed_html(markup, height)
 
@@ -7411,7 +7453,7 @@ STORY_CARDS = {
          "English and get answers that use the field's own language."),
         ("NAME", "Why the name?",
          "In Jordanian Arabic a nashmi is someone gallant and dependable. That "
-         "is the spirit behind our white fox."),
+         "is why our white fox wears the red and white shemagh."),
         ("SOC", "SOC Analyzer",
          "Drop in logs, PCAPs, screenshots or alerts. Nashmi writes a structured "
          "incident report with IoCs, MITRE ATT&CK mapping and remediation steps."),
@@ -7530,7 +7572,7 @@ STORY_TEMPLATE = """<!DOCTYPE html>
     }
     h3 { margin: 8px 0 4px; color: #fff; font-size: 1.15rem; }
     p { margin: 0; font-size: 0.94rem; line-height: 1.55; }
-    #fox {
+    #cat {
         position: absolute; left: 0; top: 0; z-index: 3;
         width: 64px; height: 74px;
         transform: translate(-50%, -56%); transform-origin: 50% 60%;
@@ -7541,7 +7583,7 @@ STORY_TEMPLATE = """<!DOCTYPE html>
     @media (max-width: 699px) {
         :root { --tx: 40px; }
         .row { padding-left: 84px; }
-        #fox { width: 46px; height: 53px; }
+        #cat { width: 46px; height: 53px; }
     }
     @media (min-width: 700px) {
         :root { --tx: 50%; }
@@ -7562,10 +7604,10 @@ STORY_TEMPLATE = """<!DOCTYPE html>
     <div id="sky"><canvas id="far"></canvas><canvas id="near"></canvas></div>
     <svg id="pathsvg" aria-hidden="true"><path id="pathBg"></path><path id="pathFill"></path></svg>
     <div id="rows">__CARDS__</div>
-    <canvas id="fox" width="40" height="46" role="img" aria-label="Nashmi's cat walking down the line"></canvas>
+    <canvas id="cat" width="40" height="46" role="img" aria-label="Nashmi the cat walking down the line"></canvas>
 </div>
 <script>
-__FOX_JS__
+__LOOK_JS__
 </script>
 <script>
 (function () {
@@ -7575,16 +7617,16 @@ __FOX_JS__
     var wrap = document.getElementById('wrap');
     var rows = Array.prototype.slice.call(document.querySelectorAll('.row'));
     var pathBg = document.getElementById('pathBg'), pathFill = document.getElementById('pathFill');
-    var fox = document.getElementById('fox'), sky = document.getElementById('sky');
+    var cat = document.getElementById('cat'), sky = document.getElementById('sky');
     var far = document.getElementById('far'), near = document.getElementById('near');
     var P = null, fe = null;
     try { P = window.parent; fe = window.frameElement; void P.document.body; }
     catch (err) { P = null; fe = null; }
     var H = 0, W = 0, y0 = 0, y1 = 0, centers = [], skyH = 0, pts = [], pathLen = 0;
 
-    var cctx = fox.getContext('2d');
+    var cctx = cat.getContext('2d');
     var look = makeLook(wrap, function () {
-        var r = fox.getBoundingClientRect();
+        var r = cat.getBoundingClientRect();
         return { x: r.left + r.width / 2, y: r.top + r.height * 0.4 };
     });
 
@@ -7654,7 +7696,7 @@ __FOX_JS__
         var f = Math.max(0, Math.min(1, (y - a.y) / ((b.y - a.y) || 1)));
         return { x: a.x + (b.x - a.x) * f, y: y, dist: a.dist + (b.dist - a.dist) * f };
     }
-    // eight directions like a desktop pet: [pose, mirror, tilt]
+    // eight directions like a desktop-pet cat: [pose, mirror, tilt]
     function dirOf(a) {
         if (a > -22.5 && a <= 22.5) { return ['runE', 1, 0]; }
         if (a > 22.5 && a <= 67.5) { return ['runE', 1, 25]; }
@@ -7678,7 +7720,7 @@ __FOX_JS__
         cy += d * 0.14;
         if (Math.abs(d) < 0.05) { cy = tgt; }
         var p = pointAtY(cy);
-        fox.style.left = p.x + 'px'; fox.style.top = p.y + 'px';
+        cat.style.left = p.x + 'px'; cat.style.top = p.y + 'px';
         pathFill.style.strokeDashoffset = (pathLen - p.dist) + 'px';
         if (prevX === null) { prevX = p.x; prevY = p.y; }
         svx += ((p.x - prevX) - svx) * 0.35; svy += ((p.y - prevY) - svy) * 0.35;
@@ -7701,7 +7743,7 @@ __FOX_JS__
         rotCur += (rot - rotCur) * 0.3;
         look.update(now);
         drawCatState(cctx, state, now / 1000, gait, look.x, look.y);
-        fox.style.transform = 'translate(-50%, -56%) scaleX(' + flip + ') rotate(' + rotCur.toFixed(1) + 'deg)';
+        cat.style.transform = 'translate(-50%, -56%) scaleX(' + flip + ') rotate(' + rotCur.toFixed(1) + 'deg)';
         var best = 0, bd = 1e9;
         for (var i = 0; i < rows.length; i++) {
             var on = centers[i] <= cy + 14;
@@ -7742,7 +7784,7 @@ def render_story() -> None:
         for tag, title, text in STORY_CARDS[lang()]
     )
     markup = (STORY_TEMPLATE.replace("__CARDS__", cards)
-              .replace("__FOX_JS__", FOX_JS + WALKER_JS))
+              .replace("__LOOK_JS__", LOOK_JS + WALKER_JS))
     embed_html(markup, STORY_HEIGHT)
 
 STRINGS = {
@@ -8337,7 +8379,7 @@ MINI_LOGO_TEMPLATE = """<!DOCTYPE html>
     .logo { position: relative; width: 44px; height: 44px; flex: none; }
     .logo canvas { position: absolute; left: 0; top: 0; width: 44px; height: 44px; }
     .logo img { position: absolute; left: 6px; top: 6px; width: 32px; height: 32px;
-        border-radius: 50%; object-fit: cover; image-rendering: pixelated;
+        border-radius: 50%; object-fit: cover;
         box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.16), 0 0 14px rgba(255, 59, 63, 0.55); }
     .name { color: #fff; font-weight: 800; font-size: 19px; letter-spacing: 0.01em; white-space: nowrap; }
     .name span { color: #E5383B; font-family: ui-monospace, Consolas, monospace; }
@@ -8881,7 +8923,7 @@ def otp_gate(user_id: int | None, user: dict | None) -> bool:
 
 
 def render_auth_page(mode: str) -> None:
-    """Sign-in and sign-up page. On a wide screen the fox banner sits on the
+    """Sign-in and sign-up page. On a wide screen the animated banner sits on the
     left and the form on the right; on a phone they stack. Google shows its own
     password / 2-step screen and Nashmi never sees a password. A new Google
     account must finish the sign-up step before it can use the app."""
