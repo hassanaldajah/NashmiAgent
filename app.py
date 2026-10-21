@@ -7740,7 +7740,7 @@ STORY_TEMPLATE = """<!DOCTYPE html>
         filter: drop-shadow(0 0 12px rgba(255, 59, 63, 0.45));
     }
     #fox .part { position: absolute; inset: 0; will-change: transform; }
-    #fox .rig { position: absolute; display: none; }
+    #fox .rig { position: absolute; display: none; transform-origin: 50% 100%; }
     #fox .part img { position: absolute; display: block; }
     #fox .rig .part img { image-rendering: pixelated; }
     #zz {
@@ -7795,7 +7795,7 @@ __LOOK_JS__
         Array.prototype.forEach.call(rig.querySelectorAll('.part'), function (el) { into[el.getAttribute('data-g')] = el; });
     }
     collect(rigSide, sideP); collect(rigBack, backP);
-    var curView = 'front';
+    var curView = 'front', wantView = 'front', wantSince = 0;
     Array.prototype.forEach.call(fx.querySelectorAll('.part'), function (el) { part[el.getAttribute('data-part')] = el; });
     var far = document.getElementById('far'), near = document.getElementById('near');
     var P = null, fe = null;
@@ -7944,6 +7944,12 @@ __LOOK_JS__
             if (Math.abs(svx) > 0.4 * Math.abs(svy)) { view = 'side'; flip = svx > 0 ? -1 : 1; }
             else if (svy < 0) { view = 'back'; }
         }
+        // a new facing has to hold for a moment before it is shown, so it does not flicker at the corners
+        if (view !== wantView) { wantView = view; wantSince = now; }
+        if (view !== curView && now - wantSince < 260) { view = curView; }
+        // the stride is as long as the figure on show is wide: a longer body takes a longer, slower step
+        ph = gait / (W * (view === 'side' ? 1.7 : view === 'back' ? 1.2 : 0.95)) * 6.2832;
+        s1 = Math.sin(ph);
         if (view !== curView) {
             curView = view;
             rigFront.style.display = view === 'front' ? '' : 'none';
@@ -7957,8 +7963,8 @@ __LOOK_JS__
             if (sideP.fl_near) {
                 // legs stay upright like a cat's: each steps forward (lifted), then pushes back along the ground
                 var sl = function (el, dirn, c) {
-                    el.style.transform = up + 'translate(' + (-dirn * s1 * 11 * ku * wk).toFixed(2) + 'px,'
-                        + (-Math.max(0, dirn * c) * 5 * ku * wk).toFixed(2) + 'px) ' + deg(-dirn * s1 * 3 * wk);
+                    el.style.transform = up + 'translate(' + (-dirn * s1 * 8 * ku * wk).toFixed(2) + 'px,'
+                        + (-Math.max(0, dirn * c) * 3.5 * ku * wk).toFixed(2) + 'px) ' + deg(-dirn * s1 * 3 * wk);
                 };
                 var c1 = Math.cos(ph);
                 sl(sideP.fl_near, 1, c1); sl(sideP.hl_far, 1, c1);
@@ -7967,8 +7973,9 @@ __LOOK_JS__
                 sideP.head.style.transform = 'translateY(' + (bob + Math.cos(ph * 2) * 1.0 * ku * wk).toFixed(2) + 'px) ' + deg(-s1 * 2.2 * wk);
                 sideP.tail.style.transform = up + deg(Math.sin(ph * 2) * 8 * wk + Math.sin(now / 900) * 5 * idle);
             }
-            rigSide.style.transform = 'scaleX(' + flip + ')';
+            rigSide.style.transform = 'scaleX(' + flip + ') scale(0.8)';
         } else if (view === 'back' && rigBack) {
+            rigBack.style.transform = 'scale(0.86)';
             var sx = s1 * 1.5 * ku * wk, lf = 9 * ku * wk;
             if (backP.torso) {
                 backP.leg_l.style.transform = 'translateY(' + (bob - Math.max(0, s1) * lf).toFixed(2) + 'px)';
