@@ -7619,12 +7619,19 @@ STORY_CARDS = {
          "Web, crypto, pwn, reverse, forensics, stego and OSINT. Describe the "
          "challenge and get a step-by-step plan with exact commands, tuned to "
          "the category."),
+        ("LABS", "Specialist labs",
+         "Penetration testing, malware analysis, forensics and incident response, "
+         "network and cloud security, secure coding and SQL, and threat intel. "
+         "Each lab has its own focus and ready-made starters."),
         ("TOOLS", "Security Toolbox",
          "CVE lookups from the NVD, hashing and encoding, and an IOC extractor. "
          "No AI needed, and everything can be exported."),
         ("EXAM", "Practice Exams",
          "Build an exam from a topic or your own slides and PDFs, take it, and "
          "get it graded."),
+        ("PROJECTS", "Pick up where you left off",
+         "Every track keeps its own saved chats. Search them, group related work "
+         "into projects, and export any answer."),
         ("PRIVACY", "Your key, your data",
          "Bring your own API key (Gemini, Groq, OpenAI or Claude). Your chats "
          "and saved keys are encrypted."),
@@ -7647,12 +7654,18 @@ STORY_CARDS = {
         ("CTF", "\u0645\u062f\u0631\u0651\u0628 CTF",
          "Web \u0648Crypto \u0648Pwn \u0648Reverse \u0648Forensics \u0648Stego \u0648OSINT. \u0635\u0650\u0641 \u0627\u0644\u062a\u062d\u062f\u064a "
          "\u0648\u0633\u064a\u0639\u0637\u064a\u0643 \u062e\u0637\u0629 \u062e\u0637\u0648\u0629 \u0628\u062e\u0637\u0648\u0629 \u0645\u0639 \u0627\u0644\u0623\u0648\u0627\u0645\u0631 \u0627\u0644\u062f\u0642\u064a\u0642\u0629 \u062d\u0633\u0628 \u0627\u0644\u0641\u0626\u0629."),
+        ("\u0627\u0644\u0645\u062e\u062a\u0628\u0631\u0627\u062a", "\u0645\u062e\u062a\u0628\u0631\u0627\u062a \u0645\u062a\u062e\u0635\u0635\u0629",
+         "\u0627\u062e\u062a\u0628\u0627\u0631 \u0627\u0644\u0627\u062e\u062a\u0631\u0627\u0642\u060c \u062a\u062d\u0644\u064a\u0644 \u0627\u0644\u0628\u0631\u0645\u062c\u064a\u0627\u062a \u0627\u0644\u062e\u0628\u064a\u062b\u0629\u060c \u0627\u0644\u062a\u062d\u0642\u064a\u0642 \u0627\u0644\u062c\u0646\u0627\u0626\u064a \u0648\u0627\u0644\u0627\u0633\u062a\u062c\u0627\u0628\u0629 \u0644\u0644\u062d\u0648\u0627\u062f\u062b\u060c "
+         "\u0623\u0645\u0646 \u0627\u0644\u0634\u0628\u0643\u0627\u062a \u0648\u0627\u0644\u0633\u062d\u0627\u0628\u0629\u060c \u0627\u0644\u0628\u0631\u0645\u062c\u0629 \u0627\u0644\u0622\u0645\u0646\u0629 \u0648SQL\u060c \u0648\u0627\u0633\u062a\u062e\u0628\u0627\u0631\u0627\u062a \u0627\u0644\u062a\u0647\u062f\u064a\u062f\u0627\u062a. \u0644\u0643\u0644 \u0645\u062e\u062a\u0628\u0631 \u062a\u062e\u0635\u0635\u0647 \u0648\u0623\u0633\u0626\u0644\u0629 \u062c\u0627\u0647\u0632\u0629 \u062a\u0628\u062f\u0623 \u0645\u0646\u0647\u0627."),
         ("\u0627\u0644\u0623\u062f\u0648\u0627\u062a", "\u0635\u0646\u062f\u0648\u0642 \u0623\u062f\u0648\u0627\u062a \u0627\u0644\u0623\u0645\u0646",
          "\u0628\u062d\u062b CVE \u0645\u0646 NVD\u060c \u0648\u062a\u062c\u0632\u0626\u0629 (hash) \u0648\u062a\u0631\u0645\u064a\u0632\u060c \u0648\u0645\u0633\u062a\u062e\u0631\u062c IOC. "
          "\u0628\u062f\u0648\u0646 \u0630\u0643\u0627\u0621 \u0627\u0635\u0637\u0646\u0627\u0639\u064a\u060c \u0648\u064a\u0645\u0643\u0646 \u062a\u0635\u062f\u064a\u0631 \u0643\u0644 \u0634\u064a\u0621."),
         ("\u0627\u0644\u0627\u0645\u062a\u062d\u0627\u0646\u0627\u062a", "\u0627\u0645\u062a\u062d\u0627\u0646\u0627\u062a \u062a\u062f\u0631\u064a\u0628\u064a\u0629",
          "\u0627\u0628\u0646\u0650 \u0627\u0645\u062a\u062d\u0627\u0646\u0627\u064b \u0645\u0646 \u0645\u0648\u0636\u0648\u0639 \u0623\u0648 \u0645\u0646 \u0634\u0631\u0627\u0626\u062d\u0643 \u0648\u0645\u0644\u0641\u0627\u062a PDF\u060c "
          "\u0648\u0642\u062f\u0651\u0645\u0647\u060c \u062b\u0645 \u0627\u062d\u0635\u0644 \u0639\u0644\u0649 \u062a\u0635\u062d\u064a\u062d\u0647."),
+        ("\u0627\u0644\u0645\u062d\u0627\u062f\u062b\u0627\u062a", "\u0623\u0643\u0645\u0644 \u0645\u0646 \u062d\u064a\u062b \u062a\u0648\u0642\u0641\u062a",
+         "\u0643\u0644 \u0645\u0633\u0627\u0631 \u064a\u062d\u062a\u0641\u0638 \u0628\u0645\u062d\u0627\u062f\u062b\u0627\u062a\u0647 \u0627\u0644\u0645\u062d\u0641\u0648\u0638\u0629. \u0627\u0628\u062d\u062b \u0641\u064a\u0647\u0627\u060c "
+         "\u0648\u0646\u0638\u0651\u0645 \u0623\u0639\u0645\u0627\u0644\u0643 \u0627\u0644\u0645\u062a\u0642\u0627\u0631\u0628\u0629 \u0641\u064a \u0645\u0634\u0627\u0631\u064a\u0639\u060c \u0648\u0635\u062f\u0651\u0631 \u0623\u064a \u0625\u062c\u0627\u0628\u0629."),
         ("\u0627\u0644\u062e\u0635\u0648\u0635\u064a\u0629", "\u0645\u0641\u062a\u0627\u062d\u0643 \u0648\u0628\u064a\u0627\u0646\u0627\u062a\u0643",
          "\u0627\u0633\u062a\u062e\u062f\u0645 \u0645\u0641\u062a\u0627\u062d API \u0627\u0644\u062e\u0627\u0635 \u0628\u0643 (Gemini \u0623\u0648 Groq \u0623\u0648 OpenAI \u0623\u0648 Claude). "
          "\u0645\u062d\u0627\u062f\u062b\u0627\u062a\u0643 \u0648\u0645\u0641\u0627\u062a\u064a\u062d\u0643 \u0627\u0644\u0645\u062d\u0641\u0648\u0638\u0629 \u0645\u0634\u0641\u0651\u0631\u0629."),
@@ -7700,7 +7713,7 @@ STORY_TEMPLATE = """<!DOCTYPE html>
     #pathFill { fill: none; stroke: #ff4b4f; stroke-width: 2.5; stroke-linecap: round;
                 filter: drop-shadow(0 0 6px rgba(229, 56, 59, 0.7)); }
     #rows { position: relative; z-index: 2; }
-    .row { position: relative; margin: 0 0 24px; min-height: 64px; }
+    .row { position: relative; margin: 0 0 76px; min-height: 64px; }
     .node {
         position: absolute; top: 24px; left: var(--tx); width: 12px; height: 12px;
         margin-left: -7px; background: #0b111c; z-index: 2;
@@ -7750,16 +7763,16 @@ STORY_TEMPLATE = """<!DOCTYPE html>
     @keyframes zfloat { 0%, 100% { transform: translate(0, 0); } 50% { transform: translate(4px, -8px); } }
     @media (max-width: 699px) {
         :root { --tx: 40px; }
-        .row { padding-left: 84px; }
+        .row { padding-left: 84px; margin-bottom: 84px; }
         #fox { width: 48px; }
     }
     @media (min-width: 700px) {
         :root { --tx: 50%; }
-        .row .card { width: calc(50% - 82px); }
+        .row .card { width: calc(44% - 30px); }
         .row:nth-child(even) .card { margin-left: auto; }
-        /* the line zigzags between the card sides, like a path from card to card */
-        .row:nth-child(odd) .node { margin-left: -41px; }
-        .row:nth-child(even) .node { margin-left: 27px; }
+        /* the line zigzags right across the page: each card sits on one side, its node on the other */
+        .row:nth-child(odd) .node { left: 80%; }
+        .row:nth-child(even) .node { left: 20%; }
         #wrap { padding-left: 24px; padding-right: 24px; }
     }
     @media (prefers-reduced-motion: reduce) {
@@ -7834,21 +7847,18 @@ __LOOK_JS__
             ny.push(n.top - wb.top + n.height / 2);
         });
         centers = ny; y0 = ny[0]; y1 = ny[ny.length - 1];
-        // between two cards the line goes straight, then diagonally, then straight again
+        // each node sits beside its card, on the empty side; between two cards the line goes straight
+        // down past the card, then right across the page, then straight down to the next node. On a
+        // phone the cards fill the width, so the line crosses over to the right edge and back in the gap.
+        var ctop = rows.map(function (r) { return r.getBoundingClientRect().top - wb.top; });
+        var cbot = rows.map(function (r, k) { return ctop[k] + r.querySelector('.card').offsetHeight; });
+        var phone = window.matchMedia && window.matchMedia('(max-width: 699px)').matches;
         var d = 'M ' + nx[0] + ',' + ny[0];
         for (var i = 1; i < nx.length; i++) {
-            var st = Math.round((ny[i] - ny[i - 1]) * 0.3 / 4) * 4;
-            if (W < 700) {
-                // a phone's line is one straight column, so the fox would only ever walk towards you:
-                // between two cards it steps out to the right and back to the left, almost level
-                var gap = ny[i] - ny[i - 1], J = 28, jy = 14, x0 = nx[i - 1], x1 = nx[i];
-                var a = ny[i - 1] + gap * 0.22, b = ny[i - 1] + gap * 0.52;
-                d += ' L ' + x0 + ',' + a + ' L ' + (x0 + J) + ',' + (a + jy) +
-                     ' L ' + (x0 + J) + ',' + b + ' L ' + x1 + ',' + (b + jy) + ' L ' + x1 + ',' + ny[i];
-            } else {
-                d += ' L ' + nx[i - 1] + ',' + (ny[i - 1] + st) +
-                     ' L ' + nx[i] + ',' + (ny[i] - st) + ' L ' + nx[i] + ',' + ny[i];
-            }
+            var a = cbot[i - 1] + 8, b = ctop[i] - 8;
+            d += ' L ' + nx[i - 1] + ',' + a;
+            if (phone) { d += ' L ' + (W - 34) + ',' + ((a + b) / 2); }
+            d += ' L ' + nx[i] + ',' + b + ' L ' + nx[i] + ',' + ny[i];
         }
         pathBg.setAttribute('d', d); pathFill.setAttribute('d', d);
         pathLen = pathBg.getTotalLength();
