@@ -2837,9 +2837,18 @@ def logo_badge(size: int) -> Image.Image:
     return badge
 
 
-def _eyes_json(img: Image.Image, boxes) -> str:
+def _eyes_json(img: Image.Image, boxes, pad: int = 12, cover: bool = True) -> str:
+    """Eye data for the pages. `bg` is the colour of the face between the eyes: the cover that
+    hides the picture's own eyes has exactly that colour, so no box can show."""
+    import numpy as np
+
     w, h = img.size
-    return json.dumps({"w": w, "h": h, "boxes": boxes, "step": EYE_STEP, "up": 30})
+    (x0, y0, w0, h0), (x1, _, _, _) = boxes
+    mx, my = (x0 + w0 + x1) // 2, y0 + h0 // 2
+    block = np.asarray(img)[my - 25:my + 25, mx - 25:mx + 25].reshape(-1, 4)
+    vals, counts = np.unique(block[:, :3], axis=0, return_counts=True)
+    bg = "rgb(%d,%d,%d)" % tuple(int(v) for v in vals[counts.argmax()])
+    return json.dumps({"w": w, "h": h, "boxes": boxes, "step": EYE_STEP, "up": 30, "bg": bg, "pad": pad, "cover": cover})
 
 
 def logo_eyes_json() -> str:
@@ -2847,12 +2856,75 @@ def logo_eyes_json() -> str:
 
 
 def story_eyes_json() -> str:
-    return _eyes_json(story_image(), STORY_EYE_BOXES)
+    return _eyes_json(story_image(), STORY_EYE_BOXES, 28, cover=False)
 
 
 def logo_ratio() -> str:
     w, h = logo_image().size
     return f"{w} / {h}"
+
+
+# The story fox is cut into layers that move on their own. Boxes are in pixels of the picture; each
+# layer is grown a few pixels so neighbouring layers overlap and no seam shows at rest.
+STORY_PIVOTS = {            # where each layer turns (x, y in picture pixels)
+    "tail": (1075, 1540), "body": (600, 1640), "legl": (490, 1390), "legr": (740, 1390), "head": (600, 1010),
+}
+STORY_DRAW_ORDER = ("tail", "body", "legl", "legr", "head")
+
+
+@st.cache_resource
+def story_parts_html(height: int = 220) -> str:
+    """The five layers of the story fox as HTML: one div per layer holding its cropped picture."""
+    import numpy as np
+
+    img = story_image()
+    arr = np.array(img)
+    h, w = arr.shape[:2]
+    # the picture's own eyes are painted out here (the face colour is blended across each eye box,
+    # row by row), because the page draws the eyes itself and moves them
+    pad = 28
+    for ex, ey, ew, eh in STORY_EYE_BOXES:
+        x0, x1 = ex - pad, ex + ew + pad
+        t = np.linspace(0, 1, x1 - x0)[:, None]
+        for row in range(ey - pad, ey + eh + pad):
+            left, right = arr[row, x0 - 1, :3].astype(float), arr[row, x1, :3].astype(float)
+            arr[row, x0:x1, :3] = (left * (1 - t) + right * t).round().astype(np.uint8)
+    yy, xx = np.mgrid[0:h, 0:w]
+    tail = (xx >= 1220) | ((yy >= 1100) & (xx >= 1065))
+    masks = {
+        "head": (yy < 1005) & ~tail,
+        "tail": tail,
+        "legl": (xx >= 382) & (xx <= 600) & (yy >= 1390) & ~tail,
+        "legr": (xx >= 601) & (xx <= 880) & (yy >= 1390) & ~tail,
+    }
+    masks["body"] = ~(masks["head"] | tail | masks["legl"] | masks["legr"])
+
+    def grow(m, px):
+        k = np.zeros_like(m)
+        for dy in range(-px, px + 1, 2):
+            for dx in range(-px, px + 1, 2):
+                k |= np.roll(np.roll(m, dy, 0), dx, 1)
+        return k
+
+    grown = {"tail": 14, "body": 12, "legl": 14, "legr": 14, "head": 14}
+    out = []
+    for name in STORY_DRAW_ORDER:
+        layer = arr.copy()
+        layer[:, :, 3] = np.where(grow(masks[name], grown[name]), arr[:, :, 3], 0)
+        ys, xs = np.nonzero(layer[:, :, 3] > 0)
+        x0, y0, x1, y1 = int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1
+        crop = Image.fromarray(layer, "RGBA").crop((x0, y0, x1, y1))
+        scale = height / h
+        small = _scaled(crop, (max(1, round(crop.width * scale)), max(1, round(crop.height * scale))))
+        buf = io.BytesIO()
+        small.save(buf, "PNG", optimize=True)
+        uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+        px, py = STORY_PIVOTS[name]
+        out.append(
+            f'<div class="part" data-part="{name}" style="transform-origin:{px / w * 100:.2f}% {py / h * 100:.2f}%">'
+            f'<img src="{uri}" alt="" style="left:{x0 / w * 100:.3f}%;top:{y0 / h * 100:.3f}%;'
+            f'width:{(x1 - x0) / w * 100:.3f}%;height:{(y1 - y0) / h * 100:.3f}%"></div>')
+    return "".join(out)
 
 
 def story_ratio() -> str:
@@ -6665,14 +6737,14 @@ function makeLook(el, getCenter) {
 # blocks like the picture itself) and blink for 120 ms every 3 to 6 seconds.
 LOGO_JS = """function logoEyes(wrap, cfg) {
     var pct = function (v, total) { return (v / total * 100).toFixed(3) + '%'; };
-    var pad = 12, eyes = cfg.boxes.map(function (b) {
+    var pad = cfg.pad || 12, eyes = cfg.boxes.map(function (b) {
         var cover = document.createElement('i'), pupil = document.createElement('i');
-        cover.style.cssText = 'position:absolute;background:#fff;left:' + pct(b[0] - pad, cfg.w) +
+        cover.style.cssText = 'position:absolute;background:' + (cfg.bg || '#fff') + ';left:' + pct(b[0] - pad, cfg.w) +
             ';top:' + pct(b[1] - pad, cfg.h) + ';width:' + pct(b[2] + 2 * pad, cfg.w) +
             ';height:' + pct(b[3] + 2 * pad, cfg.h);
         pupil.style.cssText = 'position:absolute;background:#000;left:' + pct(b[0], cfg.w) +
             ';top:' + pct(b[1], cfg.h) + ';width:' + pct(b[2], cfg.w) + ';height:' + pct(b[3], cfg.h);
-        wrap.appendChild(cover);
+        if (cfg.cover !== false) { wrap.appendChild(cover); }
         wrap.appendChild(pupil);
         return { b: b, pupil: pupil };
     });
@@ -7449,7 +7521,8 @@ STORY_TEMPLATE = """<!DOCTYPE html>
         pointer-events: none;
         filter: drop-shadow(0 0 12px rgba(255, 59, 63, 0.45));
     }
-    #fox img { display: block; width: 100%; height: 100%; }
+    #fox .part { position: absolute; inset: 0; will-change: transform; }
+    #fox .part img { position: absolute; display: block; }
     #zz {
         position: absolute; left: 92%; top: -8px; opacity: 0; transition: opacity 0.4s;
         color: #fff; font: 700 12px ui-monospace, Consolas, monospace; letter-spacing: 2px;
@@ -7480,7 +7553,7 @@ STORY_TEMPLATE = """<!DOCTYPE html>
     <div id="sky"><canvas id="far"></canvas><canvas id="near"></canvas></div>
     <svg id="pathsvg" aria-hidden="true"><path id="pathBg"></path><path id="pathFill"></path></svg>
     <div id="rows">__CARDS__</div>
-    <div id="fox"><img src="__STORY_FOX__" alt="Nashmi's fox walking down the line"><span id="zz">z z</span></div>
+    <div id="fox"><div id="fx" role="img" aria-label="Nashmi's fox walking down the line">__STORY_PARTS__</div><span id="zz">z z</span></div>
 </div>
 <script>
 __LOOK_JS__
@@ -7494,6 +7567,9 @@ __LOOK_JS__
     var rows = Array.prototype.slice.call(document.querySelectorAll('.row'));
     var pathBg = document.getElementById('pathBg'), pathFill = document.getElementById('pathFill');
     var fox = document.getElementById('fox'), zz = document.getElementById('zz'), sky = document.getElementById('sky');
+    var fx = document.getElementById('fx');
+    var part = {};
+    Array.prototype.forEach.call(fx.querySelectorAll('.part'), function (el) { part[el.getAttribute('data-part')] = el; });
     var far = document.getElementById('far'), near = document.getElementById('near');
     var P = null, fe = null;
     try { P = window.parent; fe = window.frameElement; void P.document.body; }
@@ -7504,7 +7580,7 @@ __LOOK_JS__
         var r = fox.getBoundingClientRect();
         return { x: r.left + r.width * 0.38, y: r.top + r.height * 0.4 };
     });
-    var eyes = logoEyes(fox, __STORY_EYES__);
+    var eyes = logoEyes(part.head, __STORY_EYES__);
 
     function rng(seed) {
         var s = seed;
@@ -7586,7 +7662,7 @@ __LOOK_JS__
 
     var cy = y0, prevX = null, prevY = null, svx = 0, svy = 0, gait = 0;
     var state = 'sit', stillSince = null, wasMoving = false, alertUntil = 0;
-    var flip = 1, rot = 0, rotCur = 0, passed = [], active = -1;
+    var flip = 1, rot = 0, rotCur = 0, passed = [], active = -1, wk = 0;
     function frame(now) {
         var r = fe ? fe.getBoundingClientRect() : null;
         var vh = (P && P.innerHeight) || 700, tgt;
@@ -7606,9 +7682,9 @@ __LOOK_JS__
         if (speed > 0.4) {
             if (!wasMoving && now - stillSince > 1500) { alertUntil = now + 380; }   // wakes up, perks up first
             wasMoving = true; stillSince = now;
-            gait += speed / 5;                                  // one stride every ~5 px travelled
+            gait += speed;                                      // distance travelled, in px
             var da = dirOf(Math.atan2(svy, svx) * 180 / Math.PI);
-            state = now < alertUntil ? 'alert' : da[0]; flip = da[1]; rot = da[2];
+            state = now < alertUntil ? 'alert' : 'walk'; flip = da[1]; rot = da[2] * 0.25;
         } else {
             if (wasMoving) { wasMoving = false; stillSince = now; }
             var still = (now - stillSince) / 1000;
@@ -7621,12 +7697,26 @@ __LOOK_JS__
         // eyes follow the pointer, and are shut when it is tired or asleep
         var asleep = state === 'sleep';
         eyes(now, look.x, look.y, asleep || state === 'tired');
-        // a hop with every stride while it moves, a slow breath while it sleeps, a wiggle when it scratches
-        var hop = state.indexOf('run') === 0 ? -Math.abs(Math.sin(gait * Math.PI)) * 4 : 0;
-        var breath = asleep ? 1 + Math.sin(now / 700) * 0.025 : 1;
-        var wiggle = state === 'scratch' ? Math.sin(now / 60) * 4 : 0;
-        fox.style.transform = 'translate(-50%, calc(-56% + ' + hop.toFixed(1) + 'px)) scaleX(' + flip + ') rotate(' +
-            (rotCur + wiggle).toFixed(1) + 'deg) scale(1, ' + breath.toFixed(3) + ')';
+        // The walk: legs lift one after the other, the body sways over the foot that is down, the head
+        // keeps level against it and the tail swings. One full step cycle per stride, and the stride
+        // is as long as the fox is wide, so its feet do not slide. Nothing hops.
+        var W = fox.offsetWidth, Hh = fox.offsetHeight;
+        var walking = state === 'walk' || state === 'alert' ? 1 : 0;
+        wk += (walking - wk) * 0.18;                              // eases in and out of the walk
+        var ph = gait / (W * 0.95) * 6.2832;
+        var s1 = Math.sin(ph), lift = 0.085 * Hh * wk;
+        var idle = (1 - wk);
+        var breath = asleep ? Math.sin(now / 700) * 0.02 : Math.sin(now / 1500) * 0.006;
+        var wiggle = state === 'scratch' ? Math.sin(now / 70) * 3 : 0;
+        var tx = function (el, t) { el.style.transform = t; };
+        tx(part.legl, 'translateY(' + (-Math.max(0, s1) * lift).toFixed(2) + 'px)');
+        tx(part.legr, 'translateY(' + (-Math.max(0, -s1) * lift).toFixed(2) + 'px)');
+        tx(part.body, 'translate(' + (s1 * 0.03 * W * wk).toFixed(2) + 'px,' + (-Math.abs(s1) * 0.014 * Hh * wk).toFixed(2) +
+            'px) rotate(' + (s1 * 2.6 * wk).toFixed(2) + 'deg) scale(1,' + (1 + breath).toFixed(4) + ')');
+        tx(part.head, 'translate(' + (s1 * 0.04 * W * wk).toFixed(2) + 'px,' + (Math.cos(ph * 2) * 0.01 * Hh * wk).toFixed(2) +
+            'px) rotate(' + (-s1 * 3.4 * wk + wiggle).toFixed(2) + 'deg)');
+        tx(part.tail, 'rotate(' + (Math.sin(ph + 1) * 13 * wk + Math.sin(now / 900) * 4 * idle).toFixed(2) + 'deg)');
+        fox.style.transform = 'translate(-50%, -56%) scaleX(' + flip + ') rotate(' + rotCur.toFixed(1) + 'deg)';
         zz.style.opacity = asleep ? 1 : 0;
         var best = 0, bd = 1e9;
         for (var i = 0; i < rows.length; i++) {
@@ -7669,7 +7759,7 @@ def render_story() -> None:
     )
     markup = (STORY_TEMPLATE.replace("__CARDS__", cards)
               .replace("__LOOK_JS__", LOOK_JS + LOGO_JS)
-              .replace("__STORY_FOX__", story_data_uri(180))
+              .replace("__STORY_PARTS__", story_parts_html())
               .replace("__STORY_RATIO__", story_ratio())
               .replace("__STORY_EYES__", story_eyes_json()))
     embed_html(markup, STORY_HEIGHT)
