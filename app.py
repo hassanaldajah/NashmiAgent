@@ -7955,10 +7955,14 @@ __LOOK_JS__
             var sw = 16 * wk, deg = function (a) { return 'rotate(' + a.toFixed(2) + 'deg)'; };
             var up = 'translateY(' + bob.toFixed(2) + 'px) ';
             if (sideP.fl_near) {
-                sideP.fl_near.style.transform = up + deg(s1 * sw);
-                sideP.hl_far.style.transform = up + deg(s1 * sw);
-                sideP.fl_far.style.transform = up + deg(-s1 * sw);
-                sideP.hl_near.style.transform = up + deg(-s1 * sw);
+                // legs stay upright like a cat's: each steps forward (lifted), then pushes back along the ground
+                var sl = function (el, dirn, c) {
+                    el.style.transform = up + 'translate(' + (-dirn * s1 * 11 * ku * wk).toFixed(2) + 'px,'
+                        + (-Math.max(0, dirn * c) * 5 * ku * wk).toFixed(2) + 'px) ' + deg(-dirn * s1 * 3 * wk);
+                };
+                var c1 = Math.cos(ph);
+                sl(sideP.fl_near, 1, c1); sl(sideP.hl_far, 1, c1);
+                sl(sideP.fl_far, -1, c1); sl(sideP.hl_near, -1, c1);
                 sideP.torso.style.transform = up + deg(s1 * 1.2 * wk);
                 sideP.head.style.transform = 'translateY(' + (bob + Math.cos(ph * 2) * 1.0 * ku * wk).toFixed(2) + 'px) ' + deg(-s1 * 2.2 * wk);
                 sideP.tail.style.transform = up + deg(Math.sin(ph * 2) * 8 * wk + Math.sin(now / 900) * 5 * idle);
