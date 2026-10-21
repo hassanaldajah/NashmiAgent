@@ -7717,7 +7717,9 @@ __LOOK_JS__
             wasMoving = true; stillSince = now;
             gait += speed;                                      // distance travelled, in px
             var da = dirOf(Math.atan2(svy, svx) * 180 / Math.PI);
-            state = now < alertUntil ? 'alert' : 'walk'; flip = da[1]; rot = da[2] * 0.25;
+            state = now < alertUntil ? 'alert' : 'walk'; flip = 1;
+            // on the slanted parts of the line it leans into the direction it is going, right or left
+            rot = Math.max(-1, Math.min(1, svx / (speed || 1))) * 20;
         } else {
             if (wasMoving) { wasMoving = false; stillSince = now; }
             var still = (now - stillSince) / 1000;
@@ -7725,7 +7727,7 @@ __LOOK_JS__
                     (still < 4.6 ? 'sit' : (still < 8 ? 'tired' : 'sleep')));
             flip = 1; rot = 0;
         }
-        rotCur += (rot - rotCur) * 0.3;
+        rotCur += (rot - rotCur) * 0.18;
         look.update(now);
         // eyes follow the pointer, and are shut when it is tired or asleep
         var asleep = state === 'sleep';
@@ -7749,7 +7751,7 @@ __LOOK_JS__
         tx(part.head, 'translate(' + (s1 * 0.04 * W * wk).toFixed(2) + 'px,' + (Math.cos(ph * 2) * 0.01 * Hh * wk).toFixed(2) +
             'px) rotate(' + (-s1 * 3.4 * wk + wiggle).toFixed(2) + 'deg)');
         tx(part.tail, 'rotate(' + (Math.sin(ph + 1) * 13 * wk + Math.sin(now / 900) * 4 * idle).toFixed(2) + 'deg)');
-        fox.style.transform = 'translate(-50%, -56%) scaleX(' + flip + ') rotate(' + rotCur.toFixed(1) + 'deg)';
+        fox.style.transform = 'translate(-50%, -56%) rotate(' + rotCur.toFixed(1) + 'deg)';
         zz.style.opacity = asleep ? 1 : 0;
         var best = 0, bd = 1e9;
         for (var i = 0; i < rows.length; i++) {
