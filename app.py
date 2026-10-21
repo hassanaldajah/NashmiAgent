@@ -2763,24 +2763,36 @@ def on_wipe_all() -> None:
 # The Nashmi logo: the fox picture in assets/ is shown as it is (its own pixels, nothing
 # redrawn) on a transparent background. Only its size changes, to fit each place.
 # ---------------------------------------------------------------------------
-LOGO_FILE = Path(__file__).resolve().parent / "assets" / "nashmi-fox.png"
+ASSETS = Path(__file__).resolve().parent / "assets"
+LOGO_FILE = ASSETS / "nashmi-fox.png"           # the logo (with the shemagh)
+STORY_FILE = ASSETS / "nashmi-fox-story.png"    # the fox that walks down the story (no shemagh)
 PANEL_RGB = (19, 26, 38)            # the app's dark panel colour, behind the round logo
 
-# Where the two eyes are in the picture (pixels of the file: x, y, width, height). The banners
+# Where the two eyes are in each picture (pixels of the file: x, y, width, height). The pages
 # cover them with white and draw them again on top, so they follow the pointer, one
 # pixel-block (37 px of the picture) at a time, and blink.
 LOGO_EYE_BOXES = ((503, 578, 74, 166), (878, 578, 70, 166))
-LOGO_EYE_STEP = 37
+STORY_EYE_BOXES = ((383, 577, 74, 165), (758, 577, 69, 165))
+EYE_STEP = 37
+
+
+def _open_picture(path: Path) -> Image.Image:
+    """One of the owner's pictures from assets/ (RGBA). A missing file must not take the app down."""
+    try:
+        return Image.open(path).convert("RGBA")
+    except OSError:
+        logging.warning("Picture not found: %s", path)
+        return Image.new("RGBA", (8, 8), (0, 0, 0, 0))
 
 
 @st.cache_resource
 def logo_image() -> Image.Image:
-    """The logo picture (RGBA). A missing file must not take the whole app down."""
-    try:
-        return Image.open(LOGO_FILE).convert("RGBA")
-    except OSError:
-        logging.warning("Logo file not found: %s", LOGO_FILE)
-        return Image.new("RGBA", (8, 8), (0, 0, 0, 0))
+    return _open_picture(LOGO_FILE)
+
+
+@st.cache_resource
+def story_image() -> Image.Image:
+    return _open_picture(STORY_FILE)
 
 
 def _scaled(img: Image.Image, size: tuple[int, int]) -> Image.Image:
@@ -2788,14 +2800,22 @@ def _scaled(img: Image.Image, size: tuple[int, int]) -> Image.Image:
     return img.convert("RGBa").resize(size, Image.Resampling.LANCZOS).convert("RGBA")
 
 
-@st.cache_resource
-def logo_data_uri(height: int) -> str:
-    """The logo at the given height as a PNG data URI (for the HTML banners)."""
-    img = logo_image()
+def _png_uri(img: Image.Image, height: int) -> str:
+    """The picture at the given height as a PNG data URI (for the HTML pages)."""
     buf = io.BytesIO()
     _scaled(img, (max(1, round(img.width * height / img.height)), height)).save(
         buf, "PNG", optimize=True)
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+@st.cache_resource
+def logo_data_uri(height: int) -> str:
+    return _png_uri(logo_image(), height)
+
+
+@st.cache_resource
+def story_data_uri(height: int) -> str:
+    return _png_uri(story_image(), height)
 
 
 @st.cache_resource
@@ -2817,13 +2837,26 @@ def logo_badge(size: int) -> Image.Image:
     return badge
 
 
+def _eyes_json(img: Image.Image, boxes) -> str:
+    w, h = img.size
+    return json.dumps({"w": w, "h": h, "boxes": boxes, "step": EYE_STEP, "up": 30})
+
+
 def logo_eyes_json() -> str:
-    w, h = logo_image().size
-    return json.dumps({"w": w, "h": h, "boxes": LOGO_EYE_BOXES, "step": LOGO_EYE_STEP, "up": 30})
+    return _eyes_json(logo_image(), LOGO_EYE_BOXES)
+
+
+def story_eyes_json() -> str:
+    return _eyes_json(story_image(), STORY_EYE_BOXES)
 
 
 def logo_ratio() -> str:
     w, h = logo_image().size
+    return f"{w} / {h}"
+
+
+def story_ratio() -> str:
+    w, h = story_image().size
     return f"{w} / {h}"
 
 
@@ -6473,7 +6506,7 @@ def render_exam_track(settings: Settings) -> None:
 # ---------------------------------------------------------------------------
 # Landing page, sign-in page and admin screen
 # ---------------------------------------------------------------------------
-# Shared by the landing banner and the scroll story. makeLook gives a cat eyes
+# Shared by the landing banner and the scroll story. makeLook gives the fox eyes
 # that follow the pointer (also the pointer over the rest of the page) and
 # glance around by themselves when nobody is moving one.
 LOOK_JS = """function sizeFrame(h) {
@@ -6561,12 +6594,12 @@ LOGO_JS = """function logoEyes(wrap, cfg) {
         return { b: b, pupil: pupil };
     });
     var nextBlink = performance.now() + 3000, until = 0, last = '';
-    return function (now, lx, ly) {
+    return function (now, lx, ly, closed) {
         var dx = Math.max(-2, Math.min(2, Math.round(lx * 2))) * cfg.step;
         var dy = Math.max(-1, Math.min(1, Math.round(ly * 1.5)));
         dy = dy < 0 ? -cfg.up : dy * cfg.step;
         if (now > nextBlink) { until = now + 120; nextBlink = now + 3000 + Math.random() * 3000; }
-        var shut = now < until, key = dx + ',' + dy + ',' + shut;
+        var shut = closed || now < until, key = dx + ',' + dy + ',' + shut;
         if (key === last) { return; }
         last = key;
         eyes.forEach(function (e) {
@@ -6576,239 +6609,6 @@ LOGO_JS = """function logoEyes(wrap, cfg) {
             e.pupil.style.height = pct(h, cfg.h);
         });
     };
-}
-"""
-
-# The cat on the line in the story. It has no shemagh. Like a desktop-pet cat it
-# runs along the line in the direction it travels (front, back or side view),
-# and when it stops it sits, scratches, gets tired and finally falls asleep.
-WALKER_JS = """var WW = 40, WHT = 46;
-var K = '#0b0b10', WH = '#ffffff', GR = '#d3d8e3', RD = '#E5383B', PK = '#f4a3a8';
-
-function catPx(ctx) {
-    return function (x, y, w, h, c) { ctx.fillStyle = c; ctx.fillRect(Math.round(x), Math.round(y), w, h); };
-}
-
-function catHead(px, B, mode, blink, ox, oy, nx, ny) {
-    var y, x0, x1;
-    function pb(x, y2, w, h, c) { px(x, y2 + B, w, h, c); }
-    for (y = 12; y <= 27; y++) {
-        var ins = (y <= 13 || y >= 26) ? 2 : (y === 14 || y === 25 ? 1 : 0);
-        x0 = 7 + ins; x1 = 32 - ins;
-        pb(x0 - 1, y, 1, 1, K); pb(x1 + 1, y, 1, 1, K);
-        pb(x0, y, x1 - x0 + 1, 1, WH);
-    }
-    pb(9, 11, 22, 1, K); pb(9, 28, 22, 1, K);
-    var ew = [1, 2, 4, 5, 7], up = mode === 'alert' ? 1 : 0;
-    for (y = 6; y <= 10; y++) {
-        var w = ew[y - 6], e0 = 11 - Math.floor(w / 2), f0 = 28 - Math.floor(w / 2);
-        pb(e0 - 1, y - up, 1, 1, K); pb(e0, y - up, w, 1, WH); pb(e0 + w, y - up, 1, 1, K);
-        pb(f0 - 1, y - up, 1, 1, K); pb(f0, y - up, w, 1, WH); pb(f0 + w, y - up, 1, 1, K);
-    }
-    pb(11, 5 - up, 1, 1, K); pb(28, 5 - up, 1, 1, K);
-    pb(11, 8 - up, 1, 2, PK); pb(28, 8 - up, 1, 2, PK);
-    var eh = blink ? 1 : 5, ey = blink ? 18 : 16;
-    if (mode === 'alert') { eh = 6; ey = 15; }
-    if (mode === 'tired') { eh = 2; ey = 19; }
-    pb(13 + ox, ey + oy, 2, eh, K); pb(25 + ox, ey + oy, 2, eh, K);
-    pb(19 + nx, 22 + ny, 2, 1, RD);
-    if (mode === 'tired') { pb(19 + nx, 24 + ny, 2, 2, K); }
-    else { pb(18 + nx, 24 + ny, 1, 1, K); pb(19 + nx, 25 + ny, 2, 1, K); pb(21 + nx, 24 + ny, 1, 1, K); }
-    pb(3 + nx, 22, 4, 1, GR); pb(4 + nx, 24, 3, 1, GR);
-    pb(33 + nx, 22, 4, 1, GR); pb(33 + nx, 24, 3, 1, GR);
-}
-
-function drawCatSit(ctx, t, lx, ly, mode) {
-    var px = catPx(ctx), k, y;
-    ctx.clearRect(0, 0, WW, WHT);
-    var B = (mode === 'tired') ? 1 : (Math.sin(t * 1.6) > 0.75 ? 1 : 0);
-    function pb(x, y2, w, h, c) { px(x, y2 + B, w, h, c); }
-    var blink = (t % 3.6) > 3.45;
-    for (k = 0; k < 11; k++) {
-        var u = k / 10, wg = Math.sin(t * 3.2 + k * 0.5) * u * 2.2;
-        px(28 + 8 * Math.sin(u * 2.0) + wg - 1, 43 - 15 * u + B - 1, 4, 4, K);
-    }
-    for (k = 0; k < 11; k++) {
-        var v = k / 10, wg2 = Math.sin(t * 3.2 + k * 0.5) * v * 2.2;
-        px(28 + 8 * Math.sin(v * 2.0) + wg2, 43 - 15 * v + B, 2, 2, WH);
-    }
-    for (y = 29; y <= 43; y++) {
-        var hw = y < 32 ? 6 : (y < 37 ? 7 : 9);
-        pb(20 - hw - 1, y, 1, 1, K); pb(20 + hw, y, 1, 1, K);
-        pb(20 - hw, y, hw * 2, 1, WH);
-    }
-    pb(10, 44, 20, 1, K);
-    pb(16, 34, 8, 6, GR);
-    pb(13, 40, 5, 4, WH);
-    pb(12, 40, 1, 5, K); pb(18, 40, 1, 5, K); pb(15, 42, 1, 2, K);
-    if (mode === 'scratch') {                          // right paw scratches the head
-        var sw = Math.floor(t * 7) % 2;
-        pb(27 + sw, 34, 5, 3, K); pb(28 + sw, 34, 3, 3, WH);
-        pb(28 + sw, 24, 5, 11, K); pb(29 + sw, 24, 3, 10, WH);
-        pb(28 + sw, 22, 5, 3, K); pb(29 + sw, 22, 3, 3, WH);
-    } else {
-        pb(22, 40, 5, 4, WH);
-        pb(21, 40, 1, 5, K); pb(27, 40, 1, 5, K); pb(24, 42, 1, 2, K);
-    }
-    pb(13, 28, 14, 2, RD); pb(13, 28, 1, 2, K); pb(26, 28, 1, 2, K);
-    catHead(px, B, mode, blink, Math.round((lx || 0) * 2), Math.round((ly || 0) * 1.5),
-            Math.round(lx || 0), Math.round(ly || 0));
-    if (mode === 'alert') { px(33, 1, 2, 6, RD); px(33, 8, 2, 2, RD); }
-}
-
-function drawCatSleep(ctx, t) {
-    var px = catPx(ctx), y, x;
-    ctx.clearRect(0, 0, WW, WHT);
-    var br = Math.sin(t * 2) > 0.5 ? 1 : 0;
-    for (y = 26; y <= 41 + br; y++) {                  // curled body
-        var dy = (y - 33.5) / (8 + br / 2), half = Math.round(15 * Math.sqrt(Math.max(0, 1 - dy * dy)));
-        px(20 - half - 1, y, 1, 1, K); px(20 + half, y, 1, 1, K);
-        px(20 - half, y, half * 2, 1, WH);
-    }
-    px(8, 42 + br, 24, 1, K);
-    for (y = 26; y <= 41; y++) {                       // the tail wraps round the front
-        px(24, y, 0, 0, K);
-    }
-    px(20, 39, 12, 3, K); px(21, 40, 10, 2, WH); px(31, 37, 2, 4, K); px(30, 38, 2, 3, WH);
-    for (y = 26; y <= 40; y++) {                       // tucked head
-        for (x = 5; x <= 21; x++) {
-            var d = (x - 13) * (x - 13) + (y - 33) * (y - 33);
-            if (d <= 42) { px(x, y, 1, 1, WH); }
-            else if (d <= 55) { px(x, y, 1, 1, K); }
-        }
-    }
-    px(8, 24, 4, 3, K); px(9, 25, 2, 2, WH); px(16, 24, 4, 3, K); px(17, 25, 2, 2, WH);
-    px(9, 33, 3, 1, K); px(15, 33, 3, 1, K);           // closed eyes
-    px(13, 36, 2, 1, RD);                              // nose
-    var z = (t * 0.9) % 1;                             // floating Z letters
-    function zed(zx, zy, a) {
-        ctx.globalAlpha = a; px(zx, zy, 5, 1, WH); px(zx + 3, zy + 1, 1, 1, WH);
-        px(zx + 2, zy + 2, 1, 1, WH); px(zx + 1, zy + 3, 1, 1, WH); px(zx, zy + 4, 5, 1, WH);
-        ctx.globalAlpha = 1;
-    }
-    zed(27, 18 - Math.round(z * 8), 1 - z);
-    zed(32, 10 - Math.round(z * 6), Math.max(0, 0.8 - z));
-}
-
-function drawCatRunSide(ctx, t, gait) {
-    var px = catPx(ctx), y, k;
-    ctx.clearRect(0, 0, WW, WHT);
-    var g = Math.sin(gait * Math.PI), bob = Math.abs(g) > 0.6 ? 1 : 0;
-    for (k = 0; k < 10; k++) {
-        var u = k / 9, wv = Math.sin(t * 9 + k * 0.7) * u * 2;
-        px(8 - 7 * u - 1, 21 - 9 * u * u + wv - 1 + bob, 4, 4, K);
-    }
-    for (k = 0; k < 10; k++) {
-        var v = k / 9, wv2 = Math.sin(t * 9 + k * 0.7) * v * 2;
-        px(8 - 7 * v, 21 - 9 * v * v + wv2 + bob, 2, 2, WH);
-    }
-    function leg(x, phase) {
-        var sw = Math.round(Math.sin(gait * Math.PI + phase) * 4);
-        var lift = Math.max(0, Math.sin(gait * Math.PI + phase)) * 2;
-        px(x + sw - 1, 25 - lift + bob, 5, 11, K);
-        px(x + sw, 25 - lift + bob, 3, 10, WH);
-        px(x + sw - 1, 35 - lift + bob, 6, 1, K);
-    }
-    leg(10, 0); leg(26, 0); leg(14, Math.PI); leg(22, Math.PI);
-    for (y = 18; y <= 28; y++) {
-        var bi = (y === 18 || y === 28) ? 2 : 0;
-        px(7 + bi, y + bob, 1, 1, K); px(27 - bi, y + bob, 1, 1, K);
-        px(8 + bi, y + bob, 19 - bi * 2, 1, WH);
-    }
-    px(10, 18 + bob, 15, 1, K); px(10, 29 + bob, 15, 1, K);
-    px(11, 25 + bob, 12, 2, GR);
-    for (y = 14; y <= 26; y++) {
-        var ins = (y <= 15 || y >= 25) ? 2 : (y === 16 || y === 24 ? 1 : 0);
-        px(26 + ins - 1, y + bob, 1, 1, K); px(37 - ins + 1, y + bob, 1, 1, K);
-        px(26 + ins, y + bob, 12 - ins * 2, 1, WH);
-    }
-    px(28, 13 + bob, 8, 1, K); px(28, 27 + bob, 8, 1, K);
-    px(26, 20 + bob, 2, 7, RD);
-    px(28, 10 + bob, 3, 3, WH); px(28, 9 + bob, 3, 1, K); px(27, 10 + bob, 1, 3, K); px(31, 10 + bob, 1, 3, K);
-    px(33, 10 + bob, 3, 3, WH); px(33, 9 + bob, 3, 1, K); px(32, 10 + bob, 1, 3, K); px(36, 10 + bob, 1, 3, K);
-    px(29, 11 + bob, 1, 2, PK); px(34, 11 + bob, 1, 2, PK);
-    px(33, 17 + bob, 2, 4, K); px(37, 21 + bob, 2, 1, RD); px(36, 23 + bob, 2, 1, K);
-    px(38, 19 + bob, 2, 1, GR); px(38, 22 + bob, 2, 1, GR);
-}
-
-function drawCatRunFront(ctx, t, gait) {
-    var px = catPx(ctx), y, k;
-    ctx.clearRect(0, 0, WW, WHT);
-    var g = Math.sin(gait * Math.PI), B = Math.abs(g) > 0.6 ? 1 : 0;
-    function pb(x, y2, w, h, c) { px(x, y2 + B, w, h, c); }
-    for (k = 0; k < 9; k++) {
-        var u = k / 8, wv = Math.sin(t * 8 + k * 0.6) * u * 2.5;
-        px(30 + 6 * Math.sin(u * 1.6) + wv - 1, 38 - 17 * u * u + B - 1, 4, 4, K);
-    }
-    for (k = 0; k < 9; k++) {
-        var v = k / 8, wv2 = Math.sin(t * 8 + k * 0.6) * v * 2.5;
-        px(30 + 6 * Math.sin(v * 1.6) + wv2, 38 - 17 * v * v + B, 2, 2, WH);
-    }
-    function paw(x, ph) {
-        var s = Math.sin(gait * Math.PI + ph), len = 6 + Math.round(Math.max(0, s) * 4);
-        px(x - 1, 33 + B, 5, len + 2, K); px(x, 33 + B, 3, len + 1, WH); px(x - 1, 33 + B + len + 1, 6, 1, K);
-    }
-    paw(13, 0); paw(23, Math.PI);
-    for (y = 28; y <= 37; y++) {
-        var hw = y < 31 ? 6 : 7;
-        pb(20 - hw - 1, y, 1, 1, K); pb(20 + hw, y, 1, 1, K); pb(20 - hw, y, hw * 2, 1, WH);
-    }
-    pb(16, 31, 8, 4, GR);
-    pb(13, 28, 14, 2, RD); pb(13, 28, 1, 2, K); pb(26, 28, 1, 2, K);
-    catHead(px, B, 'run', false, 0, 0, 0, 0);
-}
-
-function drawCatRunBack(ctx, t, gait) {
-    var px = catPx(ctx), y, k;
-    ctx.clearRect(0, 0, WW, WHT);
-    var g = Math.sin(gait * Math.PI), B = Math.abs(g) > 0.6 ? 1 : 0;
-    function pb(x, y2, w, h, c) { px(x, y2 + B, w, h, c); }
-    for (k = 0; k < 9; k++) {                          // tail, drawn first so the body overlaps it
-        var u = k / 8, wv = Math.sin(t * 8 + k * 0.6) * u * 2.5;
-        px(21 + 8 * Math.sin(u * 1.5) + wv - 1, 36 - 16 * u * u + B - 1, 4, 4, K);
-    }
-    for (k = 0; k < 9; k++) {
-        var v = k / 8, wv2 = Math.sin(t * 8 + k * 0.6) * v * 2.5;
-        px(21 + 8 * Math.sin(v * 1.5) + wv2, 36 - 16 * v * v + B, 2, 2, WH);
-    }
-    function paw(x, ph) {
-        var s = Math.sin(gait * Math.PI + ph), len = 5 + Math.round(Math.max(0, s) * 3);
-        px(x - 1, 35 + B, 5, len + 2, K); px(x, 35 + B, 3, len + 1, WH); px(x - 1, 35 + B + len + 1, 6, 1, K);
-    }
-    paw(13, 0); paw(23, Math.PI);
-    for (y = 28; y <= 38; y++) {
-        var hw = y < 31 ? 6 : 8;
-        pb(20 - hw - 1, y, 1, 1, K); pb(20 + hw, y, 1, 1, K); pb(20 - hw, y, hw * 2, 1, WH);
-    }
-    pb(15, 33, 10, 3, GR);
-    for (y = 12; y <= 27; y++) {                       // back of the head: ears, no face
-        var ins = (y <= 13 || y >= 26) ? 2 : (y === 14 || y === 25 ? 1 : 0);
-        var x0 = 7 + ins, x1 = 32 - ins;
-        pb(x0 - 1, y, 1, 1, K); pb(x1 + 1, y, 1, 1, K); pb(x0, y, x1 - x0 + 1, 1, WH);
-    }
-    pb(9, 11, 22, 1, K); pb(9, 28, 22, 1, K);
-    var ew = [1, 2, 4, 5, 7];
-    for (y = 6; y <= 10; y++) {
-        var w = ew[y - 6], e0 = 11 - Math.floor(w / 2), f0 = 28 - Math.floor(w / 2);
-        pb(e0 - 1, y, 1, 1, K); pb(e0, y, w, 1, WH); pb(e0 + w, y, 1, 1, K);
-        pb(f0 - 1, y, 1, 1, K); pb(f0, y, w, 1, WH); pb(f0 + w, y, 1, 1, K);
-    }
-    pb(11, 5, 1, 1, K); pb(28, 5, 1, 1, K);
-    pb(13, 28, 14, 2, RD); pb(13, 28, 1, 2, K); pb(26, 28, 1, 2, K);
-    pb(16, 18, 8, 1, GR);
-}
-
-// Same idea as the desktop-pet cats: sit when still, scratch, get tired, fall asleep,
-// run in the direction of travel.
-function drawCatState(ctx, state, t, gait, lx, ly) {
-    if (state === 'sleep') { drawCatSleep(ctx, t); }
-    else if (state === 'scratch') { drawCatSit(ctx, t, lx, ly, 'scratch'); }
-    else if (state === 'tired') { drawCatSit(ctx, t, lx, ly, 'tired'); }
-    else if (state === 'alert') { drawCatSit(ctx, t, lx, ly, 'alert'); }
-    else if (state === 'runS') { drawCatRunFront(ctx, t, gait); }
-    else if (state === 'runN') { drawCatRunBack(ctx, t, gait); }
-    else if (state === 'runE') { drawCatRunSide(ctx, t, gait); }
-    else { drawCatSit(ctx, t, lx, ly, 'sit'); }
 }
 """
 
@@ -7444,8 +7244,8 @@ div:has(> .st-key-topbar) { position: sticky; top: 10px; z-index: 60; }
 }
 """
 
-# The scroll story on the landing page: a cat slides down a line as the
-# visitor scrolls, and each card lights up when the cat reaches it.
+# The scroll story on the landing page: a fox slides down a line as the
+# visitor scrolls, and each card lights up when the fox reaches it.
 STORY_CARDS = {
     "en": (
         ("WHO", "Meet Nashmi",
@@ -7574,18 +7374,24 @@ STORY_TEMPLATE = """<!DOCTYPE html>
     }
     h3 { margin: 8px 0 4px; color: #fff; font-size: 1.15rem; }
     p { margin: 0; font-size: 0.94rem; line-height: 1.55; }
-    #cat {
+    #fox {
         position: absolute; left: 0; top: 0; z-index: 3;
-        width: 64px; height: 74px;
+        width: 66px; aspect-ratio: __STORY_RATIO__;
         transform: translate(-50%, -56%); transform-origin: 50% 60%;
-        image-rendering: pixelated; image-rendering: crisp-edges;
         pointer-events: none;
         filter: drop-shadow(0 0 12px rgba(255, 59, 63, 0.45));
     }
+    #fox img { display: block; width: 100%; height: 100%; }
+    #zz {
+        position: absolute; left: 92%; top: -8px; opacity: 0; transition: opacity 0.4s;
+        color: #fff; font: 700 12px ui-monospace, Consolas, monospace; letter-spacing: 2px;
+        text-shadow: 0 0 6px rgba(255, 59, 63, 0.7); animation: zfloat 2.4s ease-in-out infinite;
+    }
+    @keyframes zfloat { 0%, 100% { transform: translate(0, 0); } 50% { transform: translate(4px, -8px); } }
     @media (max-width: 699px) {
         :root { --tx: 40px; }
         .row { padding-left: 84px; }
-        #cat { width: 46px; height: 53px; }
+        #fox { width: 48px; }
     }
     @media (min-width: 700px) {
         :root { --tx: 50%; }
@@ -7606,7 +7412,7 @@ STORY_TEMPLATE = """<!DOCTYPE html>
     <div id="sky"><canvas id="far"></canvas><canvas id="near"></canvas></div>
     <svg id="pathsvg" aria-hidden="true"><path id="pathBg"></path><path id="pathFill"></path></svg>
     <div id="rows">__CARDS__</div>
-    <canvas id="cat" width="40" height="46" role="img" aria-label="Nashmi the cat walking down the line"></canvas>
+    <div id="fox"><img src="__STORY_FOX__" alt="Nashmi's fox walking down the line"><span id="zz">z z</span></div>
 </div>
 <script>
 __LOOK_JS__
@@ -7619,18 +7425,18 @@ __LOOK_JS__
     var wrap = document.getElementById('wrap');
     var rows = Array.prototype.slice.call(document.querySelectorAll('.row'));
     var pathBg = document.getElementById('pathBg'), pathFill = document.getElementById('pathFill');
-    var cat = document.getElementById('cat'), sky = document.getElementById('sky');
+    var fox = document.getElementById('fox'), zz = document.getElementById('zz'), sky = document.getElementById('sky');
     var far = document.getElementById('far'), near = document.getElementById('near');
     var P = null, fe = null;
     try { P = window.parent; fe = window.frameElement; void P.document.body; }
     catch (err) { P = null; fe = null; }
     var H = 0, W = 0, y0 = 0, y1 = 0, centers = [], skyH = 0, pts = [], pathLen = 0;
 
-    var cctx = cat.getContext('2d');
     var look = makeLook(wrap, function () {
-        var r = cat.getBoundingClientRect();
-        return { x: r.left + r.width / 2, y: r.top + r.height * 0.4 };
+        var r = fox.getBoundingClientRect();
+        return { x: r.left + r.width * 0.38, y: r.top + r.height * 0.4 };
     });
+    var eyes = logoEyes(fox, __STORY_EYES__);
 
     function rng(seed) {
         var s = seed;
@@ -7698,7 +7504,7 @@ __LOOK_JS__
         var f = Math.max(0, Math.min(1, (y - a.y) / ((b.y - a.y) || 1)));
         return { x: a.x + (b.x - a.x) * f, y: y, dist: a.dist + (b.dist - a.dist) * f };
     }
-    // eight directions like a desktop-pet cat: [pose, mirror, tilt]
+    // eight directions like a desktop pet: [pose, mirror, tilt]
     function dirOf(a) {
         if (a > -22.5 && a <= 22.5) { return ['runE', 1, 0]; }
         if (a > 22.5 && a <= 67.5) { return ['runE', 1, 25]; }
@@ -7722,7 +7528,7 @@ __LOOK_JS__
         cy += d * 0.14;
         if (Math.abs(d) < 0.05) { cy = tgt; }
         var p = pointAtY(cy);
-        cat.style.left = p.x + 'px'; cat.style.top = p.y + 'px';
+        fox.style.left = p.x + 'px'; fox.style.top = p.y + 'px';
         pathFill.style.strokeDashoffset = (pathLen - p.dist) + 'px';
         if (prevX === null) { prevX = p.x; prevY = p.y; }
         svx += ((p.x - prevX) - svx) * 0.35; svy += ((p.y - prevY) - svy) * 0.35;
@@ -7744,8 +7550,16 @@ __LOOK_JS__
         }
         rotCur += (rot - rotCur) * 0.3;
         look.update(now);
-        drawCatState(cctx, state, now / 1000, gait, look.x, look.y);
-        cat.style.transform = 'translate(-50%, -56%) scaleX(' + flip + ') rotate(' + rotCur.toFixed(1) + 'deg)';
+        // eyes follow the pointer, and are shut when it is tired or asleep
+        var asleep = state === 'sleep';
+        eyes(now, look.x, look.y, asleep || state === 'tired');
+        // a hop with every stride while it moves, a slow breath while it sleeps, a wiggle when it scratches
+        var hop = state.indexOf('run') === 0 ? -Math.abs(Math.sin(gait * Math.PI)) * 4 : 0;
+        var breath = asleep ? 1 + Math.sin(now / 700) * 0.025 : 1;
+        var wiggle = state === 'scratch' ? Math.sin(now / 60) * 4 : 0;
+        fox.style.transform = 'translate(-50%, calc(-56% + ' + hop.toFixed(1) + 'px)) scaleX(' + flip + ') rotate(' +
+            (rotCur + wiggle).toFixed(1) + 'deg) scale(1, ' + breath.toFixed(3) + ')';
+        zz.style.opacity = asleep ? 1 : 0;
         var best = 0, bd = 1e9;
         for (var i = 0; i < rows.length; i++) {
             var on = centers[i] <= cy + 14;
@@ -7777,7 +7591,7 @@ __LOOK_JS__
 
 
 def render_story() -> None:
-    """The scrolling 'who is Nashmi' story with the cat on the line."""
+    """The scrolling 'who is Nashmi' story with the fox on the line."""
     cards = "".join(
         f'<div class="row"><i class="node"></i><article class="card"{dir_attr()}>'
         f'<span class="tag">{html.escape(tag)}</span>'
@@ -7786,7 +7600,10 @@ def render_story() -> None:
         for tag, title, text in STORY_CARDS[lang()]
     )
     markup = (STORY_TEMPLATE.replace("__CARDS__", cards)
-              .replace("__LOOK_JS__", LOOK_JS + WALKER_JS))
+              .replace("__LOOK_JS__", LOOK_JS + LOGO_JS)
+              .replace("__STORY_FOX__", story_data_uri(180))
+              .replace("__STORY_RATIO__", story_ratio())
+              .replace("__STORY_EYES__", story_eyes_json()))
     embed_html(markup, STORY_HEIGHT)
 
 STRINGS = {
