@@ -7847,28 +7847,50 @@ __LOOK_JS__
             ny.push(n.top - wb.top + n.height / 2);
         });
         centers = ny; y0 = ny[0]; y1 = ny[ny.length - 1];
-        // each node sits beside its card, on the empty side; between two cards the line goes straight
-        // down past the card, then right across the page, then straight down to the next node. On a
-        // phone the cards fill the width, so the line crosses over to the right edge and back in the gap.
+        // Each node sits beside its card, on the empty side. Between two cards the line only ever goes
+        // straight down or straight across, with square corners: down past the card, across the page
+        // in the gap, down to the next node. On a phone the cards fill the width, so it crosses to the
+        // right edge and back (two runs and a short step down between them).
         var ctop = rows.map(function (r) { return r.getBoundingClientRect().top - wb.top; });
         var cbot = rows.map(function (r, k) { return ctop[k] + r.querySelector('.card').offsetHeight; });
         var phone = window.matchMedia && window.matchMedia('(max-width: 699px)').matches;
         var d = 'M ' + nx[0] + ',' + ny[0];
+        pts = []; pathLen = 0;
+        pts.push({ x: nx[0], y: ny[0], sy: ny[0], dist: 0, h: false });
         for (var i = 1; i < nx.length; i++) {
-            var a = cbot[i - 1] + 8, b = ctop[i] - 8;
-            d += ' L ' + nx[i - 1] + ',' + a;
-            if (phone) { d += ' L ' + (W - 34) + ',' + ((a + b) / 2); }
-            d += ' L ' + nx[i] + ',' + b + ' L ' + nx[i] + ',' + ny[i];
+            var ga = cbot[i - 1] + 8, gb = ctop[i] - 8, v = [[nx[i - 1], ny[i - 1]]];
+            if (phone) {
+                var g3 = (gb - ga) / 3;
+                v.push([nx[i - 1], ga + g3], [W - 34, ga + g3], [W - 34, ga + 2 * g3], [nx[i], ga + 2 * g3]);
+            } else {
+                v.push([nx[i - 1], (ga + gb) / 2], [nx[i], (ga + gb) / 2]);
+            }
+            v.push([nx[i], ny[i]]);
+            // scroll is spent on the walk across as well as down: half of the way between two
+            // nodes is the run across, so the fox is not whisked from one side to the other
+            var vl = 0, hl = 0;
+            for (var k = 1; k < v.length; k++) {
+                var dx = Math.abs(v[k][0] - v[k - 1][0]), dy = Math.abs(v[k][1] - v[k - 1][1]);
+                if (dx > 0.01) { hl += dx; } else { vl += dy; }
+            }
+            var span = ny[i] - ny[i - 1], vk = vl > 0 ? span * (hl > 0 ? 0.5 : 1) / vl : 0, hk = hl > 0 ? span * 0.5 / hl : 0;
+            var sy = ny[i - 1];
+            for (var k2 = 1; k2 < v.length; k2++) {
+                var x0_ = v[k2 - 1][0], y0_ = v[k2 - 1][1], x1_ = v[k2][0], y1_ = v[k2][1];
+                var horiz = Math.abs(x1_ - x0_) > 0.01, len = Math.abs(x1_ - x0_) + Math.abs(y1_ - y0_);
+                if (len < 0.01) { continue; }
+                var steps = Math.max(1, Math.ceil(len / 3)), slen = len * (horiz ? hk : vk);
+                d += ' L ' + x1_ + ',' + y1_;
+                for (var q = 1; q <= steps; q++) {
+                    var f = q / steps;
+                    pts.push({ x: x0_ + (x1_ - x0_) * f, y: y0_ + (y1_ - y0_) * f, sy: sy + slen * f,
+                               dist: pathLen + len * f, h: horiz });
+                }
+                pathLen += len; sy += slen;
+            }
         }
         pathBg.setAttribute('d', d); pathFill.setAttribute('d', d);
-        pathLen = pathBg.getTotalLength();
         pathFill.style.strokeDasharray = pathLen + ' ' + pathLen;
-        var count = Math.max(2, Math.ceil(pathLen / 3));
-        pts = [];
-        for (var k = 0; k <= count; k++) {
-            var dist = k / count * pathLen, pt = pathBg.getPointAtLength(dist);
-            pts.push({ x: pt.x, y: pt.y, dist: dist });
-        }
         var vh = (P && P.innerHeight) || 700;
         skyH = Math.min(vh, H);
         sky.style.height = skyH + 'px';
@@ -7882,16 +7904,26 @@ __LOOK_JS__
     if (window.ResizeObserver) { new ResizeObserver(layout).observe(wrap); }
     window.addEventListener('resize', layout);
 
-    // where the line is at a given height (the line only ever goes down)
-    function pointAtY(y) {
+    // where the fox is at a given distance along the line, and the distance for a given scroll position
+    function pointAtDist(dist) {
         var lo = 0, hi = pts.length - 1;
         while (hi - lo > 1) {
             var mid = (lo + hi) >> 1;
-            if (pts[mid].y < y) { lo = mid; } else { hi = mid; }
+            if (pts[mid].dist < dist) { lo = mid; } else { hi = mid; }
         }
         var a = pts[lo], b = pts[hi];
-        var f = Math.max(0, Math.min(1, (y - a.y) / ((b.y - a.y) || 1)));
-        return { x: a.x + (b.x - a.x) * f, y: y, dist: a.dist + (b.dist - a.dist) * f };
+        var f = Math.max(0, Math.min(1, (dist - a.dist) / ((b.dist - a.dist) || 1)));
+        return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, sy: a.sy + (b.sy - a.sy) * f, dist: dist, h: b.h };
+    }
+    function distAtSy(sy) {
+        var lo = 0, hi = pts.length - 1;
+        while (hi - lo > 1) {
+            var mid = (lo + hi) >> 1;
+            if (pts[mid].sy < sy) { lo = mid; } else { hi = mid; }
+        }
+        var a = pts[lo], b = pts[hi];
+        var f = Math.max(0, Math.min(1, (sy - a.sy) / ((b.sy - a.sy) || 1)));
+        return a.dist + (b.dist - a.dist) * f;
     }
     // eight directions like a desktop pet: [pose, mirror, tilt]
     function dirOf(a) {
@@ -7905,7 +7937,7 @@ __LOOK_JS__
         return ['runE', 1, -25];
     }
 
-    var cy = y0, prevX = null, prevY = null, svx = 0, svy = 0, gait = 0;
+    var cy = y0, cd = 0, lastT = 0, prevX = null, prevY = null, svx = 0, svy = 0, gait = 0;
     var state = 'sit', stillSince = null, wasMoving = false, alertUntil = 0;
     var flip = 1, rot = 0, rotCur = 0, passed = [], active = -1, wk = 0;
     function frame(now) {
@@ -7913,10 +7945,13 @@ __LOOK_JS__
         var vh = (P && P.innerHeight) || 700, tgt;
         if (r) { tgt = Math.max(y0, Math.min(y1, vh * 0.5 - r.top)); }
         else { tgt = y0 + (Math.sin(now / 3500 - 1.57) * 0.5 + 0.5) * (y1 - y0); }
-        var d = tgt - cy;
-        cy += d * 0.14;
-        if (Math.abs(d) < 0.05) { cy = tgt; }
-        var p = pointAtY(cy);
+        // it walks to where the scroll wants it, never faster than a walking pace across the page
+        var dtf = Math.min(3, lastT ? (now - lastT) / 16.7 : 1); lastT = now;
+        var dd = distAtSy(tgt) - cd, here = pointAtDist(cd);
+        var cap = (here.h ? 3.2 : 14) * dtf;
+        cd += Math.abs(dd) < 0.05 ? dd : Math.max(-cap, Math.min(cap, dd * 0.14));
+        var p = pointAtDist(cd);
+        cy = p.sy;
         fox.style.left = p.x + 'px'; fox.style.top = p.y + 'px';
         pathFill.style.strokeDashoffset = (pathLen - p.dist) + 'px';
         if (prevX === null) { prevX = p.x; prevY = p.y; }
