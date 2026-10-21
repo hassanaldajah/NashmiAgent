@@ -2927,6 +2927,68 @@ def story_parts_html(height: int = 220) -> str:
     return "".join(out)
 
 
+# Side and back views of the story fox, assembled from the owner's sheet (assets/fox-parts) and
+# walked leg by leg. Coordinates are in "sheet units" (one unit is about 0.42 px on screen); a part is
+# (group, file, x, y, scale, pivot, tint) with the pivot (fraction of its width, "top"/"bot", units).
+PARTS_DIR = ASSETS / "fox-parts"
+RIG_UNIT = 0.42                                   # screen px per sheet unit, at the front fox's 66 px width
+FOX_BOX = (66.0, 66.0 / 0.9647)                   # the front fox's box (width, height) in px
+SIDE_RIG = {"w": 170, "h": 210, "feet": 204, "parts": (       # faces left; the page flips it for right
+    ("tail", "side_tail", 98, 70, 1.0, (0.05, "bot", 14), 1.0),
+    ("hl_far", "side_leg_a", 78, 138, 1.28, (0.5, "top", 10), 0.8),
+    ("hl_near", "side_leg_b", 94, 138, 1.28, (0.5, "top", 10), 0.9),
+    ("fl_far", "side_leg_a", 36, 138, 1.28, (0.5, "top", 10), 0.8),
+    ("fl_near", "side_leg_b", 55, 138, 1.28, (0.5, "top", 10), 1.0),
+    ("torso", "side_torso", 16, 90, 1.38, (0.5, "bot", 0), 1.0),
+    ("head", "side_head", 0, 6, 1.32, (0.5, "bot", 0), 1.0),
+)}
+BACK_RIG = {"w": 125, "h": 200, "feet": 195, "parts": (
+    ("leg_l", "back_leg_a", 22, 138, 1.3, (0.5, "top", 6), 1.0),
+    ("leg_r", "back_leg_b", 70, 138, 1.3, (0.5, "top", 6), 1.0),
+    ("torso", "back_torso", 6, 80, 1.4, (0.5, "bot", 0), 1.0),
+    ("tail", "back_tail", 12, 108, 1.15, (0.8, "top", 4), 1.0),
+    ("head", "back_head", -1, 1, 1.38, (0.5, "bot", 0), 1.0),
+)}
+
+
+@st.cache_resource
+def walk_rigs_html() -> str:
+    """The side and back fox as HTML: one div per part, each with its picture, hidden until needed."""
+    out = []
+    for rig_id, rig in (("side", SIDE_RIG), ("back", BACK_RIG)):
+        rw, rh = rig["w"], rig["h"]
+        wpct = rw * RIG_UNIT / FOX_BOX[0] * 100
+        hpct = rh * RIG_UNIT / FOX_BOX[1] * 100
+        left = 50 - wpct / 2
+        top = (FOX_BOX[1] - rig["feet"] * RIG_UNIT) / FOX_BOX[1] * 100
+        parts = []
+        for group, name, x, y, sc, (pfx, pfy, pfn), tint in rig["parts"]:
+            try:
+                img = Image.open(PARTS_DIR / f"{name}.png").convert("RGBA")
+            except OSError:
+                logging.warning("Fox part not found: %s", name)
+                continue
+            if tint != 1.0:
+                px = img.load()
+                for yy in range(img.height):
+                    for xx in range(img.width):
+                        r_, g_, b_, a_ = px[xx, yy]
+                        px[xx, yy] = (round(r_ * tint), round(g_ * tint), round(b_ * tint), a_)
+            buf = io.BytesIO()
+            img.save(buf, "PNG", optimize=True)
+            uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+            pw, ph = img.width * sc, img.height * sc
+            ox = x + pw * pfx
+            oy = y + (pfn if pfy == "top" else ph - pfn)
+            parts.append(
+                f'<div class="part" data-g="{group}" style="transform-origin:{ox / rw * 100:.2f}% {oy / rh * 100:.2f}%">'
+                f'<img src="{uri}" alt="" style="left:{x / rw * 100:.3f}%;top:{y / rh * 100:.3f}%;'
+                f'width:{pw / rw * 100:.3f}%;height:{ph / rh * 100:.3f}%"></div>')
+        out.append(f'<div class="rig" id="rig-{rig_id}" style="left:{left:.3f}%;top:{top:.3f}%;'
+                   f'width:{wpct:.3f}%;height:{hpct:.3f}%">{"".join(parts)}</div>')
+    return "".join(out)
+
+
 def story_ratio() -> str:
     w, h = story_image().size
     return f"{w} / {h}"
@@ -7678,7 +7740,9 @@ STORY_TEMPLATE = """<!DOCTYPE html>
         filter: drop-shadow(0 0 12px rgba(255, 59, 63, 0.45));
     }
     #fox .part { position: absolute; inset: 0; will-change: transform; }
+    #fox .rig { position: absolute; display: none; }
     #fox .part img { position: absolute; display: block; }
+    #fox .rig .part img { image-rendering: pixelated; }
     #zz {
         position: absolute; left: 92%; top: -8px; opacity: 0; transition: opacity 0.4s;
         color: #fff; font: 700 12px ui-monospace, Consolas, monospace; letter-spacing: 2px;
@@ -7709,7 +7773,7 @@ STORY_TEMPLATE = """<!DOCTYPE html>
     <div id="sky"><canvas id="far"></canvas><canvas id="near"></canvas></div>
     <svg id="pathsvg" aria-hidden="true"><path id="pathBg"></path><path id="pathFill"></path></svg>
     <div id="rows">__CARDS__</div>
-    <div id="fox"><div id="fx" role="img" aria-label="Nashmi's fox walking down the line">__STORY_PARTS__</div><span id="zz">z z</span></div>
+    <div id="fox"><div id="fx" role="img" aria-label="Nashmi's fox walking down the line">__STORY_PARTS__</div>__WALK_RIGS__<span id="zz">z z</span></div>
 </div>
 <script>
 __LOOK_JS__
@@ -7724,7 +7788,14 @@ __LOOK_JS__
     var pathBg = document.getElementById('pathBg'), pathFill = document.getElementById('pathFill');
     var fox = document.getElementById('fox'), zz = document.getElementById('zz'), sky = document.getElementById('sky');
     var fx = document.getElementById('fx');
-    var part = {};
+    var part = {}, sideP = {}, backP = {};
+    var rigFront = fx, rigSide = document.getElementById('rig-side'), rigBack = document.getElementById('rig-back');
+    function collect(rig, into) {
+        if (!rig) { return; }
+        Array.prototype.forEach.call(rig.querySelectorAll('.part'), function (el) { into[el.getAttribute('data-g')] = el; });
+    }
+    collect(rigSide, sideP); collect(rigBack, backP);
+    var curView = 'front';
     Array.prototype.forEach.call(fx.querySelectorAll('.part'), function (el) { part[el.getAttribute('data-part')] = el; });
     var far = document.getElementById('far'), near = document.getElementById('near');
     var P = null, fe = null;
@@ -7841,8 +7912,7 @@ __LOOK_JS__
             gait += speed;                                      // distance travelled, in px
             var da = dirOf(Math.atan2(svy, svx) * 180 / Math.PI);
             state = now < alertUntil ? 'alert' : 'walk'; flip = 1;
-            // on the slanted parts of the line it leans into the direction it is going, right or left
-            rot = Math.max(-1, Math.min(1, svx / (speed || 1))) * 20;
+            rot = 0;
         } else {
             if (wasMoving) { wasMoving = false; stillSince = now; }
             var still = (now - stillSince) / 1000;
@@ -7867,6 +7937,43 @@ __LOOK_JS__
         var breath = asleep ? Math.sin(now / 700) * 0.02 : Math.sin(now / 1500) * 0.006;
         var wiggle = state === 'scratch' ? Math.sin(now / 70) * 3 : 0;
         var tx = function (el, t) { el.style.transform = t; };
+        // which way it faces: down the line towards you (front), up and away (back), or sideways
+        // along the slanted parts of the line (side, turned to the left or to the right)
+        var view = 'front';
+        if (state === 'walk' || state === 'alert') {
+            if (Math.abs(svx) > 0.4 * Math.abs(svy)) { view = 'side'; flip = svx > 0 ? -1 : 1; }
+            else if (svy < 0) { view = 'back'; }
+        }
+        if (view !== curView) {
+            curView = view;
+            rigFront.style.display = view === 'front' ? '' : 'none';
+            if (rigSide) { rigSide.style.display = view === 'side' ? 'block' : 'none'; }
+            if (rigBack) { rigBack.style.display = view === 'back' ? 'block' : 'none'; }
+        }
+        var ku = W / 66 * 0.42, bob = -Math.abs(s1) * 2.2 * ku * wk;
+        if (view === 'side' && rigSide) {
+            var sw = 16 * wk, deg = function (a) { return 'rotate(' + a.toFixed(2) + 'deg)'; };
+            var up = 'translateY(' + bob.toFixed(2) + 'px) ';
+            if (sideP.fl_near) {
+                sideP.fl_near.style.transform = up + deg(s1 * sw);
+                sideP.hl_far.style.transform = up + deg(s1 * sw);
+                sideP.fl_far.style.transform = up + deg(-s1 * sw);
+                sideP.hl_near.style.transform = up + deg(-s1 * sw);
+                sideP.torso.style.transform = up + deg(s1 * 1.2 * wk);
+                sideP.head.style.transform = 'translateY(' + (bob + Math.cos(ph * 2) * 1.0 * ku * wk).toFixed(2) + 'px) ' + deg(-s1 * 2.2 * wk);
+                sideP.tail.style.transform = up + deg(Math.sin(ph * 2) * 8 * wk + Math.sin(now / 900) * 5 * idle);
+            }
+            rigSide.style.transform = 'scaleX(' + flip + ')';
+        } else if (view === 'back' && rigBack) {
+            var sx = s1 * 1.5 * ku * wk, lf = 9 * ku * wk;
+            if (backP.torso) {
+                backP.leg_l.style.transform = 'translateY(' + (bob - Math.max(0, s1) * lf).toFixed(2) + 'px)';
+                backP.leg_r.style.transform = 'translateY(' + (bob - Math.max(0, -s1) * lf).toFixed(2) + 'px)';
+                backP.torso.style.transform = 'translate(' + sx.toFixed(2) + 'px,' + bob.toFixed(2) + 'px) rotate(' + (s1 * 1.5 * wk).toFixed(2) + 'deg)';
+                backP.tail.style.transform = 'translate(' + sx.toFixed(2) + 'px,' + bob.toFixed(2) + 'px) rotate(' + (Math.sin(ph + 1) * 14 * wk + Math.sin(now / 800) * 6 * idle).toFixed(2) + 'deg)';
+                backP.head.style.transform = 'translate(' + sx.toFixed(2) + 'px,' + bob.toFixed(2) + 'px) rotate(' + (-s1 * 2.5 * wk).toFixed(2) + 'deg)';
+            }
+        }
         tx(part.legl, 'translateY(' + (-Math.max(0, s1) * lift).toFixed(2) + 'px)');
         tx(part.legr, 'translateY(' + (-Math.max(0, -s1) * lift).toFixed(2) + 'px)');
         tx(part.body, 'translate(' + (s1 * 0.03 * W * wk).toFixed(2) + 'px,' + (-Math.abs(s1) * 0.014 * Hh * wk).toFixed(2) +
@@ -7918,6 +8025,7 @@ def render_story() -> None:
     markup = (STORY_TEMPLATE.replace("__CARDS__", cards)
               .replace("__LOOK_JS__", LOOK_JS + LOGO_JS)
               .replace("__STORY_PARTS__", story_parts_html())
+              .replace("__WALK_RIGS__", walk_rigs_html())
               .replace("__STORY_RATIO__", story_ratio())
               .replace("__STORY_EYES__", story_eyes_json()))
     embed_html(markup, STORY_HEIGHT)
