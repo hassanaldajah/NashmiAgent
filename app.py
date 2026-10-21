@@ -6536,58 +6536,58 @@ function foxEyes(svg) {
 }
 """
 
-# The little fox on the line in the story. Like a desktop pet it runs along the
-# line in the direction it travels (front, back or side view), and when it stops it
-# sits, scratches, gets tired and finally falls asleep. Tall ears, a black nose and a
-# bushy tail with a black tip make it a fox.
-FOX_WALKER_JS = """var WW = 40, WHT = 46;
-var K = '#0b0b10', WH = '#ffffff', GR = '#d3d8e3', RD = '#E5383B', TIP = '#111111';
+# The cat on the line in the story. It has no shemagh. Like a desktop-pet cat it
+# runs along the line in the direction it travels (front, back or side view),
+# and when it stops it sits, scratches, gets tired and finally falls asleep.
+WALKER_JS = """var WW = 40, WHT = 46;
+var K = '#0b0b10', WH = '#ffffff', GR = '#d3d8e3', RD = '#E5383B', PK = '#f4a3a8';
 
-function foxPx(ctx) {
+function catPx(ctx) {
     return function (x, y, w, h, c) { ctx.fillStyle = c; ctx.fillRect(Math.round(x), Math.round(y), w, h); };
 }
 
-function foxHead(px, B, mode, blink, ox, oy, nx, ny) {
+function catHead(px, B, mode, blink, ox, oy, nx, ny) {
     var y, x0, x1;
     function pb(x, y2, w, h, c) { px(x, y2 + B, w, h, c); }
     for (y = 12; y <= 27; y++) {
-        var ins = y <= 13 ? 2 : (y === 14 ? 1 : (y >= 23 ? (y - 22) * 2 : 0));
+        var ins = (y <= 13 || y >= 26) ? 2 : (y === 14 || y === 25 ? 1 : 0);
         x0 = 7 + ins; x1 = 32 - ins;
         pb(x0 - 1, y, 1, 1, K); pb(x1 + 1, y, 1, 1, K);
         pb(x0, y, x1 - x0 + 1, 1, WH);
     }
-    pb(9, 11, 22, 1, K); pb(17, 28, 6, 1, K);
-    var ew = [1, 1, 2, 3, 3, 4, 5, 6, 7], up = mode === 'alert' ? 1 : 0;   // tall pointed ears
-    for (y = 2; y <= 10; y++) {
-        var w = ew[y - 2], e0 = 11 - Math.floor(w / 2), f0 = 28 - Math.floor(w / 2);
-        var ec = y <= 4 ? TIP : WH;                    // black ear tips
-        pb(e0 - 1, y - up, 1, 1, K); pb(e0, y - up, w, 1, ec); pb(e0 + w, y - up, 1, 1, K);
-        pb(f0 - 1, y - up, 1, 1, K); pb(f0, y - up, w, 1, ec); pb(f0 + w, y - up, 1, 1, K);
+    pb(9, 11, 22, 1, K); pb(9, 28, 22, 1, K);
+    var ew = [1, 2, 4, 5, 7], up = mode === 'alert' ? 1 : 0;
+    for (y = 6; y <= 10; y++) {
+        var w = ew[y - 6], e0 = 11 - Math.floor(w / 2), f0 = 28 - Math.floor(w / 2);
+        pb(e0 - 1, y - up, 1, 1, K); pb(e0, y - up, w, 1, WH); pb(e0 + w, y - up, 1, 1, K);
+        pb(f0 - 1, y - up, 1, 1, K); pb(f0, y - up, w, 1, WH); pb(f0 + w, y - up, 1, 1, K);
     }
-    pb(11, 1 - up, 1, 1, K); pb(28, 1 - up, 1, 1, K);
-    pb(11, 6 - up, 1, 4, GR); pb(28, 6 - up, 1, 4, GR);
+    pb(11, 5 - up, 1, 1, K); pb(28, 5 - up, 1, 1, K);
+    pb(11, 8 - up, 1, 2, PK); pb(28, 8 - up, 1, 2, PK);
     var eh = blink ? 1 : 5, ey = blink ? 18 : 16;
     if (mode === 'alert') { eh = 6; ey = 15; }
     if (mode === 'tired') { eh = 2; ey = 19; }
     pb(13 + ox, ey + oy, 2, eh, K); pb(25 + ox, ey + oy, 2, eh, K);
-    pb(19 + nx, 22 + ny, 2, 2, K);                     // black nose
-    if (mode === 'tired') { pb(19 + nx, 25 + ny, 2, 1, K); }
-    else { pb(18 + nx, 25 + ny, 1, 1, K); pb(21 + nx, 25 + ny, 1, 1, K); }
+    pb(19 + nx, 22 + ny, 2, 1, RD);
+    if (mode === 'tired') { pb(19 + nx, 24 + ny, 2, 2, K); }
+    else { pb(18 + nx, 24 + ny, 1, 1, K); pb(19 + nx, 25 + ny, 2, 1, K); pb(21 + nx, 24 + ny, 1, 1, K); }
+    pb(3 + nx, 22, 4, 1, GR); pb(4 + nx, 24, 3, 1, GR);
+    pb(33 + nx, 22, 4, 1, GR); pb(33 + nx, 24, 3, 1, GR);
 }
 
-function drawFoxSit(ctx, t, lx, ly, mode) {
-    var px = foxPx(ctx), k, y;
+function drawCatSit(ctx, t, lx, ly, mode) {
+    var px = catPx(ctx), k, y;
     ctx.clearRect(0, 0, WW, WHT);
     var B = (mode === 'tired') ? 1 : (Math.sin(t * 1.6) > 0.75 ? 1 : 0);
     function pb(x, y2, w, h, c) { px(x, y2 + B, w, h, c); }
     var blink = (t % 3.6) > 3.45;
     for (k = 0; k < 11; k++) {
         var u = k / 10, wg = Math.sin(t * 3.2 + k * 0.5) * u * 2.2;
-        px(28 + 8 * Math.sin(u * 2.0) + wg - 2, 43 - 15 * u + B - 2, 6, 6, K);
+        px(28 + 8 * Math.sin(u * 2.0) + wg - 1, 43 - 15 * u + B - 1, 4, 4, K);
     }
     for (k = 0; k < 11; k++) {
         var v = k / 10, wg2 = Math.sin(t * 3.2 + k * 0.5) * v * 2.2;
-        px(28 + 8 * Math.sin(v * 2.0) + wg2 - 1, 43 - 15 * v + B - 1, 4, 4, k >= 8 ? TIP : WH);
+        px(28 + 8 * Math.sin(v * 2.0) + wg2, 43 - 15 * v + B, 2, 2, WH);
     }
     for (y = 29; y <= 43; y++) {
         var hw = y < 32 ? 6 : (y < 37 ? 7 : 9);
@@ -6595,7 +6595,6 @@ function drawFoxSit(ctx, t, lx, ly, mode) {
         pb(20 - hw, y, hw * 2, 1, WH);
     }
     pb(10, 44, 20, 1, K);
-    pb(12, 24, 16, 5, WH); pb(11, 24, 1, 5, K); pb(28, 24, 1, 5, K);
     pb(16, 34, 8, 6, GR);
     pb(13, 40, 5, 4, WH);
     pb(12, 40, 1, 5, K); pb(18, 40, 1, 5, K); pb(15, 42, 1, 2, K);
@@ -6608,14 +6607,14 @@ function drawFoxSit(ctx, t, lx, ly, mode) {
         pb(22, 40, 5, 4, WH);
         pb(21, 40, 1, 5, K); pb(27, 40, 1, 5, K); pb(24, 42, 1, 2, K);
     }
-    pb(14, 29, 12, 1, GR);
-    foxHead(px, B, mode, blink, Math.round((lx || 0) * 2), Math.round((ly || 0) * 1.5),
+    pb(13, 28, 14, 2, RD); pb(13, 28, 1, 2, K); pb(26, 28, 1, 2, K);
+    catHead(px, B, mode, blink, Math.round((lx || 0) * 2), Math.round((ly || 0) * 1.5),
             Math.round(lx || 0), Math.round(ly || 0));
     if (mode === 'alert') { px(33, 1, 2, 6, RD); px(33, 8, 2, 2, RD); }
 }
 
-function drawFoxSleep(ctx, t) {
-    var px = foxPx(ctx), y, x;
+function drawCatSleep(ctx, t) {
+    var px = catPx(ctx), y, x;
     ctx.clearRect(0, 0, WW, WHT);
     var br = Math.sin(t * 2) > 0.5 ? 1 : 0;
     for (y = 26; y <= 41 + br; y++) {                  // curled body
@@ -6627,7 +6626,7 @@ function drawFoxSleep(ctx, t) {
     for (y = 26; y <= 41; y++) {                       // the tail wraps round the front
         px(24, y, 0, 0, K);
     }
-    px(20, 39, 12, 3, K); px(21, 40, 7, 2, WH); px(28, 40, 3, 2, TIP); px(31, 37, 2, 4, K); px(30, 38, 2, 3, TIP);
+    px(20, 39, 12, 3, K); px(21, 40, 10, 2, WH); px(31, 37, 2, 4, K); px(30, 38, 2, 3, WH);
     for (y = 26; y <= 40; y++) {                       // tucked head
         for (x = 5; x <= 21; x++) {
             var d = (x - 13) * (x - 13) + (y - 33) * (y - 33);
@@ -6637,7 +6636,7 @@ function drawFoxSleep(ctx, t) {
     }
     px(8, 24, 4, 3, K); px(9, 25, 2, 2, WH); px(16, 24, 4, 3, K); px(17, 25, 2, 2, WH);
     px(9, 33, 3, 1, K); px(15, 33, 3, 1, K);           // closed eyes
-    px(13, 36, 2, 1, K);                               // nose
+    px(13, 36, 2, 1, RD);                              // nose
     var z = (t * 0.9) % 1;                             // floating Z letters
     function zed(zx, zy, a) {
         ctx.globalAlpha = a; px(zx, zy, 5, 1, WH); px(zx + 3, zy + 1, 1, 1, WH);
@@ -6648,17 +6647,17 @@ function drawFoxSleep(ctx, t) {
     zed(32, 10 - Math.round(z * 6), Math.max(0, 0.8 - z));
 }
 
-function drawFoxRunSide(ctx, t, gait) {
-    var px = foxPx(ctx), y, k;
+function drawCatRunSide(ctx, t, gait) {
+    var px = catPx(ctx), y, k;
     ctx.clearRect(0, 0, WW, WHT);
     var g = Math.sin(gait * Math.PI), bob = Math.abs(g) > 0.6 ? 1 : 0;
     for (k = 0; k < 10; k++) {
         var u = k / 9, wv = Math.sin(t * 9 + k * 0.7) * u * 2;
-        px(8 - 7 * u - 2, 21 - 9 * u * u + wv - 2 + bob, 6, 6, K);
+        px(8 - 7 * u - 1, 21 - 9 * u * u + wv - 1 + bob, 4, 4, K);
     }
     for (k = 0; k < 10; k++) {
         var v = k / 9, wv2 = Math.sin(t * 9 + k * 0.7) * v * 2;
-        px(8 - 7 * v - 1, 21 - 9 * v * v + wv2 - 1 + bob, 4, 4, k >= 7 ? TIP : WH);
+        px(8 - 7 * v, 21 - 9 * v * v + wv2 + bob, 2, 2, WH);
     }
     function leg(x, phase) {
         var sw = Math.round(Math.sin(gait * Math.PI + phase) * 4);
@@ -6681,27 +6680,26 @@ function drawFoxRunSide(ctx, t, gait) {
         px(26 + ins, y + bob, 12 - ins * 2, 1, WH);
     }
     px(28, 13 + bob, 8, 1, K); px(28, 27 + bob, 8, 1, K);
-    px(28, 7 + bob, 3, 6, WH); px(28, 6 + bob, 3, 1, K); px(27, 7 + bob, 1, 6, K); px(31, 7 + bob, 1, 6, K);
-    px(29, 5 + bob, 1, 1, K);
-    px(33, 7 + bob, 3, 6, WH); px(33, 6 + bob, 3, 1, K); px(32, 7 + bob, 1, 6, K); px(36, 7 + bob, 1, 6, K);
-    px(34, 5 + bob, 1, 1, K);
-    px(29, 9 + bob, 1, 3, GR); px(34, 9 + bob, 1, 3, GR);
-    px(28, 7 + bob, 3, 2, TIP); px(33, 7 + bob, 3, 2, TIP);
-    px(33, 17 + bob, 2, 4, K); px(37, 20 + bob, 2, 2, K); px(36, 23 + bob, 2, 1, K);
+    px(26, 20 + bob, 2, 7, RD);
+    px(28, 10 + bob, 3, 3, WH); px(28, 9 + bob, 3, 1, K); px(27, 10 + bob, 1, 3, K); px(31, 10 + bob, 1, 3, K);
+    px(33, 10 + bob, 3, 3, WH); px(33, 9 + bob, 3, 1, K); px(32, 10 + bob, 1, 3, K); px(36, 10 + bob, 1, 3, K);
+    px(29, 11 + bob, 1, 2, PK); px(34, 11 + bob, 1, 2, PK);
+    px(33, 17 + bob, 2, 4, K); px(37, 21 + bob, 2, 1, RD); px(36, 23 + bob, 2, 1, K);
+    px(38, 19 + bob, 2, 1, GR); px(38, 22 + bob, 2, 1, GR);
 }
 
-function drawFoxRunFront(ctx, t, gait) {
-    var px = foxPx(ctx), y, k;
+function drawCatRunFront(ctx, t, gait) {
+    var px = catPx(ctx), y, k;
     ctx.clearRect(0, 0, WW, WHT);
     var g = Math.sin(gait * Math.PI), B = Math.abs(g) > 0.6 ? 1 : 0;
     function pb(x, y2, w, h, c) { px(x, y2 + B, w, h, c); }
     for (k = 0; k < 9; k++) {
         var u = k / 8, wv = Math.sin(t * 8 + k * 0.6) * u * 2.5;
-        px(30 + 6 * Math.sin(u * 1.6) + wv - 2, 38 - 17 * u * u + B - 2, 6, 6, K);
+        px(30 + 6 * Math.sin(u * 1.6) + wv - 1, 38 - 17 * u * u + B - 1, 4, 4, K);
     }
     for (k = 0; k < 9; k++) {
         var v = k / 8, wv2 = Math.sin(t * 8 + k * 0.6) * v * 2.5;
-        px(30 + 6 * Math.sin(v * 1.6) + wv2 - 1, 38 - 17 * v * v + B - 1, 4, 4, k >= 6 ? TIP : WH);
+        px(30 + 6 * Math.sin(v * 1.6) + wv2, 38 - 17 * v * v + B, 2, 2, WH);
     }
     function paw(x, ph) {
         var s = Math.sin(gait * Math.PI + ph), len = 6 + Math.round(Math.max(0, s) * 4);
@@ -6712,24 +6710,23 @@ function drawFoxRunFront(ctx, t, gait) {
         var hw = y < 31 ? 6 : 7;
         pb(20 - hw - 1, y, 1, 1, K); pb(20 + hw, y, 1, 1, K); pb(20 - hw, y, hw * 2, 1, WH);
     }
-    pb(12, 24, 16, 5, WH); pb(11, 24, 1, 5, K); pb(28, 24, 1, 5, K);
     pb(16, 31, 8, 4, GR);
-    pb(14, 29, 12, 1, GR);
-    foxHead(px, B, 'run', false, 0, 0, 0, 0);
+    pb(13, 28, 14, 2, RD); pb(13, 28, 1, 2, K); pb(26, 28, 1, 2, K);
+    catHead(px, B, 'run', false, 0, 0, 0, 0);
 }
 
-function drawFoxRunBack(ctx, t, gait) {
-    var px = foxPx(ctx), y, k;
+function drawCatRunBack(ctx, t, gait) {
+    var px = catPx(ctx), y, k;
     ctx.clearRect(0, 0, WW, WHT);
     var g = Math.sin(gait * Math.PI), B = Math.abs(g) > 0.6 ? 1 : 0;
     function pb(x, y2, w, h, c) { px(x, y2 + B, w, h, c); }
     for (k = 0; k < 9; k++) {                          // tail, drawn first so the body overlaps it
         var u = k / 8, wv = Math.sin(t * 8 + k * 0.6) * u * 2.5;
-        px(21 + 8 * Math.sin(u * 1.5) + wv - 2, 36 - 16 * u * u + B - 2, 6, 6, K);
+        px(21 + 8 * Math.sin(u * 1.5) + wv - 1, 36 - 16 * u * u + B - 1, 4, 4, K);
     }
     for (k = 0; k < 9; k++) {
         var v = k / 8, wv2 = Math.sin(t * 8 + k * 0.6) * v * 2.5;
-        px(21 + 8 * Math.sin(v * 1.5) + wv2 - 1, 36 - 16 * v * v + B - 1, 4, 4, k >= 6 ? TIP : WH);
+        px(21 + 8 * Math.sin(v * 1.5) + wv2, 36 - 16 * v * v + B, 2, 2, WH);
     }
     function paw(x, ph) {
         var s = Math.sin(gait * Math.PI + ph), len = 5 + Math.round(Math.max(0, s) * 3);
@@ -6747,29 +6744,28 @@ function drawFoxRunBack(ctx, t, gait) {
         pb(x0 - 1, y, 1, 1, K); pb(x1 + 1, y, 1, 1, K); pb(x0, y, x1 - x0 + 1, 1, WH);
     }
     pb(9, 11, 22, 1, K); pb(9, 28, 22, 1, K);
-    var ew = [1, 1, 2, 3, 3, 4, 5, 6, 7];
-    for (y = 2; y <= 10; y++) {
-        var w = ew[y - 2], e0 = 11 - Math.floor(w / 2), f0 = 28 - Math.floor(w / 2);
-        var ec = y <= 4 ? TIP : WH;
-        pb(e0 - 1, y, 1, 1, K); pb(e0, y, w, 1, ec); pb(e0 + w, y, 1, 1, K);
-        pb(f0 - 1, y, 1, 1, K); pb(f0, y, w, 1, ec); pb(f0 + w, y, 1, 1, K);
+    var ew = [1, 2, 4, 5, 7];
+    for (y = 6; y <= 10; y++) {
+        var w = ew[y - 6], e0 = 11 - Math.floor(w / 2), f0 = 28 - Math.floor(w / 2);
+        pb(e0 - 1, y, 1, 1, K); pb(e0, y, w, 1, WH); pb(e0 + w, y, 1, 1, K);
+        pb(f0 - 1, y, 1, 1, K); pb(f0, y, w, 1, WH); pb(f0 + w, y, 1, 1, K);
     }
-    pb(11, 1, 1, 1, K); pb(28, 1, 1, 1, K);
-    pb(14, 29, 12, 1, GR);
+    pb(11, 5, 1, 1, K); pb(28, 5, 1, 1, K);
+    pb(13, 28, 14, 2, RD); pb(13, 28, 1, 2, K); pb(26, 28, 1, 2, K);
     pb(16, 18, 8, 1, GR);
 }
 
-// Same idea as a desktop pet: sit when still, scratch, get tired, fall asleep,
+// Same idea as the desktop-pet cats: sit when still, scratch, get tired, fall asleep,
 // run in the direction of travel.
-function drawFoxState(ctx, state, t, gait, lx, ly) {
-    if (state === 'sleep') { drawFoxSleep(ctx, t); }
-    else if (state === 'scratch') { drawFoxSit(ctx, t, lx, ly, 'scratch'); }
-    else if (state === 'tired') { drawFoxSit(ctx, t, lx, ly, 'tired'); }
-    else if (state === 'alert') { drawFoxSit(ctx, t, lx, ly, 'alert'); }
-    else if (state === 'runS') { drawFoxRunFront(ctx, t, gait); }
-    else if (state === 'runN') { drawFoxRunBack(ctx, t, gait); }
-    else if (state === 'runE') { drawFoxRunSide(ctx, t, gait); }
-    else { drawFoxSit(ctx, t, lx, ly, 'sit'); }
+function drawCatState(ctx, state, t, gait, lx, ly) {
+    if (state === 'sleep') { drawCatSleep(ctx, t); }
+    else if (state === 'scratch') { drawCatSit(ctx, t, lx, ly, 'scratch'); }
+    else if (state === 'tired') { drawCatSit(ctx, t, lx, ly, 'tired'); }
+    else if (state === 'alert') { drawCatSit(ctx, t, lx, ly, 'alert'); }
+    else if (state === 'runS') { drawCatRunFront(ctx, t, gait); }
+    else if (state === 'runN') { drawCatRunBack(ctx, t, gait); }
+    else if (state === 'runE') { drawCatRunSide(ctx, t, gait); }
+    else { drawCatSit(ctx, t, lx, ly, 'sit'); }
 }
 """
 
@@ -6816,7 +6812,6 @@ SCENE_TEMPLATE = """<!DOCTYPE html>
     .foxbox {
         position: absolute; left: 50%; top: __FOX_TOP__; z-index: 2;
         width: 200px; height: 200px; transform: translate(-50%, -50%);
-        animation: floaty 4.2s ease-in-out infinite;
     }
     .foxbox svg {
         display: block; width: 100%; height: 100%;
@@ -6826,8 +6821,6 @@ SCENE_TEMPLATE = """<!DOCTYPE html>
     }
     @keyframes pulse { 0%, 100% { opacity: 0.75; transform: translate(-50%, -50%) scale(0.96); }
                        50% { opacity: 1; transform: translate(-50%, -50%) scale(1.06); } }
-    @keyframes floaty { 0%, 100% { transform: translate(-50%, -50%); }
-                        50% { transform: translate(-50%, calc(-50% - 7px)); } }
     .copy {
         position: absolute; left: 0; right: 0; bottom: 0; z-index: 4;
         padding: 36px 16px 16px; text-align: center; color: #a4b1cd;
@@ -6852,7 +6845,7 @@ SCENE_TEMPLATE = """<!DOCTYPE html>
     @keyframes stageIn { from { opacity: 0; transform: scale(0.985); }
                          to { opacity: 1; transform: none; } }
     @media (prefers-reduced-motion: reduce) {
-        #stage, .copy, .glow, .foxbox { animation: none; }
+        #stage, .copy, .glow { animation: none; }
     }
 </style>
 </head>
@@ -6891,7 +6884,7 @@ __FOX_JS__
         return { x: r.left + r.width / 2, y: r.top + r.height * 0.45 };
     });
 
-    // the fox itself stays still (it only floats, in CSS); its eyes look at the pointer
+    // the fox sits still in the middle of the ball; only its eyes move, towards the pointer
     var eyes = foxEyes(fox);
     function paint(now) {
         look.update(now);
@@ -7409,8 +7402,8 @@ div:has(> .st-key-topbar) { position: sticky; top: 10px; z-index: 60; }
 }
 """
 
-# The scroll story on the landing page: a fox slides down a line as the
-# visitor scrolls, and each card lights up when the fox reaches it.
+# The scroll story on the landing page: a cat slides down a line as the
+# visitor scrolls, and each card lights up when the cat reaches it.
 STORY_CARDS = {
     "en": (
         ("WHO", "Meet Nashmi",
@@ -7569,7 +7562,7 @@ STORY_TEMPLATE = """<!DOCTYPE html>
     <div id="sky"><canvas id="far"></canvas><canvas id="near"></canvas></div>
     <svg id="pathsvg" aria-hidden="true"><path id="pathBg"></path><path id="pathFill"></path></svg>
     <div id="rows">__CARDS__</div>
-    <canvas id="fox" width="40" height="46" role="img" aria-label="Nashmi the fox walking down the line"></canvas>
+    <canvas id="fox" width="40" height="46" role="img" aria-label="Nashmi's cat walking down the line"></canvas>
 </div>
 <script>
 __FOX_JS__
@@ -7707,7 +7700,7 @@ __FOX_JS__
         }
         rotCur += (rot - rotCur) * 0.3;
         look.update(now);
-        drawFoxState(cctx, state, now / 1000, gait, look.x, look.y);
+        drawCatState(cctx, state, now / 1000, gait, look.x, look.y);
         fox.style.transform = 'translate(-50%, -56%) scaleX(' + flip + ') rotate(' + rotCur.toFixed(1) + 'deg)';
         var best = 0, bd = 1e9;
         for (var i = 0; i < rows.length; i++) {
@@ -7740,7 +7733,7 @@ __FOX_JS__
 
 
 def render_story() -> None:
-    """The scrolling 'who is Nashmi' story with the fox on the line."""
+    """The scrolling 'who is Nashmi' story with the cat on the line."""
     cards = "".join(
         f'<div class="row"><i class="node"></i><article class="card"{dir_attr()}>'
         f'<span class="tag">{html.escape(tag)}</span>'
@@ -7749,7 +7742,7 @@ def render_story() -> None:
         for tag, title, text in STORY_CARDS[lang()]
     )
     markup = (STORY_TEMPLATE.replace("__CARDS__", cards)
-              .replace("__FOX_JS__", FOX_JS + FOX_WALKER_JS))
+              .replace("__FOX_JS__", FOX_JS + WALKER_JS))
     embed_html(markup, STORY_HEIGHT)
 
 STRINGS = {
