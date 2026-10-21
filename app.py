@@ -2986,6 +2986,7 @@ button, [role="button"], label { touch-action: manipulation; }
     color: var(--text);
     font-family: var(--sans);
     overflow-x: hidden;
+    isolation: isolate;      /* so the glowing squares (z-index -1) sit between the grid and the page */
     background:
         radial-gradient(900px 420px at 50% -10%,
             rgba(229, 56, 59, 0.10), transparent 70%),
@@ -3000,6 +3001,8 @@ button, [role="button"], label { touch-action: manipulation; }
     background-size: auto, auto, auto, 40px 40px, 40px 40px, auto;
     background-attachment: fixed;
 }
+/* the element that carries the grid script takes no room */
+[data-testid="stElementContainer"]:has(.nashmi-fx) { display: none !important; }
 .block-container {
     max-width: 1000px;
     padding: 1rem 1.25rem 3rem;
@@ -3871,6 +3874,86 @@ __LOOK_JS__
 </body>
 </html>
 """
+
+
+# The squares of the page background (40 px, drawn by CSS on .stApp) light up red under the
+# pointer and fade out behind it. A canvas behind the page, the same size and origin as the
+# fixed grid; it only draws while something is lit.
+GRID_FX_JS = """(function () {
+    if (window.__nashmiGridFx) { return; }              // Streamlit runs this again on every rerun
+    var app = document.querySelector('.stApp');
+    if (!app) { return; }
+    window.__nashmiGridFx = true;
+    var CELL = 40;                                       // the squares of the page background
+    var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var FADE = reduce ? 150 : 1100;                      // ms for a lit square to fade out
+    var canvas = document.createElement('canvas');
+    canvas.id = 'nashmi-grid-fx';
+    canvas.style.cssText = 'position:fixed;left:0;top:0;width:100vw;height:100vh;pointer-events:none;z-index:-1';
+    app.insertBefore(canvas, app.firstChild);
+    var ctx = canvas.getContext('2d'), dpr = 1, lit = {}, running = false, last = '';
+    function size() {
+        dpr = Math.min(window.devicePixelRatio || 1, 2);
+        canvas.width = Math.round(window.innerWidth * dpr);
+        canvas.height = Math.round(window.innerHeight * dpr);
+    }
+    size();
+    window.addEventListener('resize', size);
+    function alphaOf(c, now) {
+        var k = Math.max(0, 1 - (now - c.t) / FADE);
+        return c.a * k * k;
+    }
+    function light(i, j, level, now) {
+        var key = i + ',' + j, c = lit[key];
+        if (!c) { c = lit[key] = { a: 0, t: now, i: i, j: j }; }
+        if (level > alphaOf(c, now)) { c.a = level; c.t = now; }
+    }
+    function draw(now) {
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+        var any = false;
+        for (var key in lit) {
+            var c = lit[key], a = alphaOf(c, now);
+            if (a <= 0.01) { delete lit[key]; continue; }
+            any = true;
+            var x = c.i * CELL, y = c.j * CELL;
+            ctx.fillStyle = 'rgba(229, 56, 59, ' + (a * 0.26).toFixed(3) + ')';
+            ctx.fillRect(x + 1, y + 1, CELL - 1, CELL - 1);
+            ctx.strokeStyle = 'rgba(255, 74, 80, ' + (a * 0.75).toFixed(3) + ')';
+            ctx.shadowColor = 'rgba(229, 56, 59, ' + (a * 0.9).toFixed(3) + ')';
+            ctx.shadowBlur = 10 * a;
+            ctx.lineWidth = 1;
+            ctx.strokeRect(x + 0.5, y + 0.5, CELL, CELL);
+            ctx.shadowBlur = 0;
+        }
+        if (any) { requestAnimationFrame(draw); } else { running = false; }
+    }
+    function move(e) {
+        if (!canvas.isConnected) {
+            var a = document.querySelector('.stApp');
+            if (a) { a.insertBefore(canvas, a.firstChild); }
+        }
+        var i = Math.floor(e.clientX / CELL), j = Math.floor(e.clientY / CELL), key = i + ',' + j;
+        if (key === last) { return; }
+        last = key;
+        var now = performance.now();
+        light(i, j, 1, now);
+        for (var di = -1; di <= 1; di++) {
+            for (var dj = -1; dj <= 1; dj++) {
+                if (di || dj) { light(i + di, j + dj, di && dj ? 0.12 : 0.28, now); }
+            }
+        }
+        if (!running) { running = true; requestAnimationFrame(draw); }
+    }
+    window.addEventListener('pointermove', move, { passive: true });
+    window.addEventListener('pointerdown', move, { passive: true });
+})();
+"""
+
+
+def grid_effect() -> None:
+    """Make the squares of the page background light up under the pointer (script runs in the page)."""
+    st.html(f'<span class="nashmi-fx"></span><script>{GRID_FX_JS}</script>', unsafe_allow_javascript=True)
 
 
 def inject_theme() -> None:
@@ -6610,6 +6693,17 @@ LOGO_JS = """function logoEyes(wrap, cfg) {
         });
     };
 }
+
+// While the pointer is over a frame like this one, the page behind it still lights its squares.
+(function () {
+    document.addEventListener('pointermove', function (e) {
+        try {
+            var f = window.frameElement.getBoundingClientRect();
+            window.parent.dispatchEvent(new PointerEvent('pointermove',
+                { clientX: e.clientX + f.left, clientY: e.clientY + f.top }));
+        } catch (err) { }
+    }, { passive: true });
+})();
 """
 
 THREE_URL = "https://cdn.jsdelivr.net/npm/three@0.150.1/build/three.min.js"
@@ -6771,34 +6865,22 @@ __LOOK_JS__
         new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.85 }));
     blackMesh.renderOrder = -1;
     group.add(blackMesh);
-    var shellWrap = new THREE.Group();     // lets the big mesh stretch to the frame on wide screens
+    var shellWrap = new THREE.Group();
     shellWrap.add(shell);
     group.add(coreWire, shellWrap);
 
-    // On a wide screen the red network is spread over the whole frame, edge to edge, so there
-    // are no empty corners. On a phone it stays a ball around the logo.
+    // The red network is a round cloud of points round the logo, as big as the frame is tall:
+    // a circle on every screen (spread edge to edge it looked stretched sideways).
     var sw0 = stage.clientWidth || 400, sh0 = stage.clientHeight || 400, asp0 = sw0 / sh0;
-    var wideNet = asp0 >= 1.25;
     var bz0 = asp0 < 0.9 ? 10.5 : (asp0 < 1.6 ? 8.6 : 7.2);
     var fit0 = Math.min(1, (bz0 * 0.4142 * 0.96) / ((3.6 + __OFFSET_Y__) * __GSCALE__));
-    var kLocal = 1 / (__GSCALE__ * fit0);
-    var XW = 0.4142 * bz0 * asp0 * 1.06 * kLocal, YH = 0.4142 * bz0 * 1.06 * kLocal;
-    var OFFL = __OFFSET_Y__ * kLocal * __GSCALE__ * fit0;
-    var N = wideNet ? 420 : 190, positions = new Float32Array(N * 3), colors = new Float32Array(N * 3), pts = [];
+    var rMax = 0.9 * 0.4142 * bz0 / (__GSCALE__ * fit0) * 0.92, rMin = rMax - 1.0;
+    var N = 230, positions = new Float32Array(N * 3), colors = new Float32Array(N * 3), pts = [];
     for (var i = 0; i < N; i++) {
-        var x, y, z;
-        if (wideNet) {
-            x = (Math.random() * 2 - 1) * XW;
-            y = (Math.random() * 2 - 1) * YH - OFFL * kLocal;
-            z = (Math.random() * 2 - 1) * 1.6;
-        } else {
-            var r = 3.2 + Math.random() * 1.5;
-            var t = Math.random() * Math.PI * 2;
-            var u = Math.acos(2 * Math.random() - 1);
-            x = r * Math.sin(u) * Math.cos(t);
-            y = r * Math.sin(u) * Math.sin(t);
-            z = r * Math.cos(u);
-        }
+        var r = rMin + Math.random() * (rMax - rMin);
+        var t = Math.random() * Math.PI * 2;
+        var u = Math.acos(2 * Math.random() - 1);
+        var x = r * Math.sin(u) * Math.cos(t), y = r * Math.sin(u) * Math.sin(t), z = r * Math.cos(u);
         positions[i * 3] = x; positions[i * 3 + 1] = y; positions[i * 3 + 2] = z;
         // alternate white and bright red points
         colors[i * 3] = 1; colors[i * 3 + 1] = i % 2 ? 1 : 0.23; colors[i * 3 + 2] = i % 2 ? 1 : 0.25;
@@ -6809,33 +6891,20 @@ __LOOK_JS__
     pg.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     var points = new THREE.Points(pg, new THREE.PointsMaterial(
         { vertexColors: true, size: 0.075, transparent: true, opacity: 0.95 }));
-    var lineData = [], MAX_FLOATS = 260 * 6;
-    if (wideNet) {                       // join every point to its two nearest neighbours
-        for (var a = 0; a < N; a++) {
-            var best = [[1e9, -1], [1e9, -1]];
-            for (var b = 0; b < N; b++) {
-                if (a === b) { continue; }
-                var dx = pts[a][0] - pts[b][0], dy = pts[a][1] - pts[b][1], dz = pts[a][2] - pts[b][2];
-                var dd = dx * dx + dy * dy + dz * dz;
-                if (dd < best[0][0]) { best[1] = best[0]; best[0] = [dd, b]; }
-                else if (dd < best[1][0]) { best[1] = [dd, b]; }
-            }
-            for (var q = 0; q < 2; q++) {
-                var bb = best[q][1];
-                if (bb >= 0) {
-                    lineData.push(pts[a][0], pts[a][1], pts[a][2], pts[bb][0], pts[bb][1], pts[bb][2]);
-                }
-            }
+    var lineData = [];
+    for (var a = 0; a < N; a++) {            // join every point to its two nearest neighbours
+        var best = [[1e9, -1], [1e9, -1]];
+        for (var b = 0; b < N; b++) {
+            if (a === b) { continue; }
+            var dx = pts[a][0] - pts[b][0], dy = pts[a][1] - pts[b][1], dz = pts[a][2] - pts[b][2];
+            var dd = dx * dx + dy * dy + dz * dz;
+            if (dd < best[0][0]) { best[1] = best[0]; best[0] = [dd, b]; }
+            else if (dd < best[1][0]) { best[1] = [dd, b]; }
         }
-    } else {
-        for (var a = 0; a < N && lineData.length < MAX_FLOATS; a++) {
-            for (var b = a + 1; b < N && lineData.length < MAX_FLOATS; b++) {
-                var dx = pts[a][0] - pts[b][0], dy = pts[a][1] - pts[b][1],
-                    dz = pts[a][2] - pts[b][2];
-                if (dx * dx + dy * dy + dz * dz < 1.7) {
-                    lineData.push(pts[a][0], pts[a][1], pts[a][2],
-                                  pts[b][0], pts[b][1], pts[b][2]);
-                }
+        for (var q = 0; q < 2; q++) {
+            var bb = best[q][1];
+            if (bb >= 0) {
+                lineData.push(pts[a][0], pts[a][1], pts[a][2], pts[bb][0], pts[bb][1], pts[bb][2]);
             }
         }
     }
@@ -6869,8 +6938,7 @@ __LOOK_JS__
         camera.aspect = w / h;
         baseZ = w / h < 0.9 ? 10.5 : (w / h < 1.6 ? 8.6 : 7.2);
         camera.position.set(0, 0, baseZ);
-        if (wideNet) { net.scale.set(1, 1, 1); }
-        else { net.scale.set(Math.max(1, Math.min(2.1, (w / h) * 0.7)), 1, 1); }
+        net.scale.set(1, 1, 1);
         var GS = __GSCALE__, OFF = __OFFSET_Y__;       // keep the whole ring inside the banner
         var fitK = Math.min(1, (baseZ * 0.4142 * 0.96) / ((3.6 + OFF) * GS));
         group.scale.setScalar(GS * fitK);
@@ -6910,8 +6978,8 @@ __LOOK_JS__
         coreWire.scale.setScalar(1 + Math.sin(t * 1.6) * 0.03);
         shell.rotation.y = -t * 0.12;
         blackMesh.rotation.y = t * 0.18; blackMesh.rotation.x = t * 0.07;
-        net.rotation.y = wideNet ? Math.sin(t * 0.3) * 0.04 : t * 0.06;
-        net.rotation.x = wideNet ? 0 : Math.sin(t * 0.2) * 0.1;
+        net.rotation.y = t * 0.06;
+        net.rotation.x = Math.sin(t * 0.2) * 0.1;
         ring.rotation.z = t * 0.25;
         ring2.rotation.z = -t * 0.18;
         group.rotation.y += (ex * 0.9 - group.rotation.y) * 0.05;
@@ -8980,6 +9048,7 @@ def main() -> None:
         initial_sidebar_state="auto",  # collapsed on phones, open on desktop
     )
     inject_theme()
+    grid_effect()
     install_ar_wrappers()
     gate = current_gate()
     if gate == "landing":
