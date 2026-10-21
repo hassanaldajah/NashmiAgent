@@ -4670,6 +4670,129 @@ SIDEBAR_RTL_CSS = """
 [data-testid="stSidebar"] .stMarkdown, [data-testid="stSidebar"] label { text-align: right; }
 """
 
+# The sidebar of the signed-in app, Gemini style (loaded after APP_POLISH_CSS so it wins).
+GEMINI_SIDEBAR_CSS = """
+[data-testid="stSidebar"] {
+    background: #0d1320 !important; box-shadow: none !important;
+    border-right: 1px solid rgba(255, 255, 255, 0.05) !important;
+}
+[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] { padding: 0.5rem 0.55rem 0 !important; }
+[data-testid="stSidebar"] [data-testid="stVerticalBlock"] { gap: 0.2rem !important; }
+
+/* every row: a calm pill, icon on the left, label left aligned */
+[data-testid="stSidebar"] button, [data-testid="stSidebar"] [data-testid="stPopoverButton"],
+[data-testid="stSidebar"] [data-testid="stExpander"] summary {
+    min-height: 44px !important; border-radius: 999px !important; box-shadow: none !important;
+    justify-content: flex-start !important; text-align: left !important;
+    padding: 0 16px !important; gap: 12px !important; font-weight: 500 !important;
+    color: #e3e6ea !important; background: transparent !important; border: 0 !important;
+}
+[data-testid="stSidebar"] button > div, [data-testid="stSidebar"] [data-testid="stPopoverButton"] > div {
+    justify-content: flex-start !important; gap: 12px !important;
+}
+[data-testid="stSidebar"] button p { font-size: 0.92rem !important; letter-spacing: 0 !important; }
+[data-testid="stSidebar"] button [data-testid="stIconMaterial"] { font-size: 1.25rem !important; color: #c3c8d0; }
+[data-testid="stSidebar"] button:hover, [data-testid="stSidebar"] [data-testid="stPopoverButton"]:hover,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover {
+    background: rgba(255, 255, 255, 0.07) !important; transform: none !important;
+}
+
+/* New chat: the highlighted pill at the top */
+[data-testid="stSidebar"] .st-key-new_chat button {
+    background: rgba(255, 255, 255, 0.10) !important; color: #fff !important; font-weight: 600 !important;
+    margin: 0.35rem 0 0.15rem;
+}
+[data-testid="stSidebar"] .st-key-new_chat button:hover { background: rgba(255, 255, 255, 0.15) !important; }
+[data-testid="stSidebar"] .st-key-new_chat button:disabled { opacity: 0.4 !important; }
+
+/* the name row at the top */
+.st-key-side_brand .brand { margin: 0 !important; gap: 10px !important; font-family: var(--sans) !important; }
+.st-key-side_brand .brand img { width: 30px !important; height: 30px !important; border-radius: 50% !important; border: 0 !important; background: #131a26; }
+[data-testid="stSidebar"] .brand span { font-size: 1.15rem !important; font-weight: 600 !important; letter-spacing: 0 !important; }
+
+/* search: a round field with a magnifier */
+[data-testid="stSidebar"] [data-testid="stTextInputRootElement"],
+[data-testid="stSidebar"] [data-testid="stTextInput"] [data-baseweb="base-input"],
+[data-testid="stSidebar"] [data-testid="stTextInput"] [data-baseweb="input"] {
+    background: rgba(255, 255, 255, 0.06) !important; border-radius: 999px !important; min-height: 42px;
+    border: 0 !important; outline: 0 !important; box-shadow: none !important;
+}
+[data-testid="stSidebar"] [data-testid="stTextInputRootElement"]:focus-within {
+    background: rgba(255, 255, 255, 0.10) !important; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.22) !important;
+}
+[data-testid="stSidebar"] [data-testid="stTextInput"] input {
+    color: #e3e6ea !important; padding-left: 42px !important; font-size: 0.92rem !important;
+    background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%23aab0b9' stroke-width='2' stroke-linecap='round'><circle cx='11' cy='11' r='7'/><path d='M20 20l-3.5-3.5'/></svg>") no-repeat 14px center !important;
+}
+[data-testid="stSidebar"] [data-testid="stTextInput"] input::placeholder { color: #8d949e !important; }
+
+/* small grey section titles, like "Recent" */
+[data-testid="stSidebar"] .side-label {
+    font-family: var(--sans) !important; font-size: 0.8rem !important; font-weight: 500 !important;
+    letter-spacing: 0 !important; text-transform: none !important; color: #9aa1ab !important;
+    margin: 1rem 0 0.2rem 0.8rem !important;
+}
+
+/* chats: round rows, the open one highlighted, the ... menu shows on hover */
+.st-key-chat_list { max-height: 42vh !important; gap: 0.1rem !important; }
+[class*="st-key-chatrow_"] [data-testid="stColumn"]:first-child button {
+    min-height: 42px !important; padding: 0 14px !important; background: transparent !important; box-shadow: none !important;
+}
+[class*="st-key-chatrow_"] [data-testid="stColumn"]:first-child button p { font-size: 0.9rem !important; color: #dfe3e8; }
+[class*="st-key-chatrow_"]:hover [data-testid="stColumn"]:first-child button { background: rgba(255, 255, 255, 0.07) !important; }
+[class*="st-key-chatrow_on_"] [data-testid="stColumn"]:first-child button {
+    background: rgba(255, 255, 255, 0.12) !important; box-shadow: none !important; color: #fff !important;
+}
+[class*="st-key-chatrow_on_"] [data-testid="stColumn"]:first-child button p { color: #fff; font-weight: 600; }
+[class*="st-key-chatrow_"] [data-testid="stColumn"]:first-child button [data-testid="stIconMaterial"] { font-size: 1rem !important; color: #8d949e; }
+[class*="st-key-chatrow_"] [data-testid="stPopoverButton"] { opacity: 0; min-height: 34px !important; padding: 0 !important; justify-content: center !important; }
+[class*="st-key-chatrow_"]:hover [data-testid="stPopoverButton"], [class*="st-key-chatrow_on_"] [data-testid="stPopoverButton"] { opacity: 0.85; }
+@media (hover: none) { [class*="st-key-chatrow_"] [data-testid="stPopoverButton"] { opacity: 0.7; } }
+
+/* the AI model panel: a plain row that opens; its content sits in a soft card */
+[data-testid="stSidebar"] [data-testid="stExpander"], [data-testid="stSidebar"] [data-testid="stExpander"] details {
+    background: transparent !important; border: 0 !important; border-radius: 22px !important; box-shadow: none !important;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] summary, [data-testid="stSidebar"] [data-testid="stExpander"] summary * { color: #e3e6ea !important; opacity: 1 !important; }
+[data-testid="stSidebar"] [data-testid="stExpander"] details[open] { background: rgba(255, 255, 255, 0.04) !important; }
+[data-testid="stSidebar"] [data-testid="stExpander"] summary { padding: 0 16px !important; }
+[data-testid="stSidebar"] [data-testid="stExpander"] summary p { font-size: 0.92rem !important; }
+.st-key-side_settings { border-top: 0 !important; margin-top: 0.3rem !important; padding-top: 0 !important; }
+
+/* the account at the bottom: stays in view, name and plan, a gear for settings */
+.st-key-side_user {
+    position: sticky; bottom: 0; z-index: 6; background: #0d1320; margin-top: 0.6rem !important;
+    padding: 0.5rem 0 0.7rem; border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+.user-card {
+    background: transparent !important; border: 0 !important; padding: 6px 10px !important; gap: 12px !important; margin: 0 !important;
+}
+.user-card img, .user-card .avatar-fallback { flex: 0 0 38px !important; width: 38px !important; height: 38px !important; }
+.user-card b { font-size: 0.95rem; font-weight: 600; }
+.user-card span, .user-card em { font-size: 0.78rem !important; color: #9aa1ab !important; }
+.user-card em { font-family: var(--sans) !important; }
+.user-card em + span { display: none !important; }      /* one grey line under the name: @handle, or the email when there is none */
+.st-key-user_actions [data-testid="stHorizontalBlock"] { gap: 0.2rem !important; flex-wrap: nowrap !important; }
+.st-key-lang_box [data-testid="stPopoverButton"] { border: 0 !important; background: transparent !important; font-weight: 500 !important; }
+.st-key-lang_box [data-testid="stPopoverButton"]:hover { box-shadow: none !important; background: rgba(255, 255, 255, 0.07) !important; }
+.st-key-track_box [data-testid="stPopoverButton"] { border: 0 !important; background: transparent !important; font-weight: 500 !important; box-shadow: none !important; }
+.st-key-track_box [data-testid="stPopoverButton"]:hover { box-shadow: none !important; background: rgba(255, 255, 255, 0.07) !important; }
+[data-testid="stSidebar"] .st-key-side_signout button { color: #f0a3a6 !important; }
+/* the lists that open from the rows (track, language, chat menu) match the dark column */
+[data-testid="stPopoverBody"] {
+    background: #141b29 !important; border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    border-radius: 20px !important; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55) !important; color: #e3e6ea !important;
+}
+[data-testid="stPopoverBody"] p, [data-testid="stPopoverBody"] label, [data-testid="stPopoverBody"] span { color: #e3e6ea !important; }
+[data-testid="stPopoverBody"] [data-testid="stRadioOption"] { border-radius: 999px !important; padding: 6px 10px !important; }
+[data-testid="stPopoverBody"] [data-testid="stRadioOption"]:hover { background: rgba(255, 255, 255, 0.07) !important; }
+[data-testid="stPopoverBody"] [data-testid="stRadioOption"][data-selected="true"] { background: rgba(255, 255, 255, 0.12) !important; }
+[data-testid="stPopoverBody"] button { color: #e3e6ea !important; }
+@media (max-width: 640px) {
+    [data-testid="stSidebar"] button, [data-testid="stSidebar"] [data-testid="stPopoverButton"] { min-height: 46px !important; }
+}
+"""
+
 APP_POLISH_CSS = """
 /* Sidebar: soft gradient, one pill (oval) shape for every control */
 [data-testid="stSidebar"] {
@@ -4743,12 +4866,12 @@ def render_nav(box) -> str:
             )
             # signing out is in the ... menu next to Account
         st.button(
-            tt("New chat", "محادثة جديدة"), key="new_chat", icon=":material/add:",
+            tt("New chat", "محادثة جديدة"), key="new_chat", icon=":material/edit_square:",
             on_click=on_new_chat, disabled=mode in (MODE_SOC, MODE_TOOLS, MODE_EXAM),
         )
         # the button says "Track"; the tracks themselves live in its list
         with st.container(key="track_box"):
-            with st.popover(tt("Track", "التراك"), icon=":material/apps:",
+            with st.popover(tt(mode, TRACK_AR.get(mode, mode)), icon=":material/apps:",
                             width="stretch"):
                 st.radio(
                     "Track", MODES, key="track", label_visibility="collapsed",
@@ -4918,7 +5041,7 @@ def render_user_card(box) -> None:
                 first, second = st.columns([4, 1])
                 first.button(tt("Account", "الحساب"), key="open_account",
                              on_click=open_account, width="stretch",
-                             icon=":material/account_circle:")
+                             icon=":material/settings:")
                 with second.popover(" ", icon=":material/more_horiz:", width="stretch"):
                     if is_admin():
                         st.button(tt("Admin", "المشرف"), key="open_admin",
@@ -9199,7 +9322,7 @@ def main() -> None:
     if mfa_gate(account_id(), current_user()):
         return
     st.markdown(
-        f"<style>{APP_POLISH_CSS}"
+        f"<style>{APP_POLISH_CSS}{GEMINI_SIDEBAR_CSS}"
         + (SIDEBAR_RTL_CSS if lang() == "ar" else "") + "</style>",
         unsafe_allow_html=True)
     nav_box = st.sidebar.container(key="side_nav")
