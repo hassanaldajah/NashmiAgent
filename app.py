@@ -2933,14 +2933,13 @@ def story_parts_html(height: int = 220) -> str:
 PARTS_DIR = ASSETS / "fox-parts"
 RIG_UNIT = 0.42                                   # screen px per sheet unit, at the front fox's 66 px width
 FOX_BOX = (66.0, 66.0 / 0.9647)                   # the front fox's box (width, height) in px
-SIDE_RIG = {"w": 170, "h": 210, "feet": 204, "parts": (       # faces left; the page flips it for right
-    ("tail", "side_tail", 98, 70, 1.0, (0.05, "bot", 14), 1.0),
-    ("hl_far", "side_leg_a", 78, 138, 1.28, (0.5, "top", 10), 0.8),
-    ("hl_near", "side_leg_b", 94, 138, 1.28, (0.5, "top", 10), 0.9),
-    ("fl_far", "side_leg_a", 36, 138, 1.28, (0.5, "top", 10), 0.8),
-    ("fl_near", "side_leg_b", 55, 138, 1.28, (0.5, "top", 10), 1.0),
-    ("torso", "side_torso", 16, 90, 1.38, (0.5, "bot", 0), 1.0),
-    ("head", "side_head", 0, 6, 1.32, (0.5, "bot", 0), 1.0),
+SIDE_RIG = {"w": 198, "h": 146, "feet": 145, "parts": (        # faces right; the page flips it for left
+    ("tail", "cat_tail", 0.0, 55.2, 0.5, (0.95, "top", 29.5), 1.0),
+    ("fl_far", "cat_leg_c", 103.0, 104.7, 0.5, (0.5, "top", 8), 0.94),
+    ("hl_far", "cat_leg_b", 76.0, 104.7, 0.5, (0.5, "top", 8), 1.0),
+    ("hl_near", "cat_leg_a", 46.3, 104.7, 0.5, (0.5, "top", 8), 1.0),
+    ("fl_near", "cat_leg_c", 114.8, 104.7, 0.5, (0.5, "top", 8), 1.0),
+    ("body", "cat_body", 49.5, 0.0, 0.5, (0.5, "bot", 0), 1.0),
 )}
 BACK_RIG = {"w": 125, "h": 200, "feet": 195, "parts": (
     ("leg_l", "back_leg_a", 22, 138, 1.3, (0.5, "top", 6), 1.0),
@@ -7941,7 +7940,7 @@ __LOOK_JS__
         // along the slanted parts of the line (side, turned to the left or to the right)
         var view = 'front';
         if (state === 'walk' || state === 'alert') {
-            if (Math.abs(svx) > 0.4 * Math.abs(svy)) { view = 'side'; flip = svx > 0 ? -1 : 1; }
+            if (Math.abs(svx) > 0.4 * Math.abs(svy)) { view = 'side'; flip = svx > 0 ? 1 : -1; }
             else if (svy < 0) { view = 'back'; }
         }
         // a new facing has to hold for a moment before it is shown, so it does not flicker at the corners
@@ -7963,17 +7962,16 @@ __LOOK_JS__
             if (sideP.fl_near) {
                 // legs stay upright like a cat's: each steps forward (lifted), then pushes back along the ground
                 var sl = function (el, dirn, c) {
-                    el.style.transform = up + 'translate(' + (-dirn * s1 * 8 * ku * wk).toFixed(2) + 'px,'
-                        + (-Math.max(0, dirn * c) * 3.5 * ku * wk).toFixed(2) + 'px) ' + deg(-dirn * s1 * 3 * wk);
+                    el.style.transform = up + 'translate(' + (dirn * s1 * 9 * ku * wk).toFixed(2) + 'px,'
+                        + (-Math.max(0, dirn * c) * 3.5 * ku * wk).toFixed(2) + 'px) ' + deg(dirn * s1 * 3 * wk);
                 };
                 var c1 = Math.cos(ph);
                 sl(sideP.fl_near, 1, c1); sl(sideP.hl_far, 1, c1);
                 sl(sideP.fl_far, -1, c1); sl(sideP.hl_near, -1, c1);
-                sideP.torso.style.transform = up + deg(s1 * 1.2 * wk);
-                sideP.head.style.transform = 'translateY(' + (bob + Math.cos(ph * 2) * 1.0 * ku * wk).toFixed(2) + 'px) ' + deg(-s1 * 2.2 * wk);
-                sideP.tail.style.transform = up + deg(Math.sin(ph * 2) * 8 * wk + Math.sin(now / 900) * 5 * idle);
+                sideP.body.style.transform = up + deg(s1 * 0.8 * wk);
+                sideP.tail.style.transform = up + deg(Math.sin(ph * 2 + 1) * 7 * wk + Math.sin(now / 900) * 5 * idle);
             }
-            rigSide.style.transform = 'scaleX(' + flip + ') scale(0.8)';
+            rigSide.style.transform = 'scaleX(' + flip + ') scale(0.9)';
         } else if (view === 'back' && rigBack) {
             rigBack.style.transform = 'scale(0.86)';
             var sx = s1 * 1.5 * ku * wk, lf = 9 * ku * wk;
