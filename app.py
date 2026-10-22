@@ -29,6 +29,7 @@ import io
 import ipaddress
 import json
 import logging
+import math
 import mimetypes
 import os
 import random
@@ -38,6 +39,7 @@ import time
 import urllib.parse
 import uuid
 import zipfile
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -65,6 +67,14 @@ try:
     import nashmi_exam
 except ImportError:  # the Practice Exam track needs this module
     nashmi_exam = None
+try:
+    import nashmi_logs
+except ImportError:  # the Log Analysis track needs this module
+    nashmi_logs = None
+try:
+    import nashmi_net
+except ImportError:  # the Wireshark Analysis track needs this module
+    nashmi_net = None
 
 load_dotenv()
 
@@ -408,6 +418,8 @@ MODE_TOOLS = "Toolbox"
 MODE_EXAM = "Practice Exam"
 MODE_FINDER = "Tool Finder"
 MODE_RE = "Reverse Engineering"
+MODE_LOGS = "Log Analysis"
+MODE_NET = "Wireshark Analysis"
 
 TRACKS = (
     Track(
@@ -863,6 +875,20 @@ TRACKS = (
         context="SOC Analyzer",
     ),
     Track(
+        name=MODE_LOGS,
+        blurb="Open a Linux or Windows log and get findings, a timeline, "
+              "correlations and an evidence graph. Fixed rules run inside "
+              "your session: no API key and no account needed.",
+        placeholder="",
+    ),
+    Track(
+        name=MODE_NET,
+        blurb="Open a Wireshark capture (pcap, pcapng or a CSV export) and get findings, a timeline, "
+              "conversations and an evidence graph. Fixed rules run inside your session: "
+              "no API key and no account needed.",
+        placeholder="",
+    ),
+    Track(
         name=MODE_TOOLS,
         blurb="Look up CVEs in the official NVD, hash and decode data, and "
               "pull indicators out of any text. Everything can be exported.",
@@ -1012,6 +1038,18 @@ TRACK_REFS = {
         ("Awesome CTF", "https://github.com/apsdehal/awesome-ctf"),
         ("Awesome Incident Response",
          "https://github.com/meirwah/awesome-incident-response"),
+    ),
+    MODE_NET: (
+        ("Wireshark user guide", "https://www.wireshark.org/docs/wsug_html_chunked/"),
+        ("MITRE ATT&CK: Network Service Discovery (T1046)", "https://attack.mitre.org/techniques/T1046/"),
+        ("Sigma rules", "https://github.com/SigmaHQ/sigma"),
+    ),
+    MODE_LOGS: (
+        ("Windows security auditing (Microsoft Learn)",
+         "https://learn.microsoft.com/en-us/windows/security/threat-protection/auditing/security-auditing-overview"),
+        ("MITRE ATT&CK: Brute Force (T1110)",
+         "https://attack.mitre.org/techniques/T1110/"),
+        ("Sigma rules", "https://github.com/SigmaHQ/sigma"),
     ),
     MODE_SOC: (
         ("NIST SP 800-61 Rev. 3 (incident response)",
@@ -5551,6 +5589,262 @@ APP_POLISH_CSS = """
 }
 """
 
+# Motion and depth for the signed-in screens only. It is injected in main()
+# after the landing and sign-in pages have returned, so none of it can reach
+# the landing page, the fox or the network around it. It uses only the colour
+# tokens already defined in THEME_CSS (no new colours), never touches iframes,
+# and every animation sits behind prefers-reduced-motion: no-preference.
+INTERNAL_MOTION_CSS = """
+:root { --nm-ease: cubic-bezier(.22, 1, .36, 1); }
+
+/* depth: metric cards get an accent edge and a quiet lift */
+[data-testid="stMainBlockContainer"] [data-testid="stMetric"] {
+    position: relative; overflow: hidden; padding: 0.75rem 1rem 0.75rem 1.1rem;
+    transition: box-shadow 0.25s ease, transform 0.25s var(--nm-ease);
+}
+[data-testid="stMainBlockContainer"] [data-testid="stMetric"]::before {
+    content: ""; position: absolute; inset-block: 0; inset-inline-start: 0; width: 3px;
+    background: var(--accent); opacity: 0.55; transition: opacity 0.25s ease;
+}
+[data-testid="stMainBlockContainer"] [data-testid="stMetric"]:hover::before { opacity: 1; }
+[data-testid="stMainBlockContainer"] [data-testid="stMetricLabel"] p {
+    font-family: var(--mono); font-size: 0.68rem; letter-spacing: 1.2px;
+    text-transform: uppercase; color: var(--muted);
+}
+[data-testid="stMainBlockContainer"] [data-testid="stMetricValue"] {
+    color: var(--white); font-variant-numeric: tabular-nums;
+}
+
+/* chat: the assistant's turns carry a thin rule, code blocks react to the pointer */
+[data-testid="stMainBlockContainer"] [data-testid="stChatMessage"]:not(:has([data-testid="stChatMessageAvatarUser"])) {
+    border-inline-start: 2px solid var(--accent-soft); padding-inline-start: 0.85rem;
+    transition: border-color 0.3s ease;
+}
+[data-testid="stMainBlockContainer"] [data-testid="stChatMessage"]:not(:has([data-testid="stChatMessageAvatarUser"])):hover {
+    border-inline-start-color: var(--accent-dim);
+}
+[data-testid="stMainBlockContainer"] [data-testid="stChatMessage"] pre { transition: border-color 0.25s ease; }
+[data-testid="stMainBlockContainer"] [data-testid="stChatMessage"] pre:hover { border-color: var(--accent-dim); }
+
+/* chat answers: tables scroll inside themselves instead of breaking words, headings stay in proportion */
+[data-testid="stMainBlockContainer"] [data-testid="stChatMessage"] :is(th, td) {
+    overflow-wrap: normal; word-break: normal; padding: 0.4rem 0.65rem; vertical-align: top;
+}
+[data-testid="stMainBlockContainer"] [data-testid="stChatMessage"] th { white-space: nowrap; }
+[data-testid="stMainBlockContainer"] [data-testid="stChatMessage"] td { min-width: 6.5rem; }
+[data-testid="stMainBlockContainer"] [data-testid="stChatMessage"] h1 { font-size: 1.5rem; }
+[data-testid="stMainBlockContainer"] [data-testid="stChatMessage"] h2 { font-size: 1.3rem; }
+[data-testid="stMainBlockContainer"] [data-testid="stChatMessage"] h3 { font-size: 1.12rem; }
+
+/* inputs of the main area follow the same tokens as the text inputs */
+[data-testid="stMainBlockContainer"] [data-testid="stTextArea"] textarea,
+[data-testid="stMainBlockContainer"] [data-testid="stMultiSelect"] [data-baseweb="select"] > div {
+    background-color: var(--panel) !important; color: var(--white) !important;
+    border: 1px solid var(--line) !important; border-radius: 10px !important;
+}
+[data-testid="stMainBlockContainer"] [data-testid="stTextArea"] textarea::placeholder { color: var(--muted) !important; }
+[data-testid="stMainBlockContainer"] button[data-variant="segmented_control"] {
+    background: var(--panel) !important; color: var(--text) !important; border: 1px solid var(--line) !important;
+    white-space: nowrap; transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+[data-testid="stMainBlockContainer"] button[data-variant="segmented_control"]:hover { background: var(--accent-soft) !important; color: var(--white) !important; }
+[data-testid="stMainBlockContainer"] button[data-variant="segmented_control"][data-selected="true"] {
+    background: var(--accent-soft) !important; color: var(--white) !important; border-color: var(--accent) !important;
+}
+[data-testid="stMainBlockContainer"] [data-testid="stButtonGroup"] [role="radiogroup"] { flex-wrap: wrap; gap: 0.35rem; }
+
+/* phones: metric cards sit two to a row instead of one per row */
+@media (max-width: 640px) {
+    [data-testid="stMainBlockContainer"] [data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) { gap: 0.5rem; }
+    [data-testid="stMainBlockContainer"] [data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) > [data-testid="stColumn"] {
+        flex: 1 1 calc(50% - 0.5rem); min-width: calc(50% - 0.5rem);
+    }
+    [data-testid="stMainBlockContainer"] [data-testid="stMetric"] { padding: 0.55rem 0.7rem 0.55rem 0.85rem; }
+    [data-testid="stMainBlockContainer"] [data-testid="stMetricValue"] { font-size: 1.6rem; }
+    [data-testid="stMainBlockContainer"] [data-testid="stMetricLabel"] p { letter-spacing: 0.8px; }
+}
+
+/* the "+" dashboard */
+[class*="st-key-dash_btn_"] { width: auto !important; margin: 0.3rem 0 0.7rem; }
+[class*="st-key-dash_btn_"] button { width: auto; padding-inline: 1.15rem; font-weight: 600; }
+.st-key-dash_logs, .st-key-dash_net, .st-key-dash_soc {
+    border: 1px solid var(--line); border-radius: 18px; padding: 1rem 1.1rem 1.2rem;
+    background: linear-gradient(180deg, var(--panel), var(--panel-2)); box-shadow: 0 14px 40px rgba(0, 0, 0, 0.35);
+}
+.nm-dash-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.8rem; margin: 0 0 0.8rem; color: var(--white); font-size: 1.05rem; }
+
+/* keyboard focus is always visible */
+[data-testid="stMainBlockContainer"] :is(button, input, textarea, [role="tab"]):focus-visible {
+    outline: 2px solid var(--accent-dim); outline-offset: 2px;
+}
+
+/* loading: the spinner gets a thin travelling highlight under its text */
+[data-testid="stMainBlockContainer"] [data-testid="stSpinner"] { position: relative; padding-bottom: 0.65rem; }
+[data-testid="stMainBlockContainer"] [data-testid="stSpinner"]::after {
+    content: ""; position: absolute; inset-inline: 0; bottom: 0; height: 2px; border-radius: 2px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent) 50% 0 / 40% 100% no-repeat,
+        var(--accent-soft);
+}
+
+/* provenance labels: what came from the user's files and what the model wrote */
+.nm-tag {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 0.15rem 0.55rem; margin: 1rem 0 0.45rem;
+    font-family: var(--mono); font-size: 0.66rem; letter-spacing: 1.4px; text-transform: uppercase; color: var(--muted);
+}
+.nm-tag::before { content: ""; width: 7px; height: 7px; border-radius: 2px; background: var(--muted); }
+.nm-tag.nm-ai::before { background: var(--accent-2); }
+.nm-tag.nm-rule::before { background: var(--accent); }
+.nm-tag.nm-hyp::before { background: var(--warn); }
+.nm-body { margin: 0 0 0.5rem; color: var(--text); font-size: 0.9rem; line-height: 1.55; overflow-wrap: anywhere; }
+.nm-body.nm-hyp-text { border-inline-start: 2px dashed var(--warn); padding-inline-start: 0.7rem; }
+
+/* severity chips, shared by findings, the timeline and the tables */
+.nm-sev {
+    display: inline-block; padding: 0.08rem 0.5rem; border-radius: 999px; border: 1px solid var(--sev, var(--muted));
+    color: var(--sev, var(--muted)); background: color-mix(in srgb, var(--sev, var(--muted)) 14%, transparent);
+    font-family: var(--mono); font-size: 0.64rem; letter-spacing: 1.2px; text-transform: uppercase;
+}
+.nm-sev.high, .nm-tl-item.high { --sev: var(--accent); }
+.nm-sev.medium, .nm-tl-item.medium { --sev: var(--warn); }
+.nm-sev.low, .nm-tl-item.low { --sev: var(--accent-2); }
+[class*="st-key-nm_find_"] {
+    --sev: var(--muted); border-inline-start: 3px solid var(--sev); border-radius: 12px;
+    background: var(--panel); padding: 0.9rem 1.1rem; margin-bottom: 0.7rem;
+    transition: box-shadow 0.25s ease;
+}
+[class*="st-key-nm_find_"]:hover { box-shadow: 0 0 18px color-mix(in srgb, var(--sev) 18%, transparent); }
+[class*="st-key-nm_find_high_"] { --sev: var(--accent); }
+[class*="st-key-nm_find_medium_"] { --sev: var(--warn); }
+[class*="st-key-nm_find_low_"] { --sev: var(--accent-2); }
+.nm-fh { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.7rem; margin: 0 0 0.45rem; }
+.nm-fh b { font-family: var(--mono); font-size: 0.78rem; color: var(--muted); font-weight: 500; }
+.nm-fh .nm-ft { color: var(--white); font-weight: 600; font-size: 1rem; overflow-wrap: anywhere; }
+.nm-attack { display: inline-block; margin: 0.1rem 0 0.4rem; padding: 0.1rem 0.5rem; border: 1px solid var(--line);
+    border-radius: 6px; color: var(--text); font-family: var(--mono); font-size: 0.72rem; }
+
+/* timeline */
+.nm-tl { position: relative; margin: 0.5rem 0 1rem; padding-inline-start: 1.4rem; border-inline-start: 1px solid var(--line); }
+.nm-tl-item { position: relative; padding: 0.05rem 0 0.9rem; --sev: var(--muted); }
+.nm-tl-item::before {
+    content: ""; position: absolute; inset-inline-start: calc(-1.4rem - 4px); top: 0.5rem; width: 7px; height: 7px;
+    border-radius: 50%; background: var(--sev); box-shadow: 0 0 0 3px var(--bg);
+}
+.nm-tl-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 0.65rem; font-family: var(--mono); font-size: 0.74rem; color: var(--muted); }
+.nm-tl-title { color: var(--white); font-family: var(--sans); font-weight: 600; font-size: 0.9rem; overflow-wrap: anywhere; }
+.nm-tl-meta { font-family: var(--mono); font-size: 0.74rem; color: var(--text); overflow-wrap: anywhere; }
+.nm-tl-msg { margin-top: 0.1rem; font-family: var(--mono); font-size: 0.74rem; color: var(--muted); overflow-wrap: anywhere; }
+.nm-tl-ref { color: var(--accent); }
+.nm-table-wrap { max-height: 360px; overflow: auto; margin: 0.2rem 0 0.9rem; border: 1px solid var(--line); border-radius: 10px; }
+.nm-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+.nm-table th { position: sticky; top: 0; background: var(--panel-2); color: var(--muted); text-align: start; font-family: var(--mono);
+    font-size: 0.66rem; letter-spacing: 1.2px; text-transform: uppercase; font-weight: 500; padding: 0.45rem 0.7rem; }
+.nm-table td { padding: 0.4rem 0.7rem; border-top: 1px solid var(--line); color: var(--text); overflow-wrap: anywhere; }
+.nm-table tr:hover td { background: var(--accent-soft); color: var(--white); }
+.nm-legend { display: flex; flex-wrap: wrap; gap: 0.3rem 1.1rem; margin: 0 0 0.6rem; font-size: 0.78rem; color: var(--muted); }
+.nm-legend i { display: inline-block; width: 18px; height: 0; margin-inline-end: 6px; vertical-align: middle; border-top: 2px solid var(--text); }
+.nm-legend i.dash { border-top: 2px dashed var(--warn); }
+.nm-tag small { font-family: var(--sans); font-size: 0.78rem; letter-spacing: 0; text-transform: none; opacity: 0.85; }
+.nm-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0 0 0.8rem; }
+.nm-chip {
+    max-width: 100%; padding: 0.25rem 0.65rem; border: 1px solid var(--line); border-radius: 999px;
+    background: var(--panel); color: var(--white); font-family: var(--mono); font-size: 0.76rem;
+    overflow-wrap: anywhere;
+}
+
+/* indicator distribution */
+.nm-bars { display: grid; gap: 0.55rem; margin: 0.4rem 0 1rem; }
+.nm-bar { display: grid; grid-template-columns: minmax(5.5rem, 10rem) 1fr auto; gap: 0.7rem; align-items: center; font-size: 0.82rem; }
+.nm-bar b { color: var(--white); font-weight: 500; overflow-wrap: anywhere; }
+.nm-bar i {
+    display: block; height: 8px; overflow: hidden; border-radius: 999px;
+    background: var(--panel-2); border: 1px solid var(--line);
+}
+.nm-bar i span {
+    display: block; height: 100%; border-radius: inherit; transform-origin: left center;
+    background: linear-gradient(90deg, var(--accent-dim), var(--accent));
+}
+.nm-bar em { font-style: normal; font-family: var(--mono); color: var(--text); font-variant-numeric: tabular-nums; }
+@media (max-width: 480px) {
+    .nm-bar { grid-template-columns: 1fr auto; }
+    .nm-bar i { grid-column: 1 / -1; order: 3; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    @keyframes nm-rise { from { opacity: 0; transform: translateY(10px); } }
+    @keyframes nm-fade { from { opacity: 0; } }
+    @keyframes nm-grow { from { transform: scaleX(0); } }
+    @keyframes nm-sheen { from { background-position: -60% 0, 0 0; } to { background-position: 160% 0, 0 0; } }
+    @keyframes nm-pulse {
+        0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 55%, transparent); }
+        70%, 100% { box-shadow: 0 0 0 7px transparent; }
+    }
+    /* "backwards" only: nothing stays applied after the entrance, so no stray transform is left behind */
+    [data-testid="stMainBlockContainer"] .topline, [data-testid="stMainBlockContainer"] .empty-title,
+    [data-testid="stMainBlockContainer"] .empty-blurb, [data-testid="stMainBlockContainer"] [class*="st-key-quick_"],
+    [data-testid="stMainBlockContainer"] [data-testid="stMetric"], [data-testid="stMainBlockContainer"] [data-testid="stChatMessage"],
+    [data-testid="stMainBlockContainer"] [data-testid="stExpander"], [data-testid="stMainBlockContainer"] .nm-tag,
+    [data-testid="stMainBlockContainer"] .nm-chips, [data-testid="stMainBlockContainer"] .nm-bars, [data-testid="stMainBlockContainer"] .nm-fh,
+    [data-testid="stMainBlockContainer"] .nm-tl {
+        animation: nm-rise 0.55s var(--nm-ease) backwards;
+    }
+    [data-testid="stMainBlockContainer"] .empty-blurb { animation-delay: 0.05s; }
+    [data-testid="stMainBlockContainer"] [class*="st-key-quick_"] { animation-delay: 0.1s; }
+    [data-testid="stMainBlockContainer"] [class*="st-key-quick_"] ~ [class*="st-key-quick_"] { animation-delay: 0.17s; }
+    [data-testid="stMainBlockContainer"] [class*="st-key-quick_"] ~ [class*="st-key-quick_"] ~ [class*="st-key-quick_"] { animation-delay: 0.24s; }
+    [data-testid="stMainBlockContainer"] [class*="st-key-quick_"] ~ [class*="st-key-quick_"] ~ [class*="st-key-quick_"] ~ [class*="st-key-quick_"] { animation-delay: 0.31s; }
+    [data-testid="stMainBlockContainer"] [data-baseweb="tab-panel"], [data-testid="stMainBlockContainer"] details[open] > :not(summary) {
+        animation: nm-fade 0.35s var(--nm-ease) backwards;
+    }
+    [data-testid="stMainBlockContainer"] .nm-bar i span { animation: nm-grow 0.8s var(--nm-ease) 0.1s backwards; }
+    [data-testid="stMainBlockContainer"] [data-testid="stSpinner"]::after { animation: nm-sheen 1.4s linear infinite; }
+    .topline .t-key:not(.bad)::before { animation: nm-pulse 2.6s ease-out infinite; }
+    [data-testid="stMainBlockContainer"] [data-testid="stProgress"] [role="progressbar"] > div { transition: width 0.6s var(--nm-ease); }
+    @media (hover: hover) and (pointer: fine) {
+        [data-testid="stMainBlockContainer"] [data-testid="stMetric"]:hover { transform: translateY(-2px); }
+    }
+}
+"""
+
+
+def provenance_tag(kind: str, label: str, note: str = "") -> None:
+    """A small label saying where the text below comes from.
+
+    ``kind`` is "source" (taken from the user's own files), "rule" (a fixed
+    rule's explanation), "hyp" (a correlation to verify) or "ai" (written by
+    the model: an interpretation, not a fact).
+    """
+    extra = f"<small>{html.escape(note)}</small>" if note else ""
+    css = {"ai": " nm-ai", "rule": " nm-rule", "hyp": " nm-hyp"}.get(kind, "")
+    st.markdown(
+        f'<div class="nm-tag{css}"{dir_attr()}>'
+        f'<span>{html.escape(label)}</span>{extra}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def indicator_chips(values) -> None:
+    """Values found in the user's files, as read-only chips (always escaped)."""
+    chips = "".join(f'<span class="nm-chip">{html.escape(str(v))}</span>'
+                    for v in values)
+    if chips:
+        st.markdown(f'<div class="nm-chips">{chips}</div>',
+                    unsafe_allow_html=True)
+
+
+def indicator_bars(counts: dict[str, int]) -> None:
+    """Horizontal bars of how many indicators of each kind were extracted."""
+    top = max(counts.values(), default=0)
+    if not top:
+        return
+    rows = "".join(
+        f'<div class="nm-bar"><b>{html.escape(str(name))}</b>'
+        f'<i><span style="width:{count / top * 100:.1f}%"></span></i>'
+        f'<em>{count}</em></div>'
+        for name, count in counts.items()
+    )
+    st.markdown(f'<div class="nm-bars"{dir_attr()}>{rows}</div>',
+                unsafe_allow_html=True)
+
 
 def render_nav(box) -> str:
     """Logo, New chat button and the track list; returns the active track."""
@@ -5567,7 +5861,7 @@ def render_nav(box) -> str:
             # signing out is in the ... menu next to Account
         st.button(
             tt("New chat", "محادثة جديدة"), key="new_chat", icon=":material/edit_square:",
-            on_click=on_new_chat, disabled=mode in (MODE_SOC, MODE_TOOLS, MODE_EXAM),
+            on_click=on_new_chat, disabled=mode in (MODE_SOC, MODE_LOGS, MODE_NET, MODE_TOOLS, MODE_EXAM),
         )
         # the button says "Track"; the tracks themselves live in its list
         with st.container(key="track_box"):
@@ -6106,7 +6400,7 @@ def render_settings(box, mode: str):
 
 def render_topline(settings: Settings) -> None:
     """One quiet line: current track, model and whether a key is loaded."""
-    if guest_viewer():
+    if guest_viewer() or settings.mode in (MODE_LOGS, MODE_NET):  # no model or key involved
         st.markdown(
             f'<div class="topline"><span class="t-track">'
             f'{html.escape(tt(settings.mode, TRACK_AR.get(settings.mode, settings.mode)))}'
@@ -6514,6 +6808,13 @@ def render_soc_track(settings: Settings) -> None:
         elif upload.type and upload.type.startswith("video/"):
             st.video(upload)
 
+    local = soc_local_reports(uploads) if (uploads and nashmi_logs is not None) else []
+    if local:
+        names = [n for n, _ in local]
+        pick = names[0] if len(names) == 1 else st.selectbox(tt("Dashboard for", "لوحة لـ"), names, key="soc_dash_file")
+        if dashboard_toggle("soc"):
+            render_dashboard(dict(local)[pick], pick, log_libs(), "soc")
+
     if not (uploads and st.button("Start security analysis",
                                   key="btn_start_soc")):
         return
@@ -6542,10 +6843,17 @@ def render_soc_track(settings: Settings) -> None:
     warn_skipped(prepared)
     found = extract_indicators(prepared.raw_text)
 
+    provenance_tag("source", tt("From your files", "من ملفاتك"),
+                   tt("pattern matches, not verdicts",
+                      "مطابقة أنماط وليست أحكامًا"))
     unique, external, hashes = st.columns(3)
     unique.metric("Unique IPs", len(found.ips))
     external.metric("External IPs", len(found.external_ips))
     hashes.metric("SHA-256 Hashes", len(found.hashes))
+    indicator_chips(found.external_ips + found.hashes)
+    provenance_tag("ai", tt("Written by the model", "كتبه النموذج"),
+                   tt("an interpretation, verify before acting",
+                      "تفسير، تحقّق منه قبل أي إجراء"))
 
     prompt = SOC_PROMPT_TEMPLATE.format(
         ips=list(found.external_ips), hashes=list(found.hashes),
@@ -6689,6 +6997,7 @@ def render_toolbox() -> None:
             else:
                 total = sum(len(v) for v in iocs.values())
                 st.caption(f"{total} indicators in {len(iocs)} groups")
+                indicator_bars({kind: len(items) for kind, items in iocs.items()})
                 for kind, items in iocs.items():
                     with st.expander(f"{kind} ({len(items)})", expanded=True):
                         st.code("\n".join(items), language=None)
@@ -6704,6 +7013,985 @@ def render_toolbox() -> None:
                     key="dl_ioc_json", icon=":material/data_object:",
                 )
     render_references(MODE_SOC)
+
+
+# ---------------------------------------------------------------------------
+# Log Analysis: Linux and Windows logs, read inside the session with the fixed
+# rules of nashmi_logs.py. No model, no key and no account are involved, so
+# guests can use it. Nothing is stored; the report lives in the session only.
+# ---------------------------------------------------------------------------
+# the severity colours are the palette's own: accent, warn, accent-2, muted
+SEV_COLOR = {"high": "#E5383B", "medium": "#FFB020", "low": "#5b7cff", "info": "#6f7c98"}
+LOG_UPLOAD_TYPES = ["log", "txt", "csv", "xml", "json"]
+LOG_TABLE_LIMIT = 20_000
+LOG_TIMELINE_LIMIT = 300
+LOG_EXPORT_HELP = """\
+**Linux**
+- Debian / Ubuntu: `sudo cp /var/log/auth.log .`
+- RHEL / Fedora: `sudo cp /var/log/secure .`
+- systemd: `journalctl -u ssh -o short-iso --no-pager > ssh.log`
+
+**Windows** (run PowerShell as Administrator for the Security log)
+- XML: `wevtutil qe Security /f:xml > security.xml`
+- CSV: `Get-WinEvent -LogName Security -MaxEvents 50000 | Export-Csv security.csv -NoTypeInformation`
+- Event Viewer: Save All Events As... and pick CSV.
+
+A binary `.evtx` file cannot be read directly; export it with one of the commands above.
+"""
+
+
+@st.cache_resource(show_spinner=False)
+def log_libs() -> dict:
+    """Chart, table and graph libraries, imported when this track is first opened so
+    no other page pays for them. Each one is optional: when a package is
+    missing the screen falls back to plain Streamlit widgets."""
+    libs: dict = {}
+    try:
+        import plotly.graph_objects as go
+        libs["go"] = go
+    except Exception:  # noqa: BLE001 - optional
+        LOGGER.warning("plotly is not installed; charts fall back to st.bar_chart")
+    try:
+        from st_aggrid import AgGrid, GridOptionsBuilder, JsCode
+        libs["aggrid"] = (AgGrid, GridOptionsBuilder, JsCode)
+    except Exception:  # noqa: BLE001
+        LOGGER.warning("streamlit-aggrid is not available; tables use st.dataframe")
+    try:
+        from streamlit_echarts import st_echarts
+        libs["echarts"] = st_echarts
+    except Exception:  # noqa: BLE001 - also raised when the component API differs
+        LOGGER.warning("streamlit-echarts is not available; the graph is shown as a table")
+    return libs
+
+
+def log_report(data: bytes, hint: str, engine: str = "logs"):
+    """Analyse once per upload; results stay in this session only (last 4 files)."""
+    key = (engine, hint, hashlib.sha256(data).hexdigest())
+    cache = st.session_state.get("log_cache")
+    if not isinstance(cache, dict):
+        cache = st.session_state["log_cache"] = {}
+    if key in cache:
+        return cache[key]
+    if engine == "net":
+        report = nashmi_net.analyze(data)
+    else:
+        if nashmi_net is not None and nashmi_net.looks_like_capture(data):
+            raise nashmi_logs.LogFormatError("This is a network capture. Open it in the Wireshark Analysis track.")
+        report = nashmi_logs.analyze(data, hint)
+    while len(cache) >= 4:
+        cache.pop(next(iter(cache)))
+    cache[key] = report
+    return report
+
+
+def _stamp_text(ts) -> str:
+    return ts.strftime("%Y-%m-%d %H:%M:%S") if ts else ""
+
+
+def _sev_chip(severity: str) -> str:
+    return f'<span class="nm-sev {html.escape(severity)}">{html.escape(severity)}</span>'
+
+
+def _body(text: str, hypothesis: bool = False) -> None:
+    """Log-derived text, escaped, so a hostile log cannot inject markup."""
+    st.markdown(
+        f'<div class="nm-body{" nm-hyp-text" if hypothesis else ""}" dir="auto">'
+        f'{html.escape(text)}</div>', unsafe_allow_html=True)
+
+
+def _html_table(rows: list[dict]) -> None:
+    """A small read-only table in the app's colours (every cell escaped)."""
+    if not rows:
+        return
+    head = "".join(f"<th>{html.escape(str(k))}</th>" for k in rows[0])
+    body = "".join("<tr>" + "".join(f"<td>{html.escape(str(v))}</td>" for v in row.values()) + "</tr>"
+                   for row in rows)
+    st.markdown(f'<div class="nm-table-wrap"{dir_attr()}><table class="nm-table"><thead><tr>{head}</tr></thead>'
+                f'<tbody>{body}</tbody></table></div>', unsafe_allow_html=True)
+
+
+def log_frame(events):
+    import pandas as pd
+    if events and events[0].os == "network":
+        return pd.DataFrame([{
+            "Time": _stamp_text(e.ts), "Severity": e.severity, "Type": e.title, "Source": e.ip,
+            "Destination": e.dst, "Port": e.port or "", "Proto": e.proto, "Packets": e.count,
+            "Bytes": e.size, "Message": e.message[:300], "Packet": e.line, "_n": e.n,
+        } for e in events])
+    # the columns a reader needs first come first, so a phone shows them before scrolling
+    return pd.DataFrame([{
+        "Time": _stamp_text(e.ts), "Severity": e.severity, "Type": e.title,
+        "User": e.user, "IP": e.ip, "Message": e.message[:300],
+        "Event ID": e.event_id, "Source": e.source, "Host": e.host,
+        "Line": e.line, "_n": e.n,
+    } for e in events])
+
+
+def _chart_layout(fig, height: int = 280) -> None:
+    fig.update_layout(
+        height=height, margin=dict(l=8, r=8, t=28, b=8), bargap=0.25,
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#A4B1CD", size=12),
+        legend=dict(orientation="h", y=1.12, x=0, font=dict(color="#A4B1CD", size=12)),
+        xaxis=dict(gridcolor="rgba(164, 177, 205, 0.14)"),
+        yaxis=dict(gridcolor="rgba(164, 177, 205, 0.14)"),
+    )
+
+
+def render_log_overview(report, libs: dict, kp: str = "log") -> None:
+    import pandas as pd
+    events = report.events
+    go = libs.get("go")
+    stamped = [e for e in events if e.ts]
+    provenance_tag("source", tt("Events over time", "الأحداث عبر الزمن"),
+                   tt("counts of what the log contains", "أعداد ما يحتويه السجل"))
+    if stamped:
+        frame = pd.DataFrame({"ts": [e.ts for e in stamped],
+                              "severity": [e.severity for e in stamped]})
+        span = (frame["ts"].max() - frame["ts"].min()).total_seconds()
+        step = "1min" if span <= 3 * 3600 else "1h" if span <= 3 * 86400 else "1D"
+        frame["bucket"] = frame["ts"].dt.floor(step)
+        table = frame.groupby(["bucket", "severity"]).size().unstack(fill_value=0)
+        if go:
+            fig = go.Figure()
+            for sev in nashmi_logs.SEVERITIES:
+                if sev in table:
+                    fig.add_bar(x=table.index, y=table[sev], name=sev,
+                                marker_color=SEV_COLOR[sev])
+            fig.update_layout(barmode="stack")
+            _chart_layout(fig)
+            st.plotly_chart(fig, width="stretch", key=f"{kp}_time_chart",
+                            config={"displayModeBar": False})
+        else:
+            st.bar_chart(table)
+    else:
+        st.caption(tt("No event has a readable time, so there is no time chart.",
+                      "لا يوجد وقت مقروء في الأحداث، لذلك لا يوجد رسم زمني."))
+
+    left, right = st.columns(2)
+    for column, label, attr, color, chart_key in (
+            (left, tt("Top source addresses", "أكثر عناوين المصدر"), "ip", "#E5383B", f"{kp}_top_ip"),
+            (right, tt("Top accounts", "أكثر الحسابات"), "user", "#5b7cff", f"{kp}_top_user")):
+        top = Counter(getattr(e, attr) for e in events if getattr(e, attr)).most_common(8)
+        with column:
+            provenance_tag("source", label)
+            if not top:
+                st.caption(tt("None in this log.", "لا يوجد في هذا السجل."))
+            elif go:
+                fig = go.Figure(go.Bar(
+                    x=[c for _, c in reversed(top)],
+                    y=[html.escape(str(n))[:40] for n, _ in reversed(top)],
+                    orientation="h", marker_color=color))
+                _chart_layout(fig, 60 + 28 * len(top))
+                st.plotly_chart(fig, width="stretch", key=chart_key,
+                                config={"displayModeBar": False})
+            else:
+                indicator_bars(dict(top))
+    kinds = Counter(e.title for e in events).most_common(8)
+    provenance_tag("source", tt("What the log contains", "ما يحتويه السجل"))
+    indicator_bars(dict(kinds))
+
+
+def _finding_card(finding):
+    """A keyed container; INTERNAL_MOTION_CSS colours it by severity."""
+    return st.container(key=f"nm_find_{finding.severity}_{finding.id}")
+
+
+def render_log_findings(report, libs: dict) -> None:
+    if not report.findings:
+        st.info(tt("No rule matched this log. That does not prove it is clean: "
+                   "the rules only cover the patterns listed in the references.",
+                   "لم تنطبق أي قاعدة على هذا السجل. هذا لا يثبت أنه سليم: "
+                   "القواعد تغطي أنماطًا محددة فقط."))
+        return
+    present = [s for s in ("high", "medium", "low")
+               if any(f.severity == s for f in report.findings)]
+    picked = st.multiselect(tt("Severity", "الخطورة"), present, default=present,
+                            key="log_find_sev")
+    for finding in (f for f in report.findings if f.severity in picked):
+        with _finding_card(finding):
+            st.markdown(
+                f'<div class="nm-fh" dir="auto">{_sev_chip(finding.severity)}<b>{html.escape(finding.id)}</b>'
+                f'<span class="nm-ft">{html.escape(finding.title)}</span></div>',
+                unsafe_allow_html=True)
+            provenance_tag("source", tt("Observed in the log", "ما لوحظ في السجل"))
+            _body(finding.observed)
+            if finding.meaning:
+                provenance_tag("rule", tt("Rule explanation", "شرح القاعدة"),
+                               tt("fixed text, not a verdict", "نص ثابت وليس حكمًا"))
+                _body(finding.meaning)
+            if finding.attack:
+                st.markdown(f'<span class="nm-attack">{html.escape(finding.attack)}</span>',
+                            unsafe_allow_html=True)
+            if finding.hypothesis:
+                provenance_tag("hyp", tt("Hypothesis, verify before acting",
+                                         "فرضية، تحقّق قبل أي إجراء"))
+                _body(finding.hypothesis, hypothesis=True)
+            bits = [f"{label}: {', '.join(values)}" for label, values in (
+                (tt("Source addresses", "عناوين المصدر"), finding.ips),
+                (tt("Accounts", "الحسابات"), finding.users),
+                (tt("Hosts", "الأجهزة"), finding.hosts)) if values]
+            if bits:
+                _body(" | ".join(bits))
+            related = [report.events[n] for n in finding.events]
+            with st.expander(tt(f"Evidence: {len(related)} event(s)",
+                                f"الأدلة: {len(related)} حدث")):
+                _html_table([{"Line": e.line, "Time": _stamp_text(e.ts), "User": e.user, "IP": e.ip,
+                              "Message": e.message[:160]} for e in related[:50]])
+                st.code("\n".join(e.raw for e in related[:20]), language=None,
+                        wrap_lines=True)
+                if len(related) > 50:
+                    st.caption(tt(f"Showing 50 of {len(related)}. Export for the rest.",
+                                  f"عرض 50 من {len(related)}. صدّر للباقي."))
+
+
+def render_log_timeline(report) -> None:
+    rank = nashmi_logs.SEV_RANK
+    floor = st.select_slider(tt("Minimum severity", "أدنى خطورة"),
+                             options=list(nashmi_logs.SEVERITIES), value="low",
+                             key="log_tl_floor")
+    query = st.text_input(tt("Filter by account, address or text", "تصفية بحسب حساب أو عنوان أو نص"),
+                          key="log_tl_query").strip().lower()
+    marks: dict[int, list[str]] = defaultdict(list)
+    for finding in report.findings:
+        for n in finding.events:
+            marks[n].append(finding.id)
+    ordered = sorted(report.events,
+                     key=lambda e: (e.ts is None, e.ts or datetime.min, e.n))
+    shown = [e for e in ordered if rank[e.severity] >= rank[floor] and (
+        not query or query in f"{e.user} {e.ip} {e.host} {e.title} {e.message}".lower())]
+    provenance_tag("source", tt("Chronological events", "الأحداث بترتيب زمني"),
+                   tt(f"{len(shown):,} match", f"{len(shown):,} مطابق"))
+    if not shown:
+        st.caption(tt("Nothing matches these filters.", "لا شيء يطابق هذه المرشحات."))
+        return
+    items = []
+    for e in shown[:LOG_TIMELINE_LIMIT]:
+        if e.os == "network":
+            meta = " · ".join(x for x in (
+                (f"{e.ip} -> {e.dst}" + (f":{e.port}" if e.port else "")) if e.ip else "", e.proto,
+                f"{e.count} packets" if e.count > 1 else "", f"user {e.user}" if e.user else "") if x)
+        else:
+            meta = " · ".join(x for x in (
+                f"user {e.user}" if e.user else "", f"from {e.ip}" if e.ip else "",
+                e.host, e.source + (f" #{e.event_id}" if e.event_id else "")) if x)
+        unit = "packet" if e.os == "network" else "line"
+        refs = "".join(f'<span class="nm-tl-ref">{html.escape(i)}</span>' for i in marks.get(e.n, [])[:4])
+        items.append(
+            f'<div class="nm-tl-item {html.escape(e.severity)}" dir="auto"><div class="nm-tl-head">'
+            f'<span>{html.escape(_stamp_text(e.ts) or unit + " " + str(e.line))}</span>{_sev_chip(e.severity)}'
+            f'<span class="nm-tl-title">{html.escape(e.title)}</span>{refs}</div>'
+            f'<div class="nm-tl-meta">{html.escape(meta)}</div>'
+            f'<div class="nm-tl-msg">{unit} {e.line} · {html.escape(e.message[:220])}</div></div>')
+    st.markdown(f'<div class="nm-tl"{dir_attr()}>{"".join(items)}</div>', unsafe_allow_html=True)
+    if len(shown) > LOG_TIMELINE_LIMIT:
+        st.caption(tt(f"Showing the first {LOG_TIMELINE_LIMIT} of {len(shown):,}. Narrow the filters or export.",
+                      f"عرض أول {LOG_TIMELINE_LIMIT} من {len(shown):,}. ضيّق المرشحات أو صدّر."))
+
+
+def log_graph_options(graph: dict) -> dict:
+    """ECharts options for the evidence graph (plain data, no HTML)."""
+    names = {"ip": "Source address", "external": "Outside address", "user": "Account", "host": "Host", "finding": "Finding"}
+    colors = {"ip": "#5b7cff", "external": "#A4B1CD", "user": "#A4B1CD", "host": "#6f7c98"}
+    order = [c for c in names if any(n["category"] == c for n in graph["nodes"])]
+    index = {n["id"]: i for i, n in enumerate(graph["nodes"])}
+    used: Counter = Counter()
+    nodes = []
+    for node in graph["nodes"]:
+        label = node["label"][:42]
+        used[label] += 1
+        name = label if used[label] == 1 else f"{label} ({node['category']} {used[label]})"
+        finding = node["category"] == "finding"
+        item = {"name": name, "category": order.index(node["category"]),
+                "symbolSize": 26 if finding else max(12, min(38, 10 + 4 * math.log2(node.get("weight", 1) + 1))),
+                "itemStyle": {"color": SEV_COLOR[node["severity"]] if finding else colors[node["category"]]},
+                "label": {"show": finding or node.get("weight", 0) >= 6}}
+        if finding and node.get("hypothesis"):
+            item["itemStyle"].update(borderColor="#FFB020", borderWidth=3, borderType="dashed")
+        nodes.append(item)
+    links = [{"source": index[l["source"]], "target": index[l["target"]], "value": l["count"],
+              "lineStyle": {"width": min(1 + math.log2(l["count"]), 5), "opacity": 0.55,
+                            "type": "dashed" if l["hypothesis"] else "solid",
+                            "color": "#FFB020" if l["hypothesis"] else "#A4B1CD"}}
+             for l in graph["links"]]
+    return {
+        "backgroundColor": "transparent",
+        "tooltip": {"trigger": "item"},
+        "legend": [{"data": [names[c] for c in order], "top": 0, "textStyle": {"color": "#A4B1CD"}}],
+        "series": [{
+            "type": "graph", "layout": "force", "roam": True, "draggable": True,
+            "data": nodes, "links": links, "categories": [{"name": names[c], "itemStyle": {"color": colors.get(c, "#E5383B")}} for c in order],
+            "label": {"position": "right", "color": "#A4B1CD", "fontSize": 11},
+            "labelLayout": {"hideOverlap": True},
+            "force": {"repulsion": 260, "edgeLength": [50, 140], "gravity": 0.07},
+            "emphasis": {"focus": "adjacency"},
+        }],
+    }
+
+
+def render_log_correlation(report, libs: dict) -> None:
+    graph = analysis_graph(report)
+    net = report.os == "network"
+    confirmed = [l for l in graph["links"] if l["kind"] in ("same event", "same flow")]
+    provenance_tag("source", tt("Confirmed in the capture", "مؤكد في الملف") if net else tt("Confirmed in the log", "مؤكد في السجل"),
+                   tt("conversations seen between two hosts", "محادثات ظاهرة بين جهازين") if net else
+                   tt("an address and an account named in the same entry", "عنوان وحساب مذكوران في نفس السجل"))
+    if confirmed:
+        label = {n["id"]: n["label"] for n in graph["nodes"]}
+        _html_table([{"From": label[l["source"]], "To": label[l["target"]], "Events": l["count"]}
+                     for l in sorted(confirmed, key=lambda l: -l["count"])[:100]])
+    else:
+        st.caption(tt("No entry names both a source address and an account.",
+                      "لا يوجد سجل يذكر عنوان مصدر وحسابًا معًا."))
+    hypotheses = [f for f in report.findings if f.hypothesis]
+    provenance_tag("hyp", tt("Hypotheses to verify", "فرضيات للتحقق"),
+                   tt("patterns across several events, not proof", "أنماط عبر عدة أحداث وليست إثباتًا"))
+    if hypotheses:
+        for f in hypotheses:
+            st.markdown(f'<div class="nm-fh" dir="auto">{_sev_chip(f.severity)}<b>{html.escape(f.id)}</b>'
+                        f'<span class="nm-ft">{html.escape(f.title)}</span></div>',
+                        unsafe_allow_html=True)
+            _body(f.observed)
+            _body(f.hypothesis, hypothesis=True)
+    else:
+        st.caption(tt("No cross-event pattern was found.", "لم يُعثر على نمط عبر الأحداث."))
+
+    provenance_tag("source", tt("Evidence graph", "رسم الأدلة"))
+    if not graph["links"]:
+        st.caption(tt("Nothing to connect: no entry links two entities.",
+                      "لا شيء للربط: لا يوجد سجل يربط كيانين."))
+        return
+    st.markdown(
+        '<div class="nm-legend"><span><i></i>' + html.escape(tt("same entry, or flagged by a rule", "نفس السجل أو أشارت إليه قاعدة"))
+        + '</span><span><i class="dash"></i>' + html.escape(tt("hypothesis", "فرضية")) + '</span></div>',
+        unsafe_allow_html=True)
+    echarts = libs.get("echarts")
+    mode = st.segmented_control(tt("Graph", "الرسم"), ["2d", "3d"], default="2d", key=f"graph_mode_{report.os}",
+                                format_func={"2d": "2D", "3d": "3D"}.get, label_visibility="collapsed") or "2d"
+    if mode == "3d" and libs.get("go"):
+        st.plotly_chart(graph3d_figure(graph, libs["go"]), width="stretch", key=f"corr_graph3d_{report.os}",
+                        config={"displayModeBar": False})
+    elif echarts:
+        echarts(options=log_graph_options(graph), height="520px", key="log_graph")
+    else:
+        st.info(tt("The graph library is not installed, so only the tables above are shown.",
+                   "مكتبة الرسم غير مثبتة، لذلك تظهر الجداول فقط."))
+    if graph["total_entities"] > graph["shown_entities"]:
+        st.caption(tt(f"Showing the {graph['shown_entities']} most connected of {graph['total_entities']} entities.",
+                      f"عرض أكثر {graph['shown_entities']} كيانًا ارتباطًا من {graph['total_entities']}."))
+
+
+def render_log_events(report, libs: dict) -> None:
+    events = report.events[:LOG_TABLE_LIMIT]
+    frame = log_frame(events)
+    if len(report.events) > LOG_TABLE_LIMIT:
+        st.caption(tt(f"Showing the first {LOG_TABLE_LIMIT:,} of {len(report.events):,} events. "
+                      "Export for everything.",
+                      f"عرض أول {LOG_TABLE_LIMIT:,} من {len(report.events):,} حدث. صدّر للكل."))
+    chosen = None
+    if "aggrid" in libs:
+        AgGrid, GridOptionsBuilder, JsCode = libs["aggrid"]
+        builder = GridOptionsBuilder.from_dataframe(frame)
+        builder.configure_default_column(filter=True, sortable=True, resizable=True)
+        builder.configure_column("_n", hide=True)
+        builder.configure_column("Message", minWidth=420, tooltipField="Message")
+        builder.configure_column("Severity", cellStyle=JsCode(
+            "function(p){var c={high:'#E5383B',medium:'#FFB020',low:'#5b7cff'}[p.value];"
+            "return c?{color:c,fontWeight:'600'}:{color:'#6f7c98'};}"))
+        builder.configure_selection("single", use_checkbox=False)
+        builder.configure_pagination(paginationAutoPageSize=False, paginationPageSize=50)
+        builder.configure_grid_options(suppressCellFocus=True, autoSizeStrategy={"type": "fitCellContents"})
+        grid = AgGrid(
+            frame, gridOptions=builder.build(), height=470, theme="dark",
+            update_on=["selectionChanged"], allow_unsafe_jscode=True, key="log_grid",
+            custom_css={
+                ".ag-root-wrapper": {"background-color": "#131c2b !important", "border-color": "rgba(164, 177, 205, 0.14) !important"},
+                ".ag-header, .ag-header-cell": {"background-color": "#0f1724 !important", "color": "#A4B1CD !important"},
+                ".ag-row, .ag-cell": {"background-color": "#131c2b !important", "color": "#A4B1CD"},
+                ".ag-row-hover .ag-cell": {"background-color": "rgba(229, 56, 59, 0.12) !important"},
+                ".ag-row-selected .ag-cell": {"background-color": "rgba(229, 56, 59, 0.12) !important", "color": "#FFFFFF !important"},
+            })
+        rows = grid.selected_rows
+        if rows is not None and len(rows):
+            first = rows.iloc[0] if hasattr(rows, "iloc") else rows[0]
+            chosen = int(first["_n"])
+    else:
+        view = st.dataframe(frame.drop(columns=["_n"]), hide_index=True, on_select="rerun",
+                            selection_mode="single-row", key="log_table")
+        picked = view.selection.rows
+        if picked:
+            chosen = int(frame.iloc[picked[0]]["_n"])
+    if chosen is None:
+        st.caption(tt("Select a row to see the original line.", "اختر صفًا لعرض السطر الأصلي."))
+        return
+    event = report.events[chosen]
+    provenance_tag("source", tt(f"Original entry, line {event.line}", f"السجل الأصلي، السطر {event.line}"))
+    st.code(event.raw, language=None, wrap_lines=True)
+    _body(f"{event.title} | {event.severity}"
+          + (f" | user {event.user}" if event.user else "")
+          + (f" | from {event.ip}" if event.ip else ""))
+
+
+def render_log_export(report, name: str) -> None:
+    markdown = nashmi_logs.report_markdown(report, name)
+    findings = [{**{k: getattr(f, k) for k in ("id", "rule", "title", "severity", "observed",
+                                                "meaning", "hypothesis", "attack", "ips", "users", "hosts")},
+                 "first": _stamp_text(f.first), "last": _stamp_text(f.last),
+                 "source_lines": [report.events[n].line for n in f.events]}
+                for f in report.findings]
+    csv_text = log_frame(report.events).drop(columns=["_n"]).to_csv(index=False)
+    left, middle, right = st.columns(3)
+    left.download_button("Report (.md)", markdown, "nashmi_log_report.md", "text/markdown",
+                         on_click="ignore", key="dl_log_md", icon=":material/description:")
+    middle.download_button("Findings (.json)", json.dumps(findings, indent=2), "nashmi_findings.json",
+                           "application/json", on_click="ignore", key="dl_log_json", icon=":material/data_object:")
+    right.download_button("Events (.csv)", csv_text, "nashmi_events.csv", "text/csv",
+                          on_click="ignore", key="dl_log_csv", icon=":material/table:")
+    if pdf_available():
+        st.download_button("Report (.pdf)", data=lambda: markdown_to_pdf(markdown, "Nashmi log analysis") or b"",
+                           file_name="nashmi_log_report.pdf", mime="application/pdf", on_click="ignore",
+                           key="dl_log_pdf", icon=":material/picture_as_pdf:")
+
+
+def render_log_report(report, name: str, libs: dict, scope: str = "logs") -> None:
+    summary = nashmi_logs.summary(report)
+    high = summary["finding_severity"].get("high", 0)
+    if dashboard_toggle(scope):            # the "+" button: the full dashboard replaces the views
+        render_dashboard(report, name, libs, scope)
+        return
+    net = report.os == "network"
+    cards = st.columns(4)
+    if net:
+        ex = report.extra
+        cards[0].metric(tt("Packets", "الحزم"), f"{ex['packets']:,}")
+        cards[1].metric(tt("Findings", "النتائج"), len(report.findings),
+                        delta=f"{high} high" if high else None, delta_color="inverse")
+        cards[2].metric(tt("Flows", "التدفقات"), f"{ex['flows']:,}")
+        cards[3].metric(tt("Data", "البيانات"), _human_bytes(ex["bytes"]))
+    else:
+        cards[0].metric(tt("Events read", "أحداث مقروءة"), f"{summary['events']:,}")
+        cards[1].metric(tt("Findings", "النتائج"), len(report.findings),
+                        delta=f"{high} high" if high else None, delta_color="inverse")
+        cards[2].metric(tt("Source addresses", "عناوين المصدر"), summary["ips"])
+        cards[3].metric(tt("Accounts", "الحسابات"), summary["users"])
+    if summary["first"]:
+        st.caption(f"{_stamp_text(summary['first'])}  ->  {_stamp_text(summary['last'])}"
+                   f"  ·  {report.os.title()}")
+    if report.skipped:
+        st.caption(tt(f"{report.skipped:,} line(s) were not in a recognised format and were skipped.",
+                      f"تم تخطي {report.skipped:,} سطرًا بتنسيق غير معروف."))
+    for note in report.notes:
+        st.caption(note)
+    # A segmented control, not st.tabs: tabs mount every panel at once, and the
+    # graph and the grid draw at zero width inside a hidden panel.
+    views = {"overview": tt("Overview", "نظرة عامة"), "findings": tt("Findings", "النتائج"),
+             "timeline": tt("Timeline", "الخط الزمني"), "correlation": tt("Correlation", "الارتباط"),
+             "events": tt("Events", "الأحداث"), "export": tt("Export", "تصدير")}
+    view = st.segmented_control(tt("View", "العرض"), list(views), default="overview",
+                                format_func=views.get, key=f"log_view_{scope}",
+                                label_visibility="collapsed") or "overview"
+    if view == "overview":
+        if net:
+            render_net_overview(report, libs, scope)
+        else:
+            render_log_overview(report, libs, scope)
+    elif view == "findings":
+        render_log_findings(report, libs)
+    elif view == "timeline":
+        render_log_timeline(report)
+    elif view == "correlation":
+        render_log_correlation(report, libs)
+    elif view == "events":
+        render_log_events(report, libs)
+    else:
+        render_log_export(report, name)
+
+
+# ---------------------------------------------------------------------------
+# Dashboard (the "+" button inside every analysis track), the 3D views, and the
+# Wireshark track. All of it reads the same Report object, so Linux, Windows
+# and network captures share one dashboard.
+# ---------------------------------------------------------------------------
+# every colour below is one the app already uses (accent, accent-2, warn, ok, text, muted, white)
+PALETTE = ("#E5383B", "#5b7cff", "#FFB020", "#4cc38a", "#A4B1CD", "#6f7c98", "#FFFFFF")
+GRID_COLOR = "rgba(164, 177, 205, 0.14)"
+NET_UPLOAD_TYPES = ["pcap", "pcapng", "cap", "csv", "txt"]
+NET_EXPORT_HELP = """\
+**Capture a file**
+- Wireshark: File > Save As, keep the `.pcapng` format.
+- Command line: `sudo tcpdump -i eth0 -w capture.pcap` (stop with Ctrl+C).
+
+**Or export a table from Wireshark**
+- File > Export Packet Dissections > As CSV. This keeps the columns No., Time, Source,
+  Destination, Protocol, Length and Info.
+
+Passwords found in clear text are never stored or shown: only the user name is kept.
+"""
+
+
+def _human_bytes(n: float) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return f"{n:,.0f} {unit}" if unit == "B" else f"{n:,.1f} {unit}"
+        n /= 1024
+    return f"{n:,.1f} GB"
+
+
+def _human_secs(s: float) -> str:
+    s = int(s)
+    if s < 120:
+        return f"{s} s"
+    if s < 7200:
+        return f"{s // 60} min {s % 60} s"
+    if s < 172800:
+        return f"{s // 3600} h {s % 3600 // 60} min"
+    return f"{s // 86400} d {s % 86400 // 3600} h"
+
+
+def _toggle_state(key: str) -> None:
+    st.session_state[key] = not st.session_state.get(key, False)
+
+
+def dashboard_toggle(scope: str, ready: bool = True) -> bool:
+    """The "+ Dashboard" button of a track. Returns True while it is open."""
+    key = f"dash_open_{scope}"
+    is_open = bool(st.session_state.get(key)) and ready
+    st.button(
+        tt("Close dashboard", "إغلاق اللوحة") if is_open else tt("Dashboard", "لوحة المعلومات"),
+        key=f"dash_btn_{scope}", icon=":material/close:" if is_open else ":material/add:",
+        type="secondary" if is_open else "primary", disabled=not ready,
+        on_click=_toggle_state, args=(key,))
+    return is_open
+
+
+def _donut(go, labels, values, colors, key: str, height: int = 250) -> None:
+    fig = go.Figure(go.Pie(
+        labels=[html.escape(str(x)) for x in labels], values=values, hole=0.62, sort=False,
+        marker=dict(colors=colors, line=dict(color="#0b111c", width=2)),
+        textinfo="value", textfont=dict(color="#FFFFFF")))
+    fig.update_layout(
+        height=height, margin=dict(l=8, r=8, t=8, b=8), paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#A4B1CD", size=12),
+        legend=dict(orientation="h", y=-0.08, x=0, font=dict(color="#A4B1CD", size=12)))
+    st.plotly_chart(fig, width="stretch", key=key, config={"displayModeBar": False})
+
+
+# --- 3D ------------------------------------------------------------------------
+def _layout3d(count: int, edges: list[tuple[int, int, float]], seed: int = 7, steps: int = 220):
+    """Force-directed positions in 3D (Fruchterman-Reingold), same result every run."""
+    import numpy as np
+    rng = np.random.default_rng(seed)
+    pos = rng.normal(size=(count, 3)) * 1.5
+    if count < 2:
+        return pos
+    k = 3.2 / count ** (1 / 3)
+    temp = 0.45
+    for _ in range(steps):
+        delta = pos[:, None, :] - pos[None, :, :]
+        dist = np.linalg.norm(delta, axis=2) + 1e-6
+        # long-range push plus a short-range push, so crowded leaves fan out instead of piling up
+        force = ((k * k / dist ** 2) + (0.35 * k ** 3 / dist ** 4))[..., None] * delta
+        disp = force.sum(axis=1)
+        for a, b, w in edges:
+            d = pos[a] - pos[b]
+            dd = np.linalg.norm(d) + 1e-6
+            pull = (dd / k) * (1 + math.log1p(w)) * d / dd
+            disp[a] -= pull
+            disp[b] += pull
+        length = np.linalg.norm(disp, axis=1, keepdims=True) + 1e-9
+        pos += disp / length * np.minimum(length, temp)
+        temp *= 0.97
+    pos -= pos.mean(axis=0)
+    return pos / (np.abs(pos).max() + 1e-9)
+
+
+def _scene3d(x_title: str, y_title: str, z_title: str, y_ticks=None, z_ticks=None) -> dict:
+    def axis(title, ticks=None):
+        a = dict(title=dict(text=title, font=dict(color="#A4B1CD", size=11)), gridcolor=GRID_COLOR,
+                 zerolinecolor=GRID_COLOR, showbackground=False, color="#A4B1CD", tickfont=dict(size=9))
+        if ticks:
+            a.update(tickmode="array", tickvals=list(range(len(ticks))), ticktext=ticks)
+        return a
+    return dict(xaxis=axis(x_title), yaxis=axis(y_title, y_ticks), zaxis=axis(z_title, z_ticks),
+                camera=dict(eye=dict(x=1.5, y=1.5, z=0.9)))
+
+
+def _fig3d(fig, height: int = 540) -> None:
+    fig.update_layout(
+        height=height, margin=dict(l=0, r=0, t=0, b=0), paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#A4B1CD", size=11),
+        legend=dict(orientation="h", y=1.0, x=0, font=dict(color="#A4B1CD", size=12)))
+
+
+def log_cube_figure(report, go):
+    """Every event as a point: time on one axis, where it came from on another and
+    what it was on the third, coloured by severity. Medium and high events are
+    always kept; the quieter ones are thinned out above a few thousand points."""
+    net = report.os == "network"
+    events = [e for e in report.events if not (net and e.kind == "arp_conflict" and not e.ip)]
+    dated = bool(events) and all(e.ts for e in events)
+    cap = 3500
+    keep = [e for e in events if e.severity in ("medium", "high")]
+    rest = [e for e in events if e.severity not in ("medium", "high")]
+    room = max(cap - len(keep), 0)
+    if len(rest) > room:
+        stride = len(rest) / max(room, 1)
+        rest = [rest[int(i * stride)] for i in range(room)] if room else []
+    points = keep + rest
+
+    def where(e):
+        return e.ip or e.user or e.host or "-"
+
+    def what(e):
+        return (f"{e.proto}/{e.port}" if e.port else e.proto or e.title) if net else e.title
+
+    def index(values, limit=12):
+        common = [v for v, _ in Counter(values).most_common(limit)]
+        labels = common + (["other"] if len(set(values)) > limit else [])
+        lookup = {v: i for i, v in enumerate(common)}
+        return lookup, labels, len(common)
+
+    ylook, ylabels, yn = index([where(e) for e in points])
+    zlook, zlabels, zn = index([what(e) for e in points])
+    fig = go.Figure()
+    sizes = {"info": 4, "low": 5, "medium": 8, "high": 11}
+    for sev in nashmi_logs.SEVERITIES:
+        group = [e for e in points if e.severity == sev]
+        if not group:
+            continue
+        fig.add_trace(go.Scatter3d(
+            x=[e.ts if dated else e.line for e in group],
+            y=[ylook.get(where(e), yn) for e in group], z=[zlook.get(what(e), zn) for e in group],
+            mode="markers", name=sev, hoverinfo="text",
+            marker=dict(size=sizes[sev], color=SEV_COLOR[sev], opacity=0.85, line=dict(width=0)),
+            text=[html.escape(f"{e.title} | {where(e)} | line {e.line}")[:160] for e in group]))
+    fig.update_layout(scene=_scene3d(
+        tt("time", "الوقت") if dated else tt("packet / line", "الحزمة / السطر"),
+        tt("source", "المصدر"), tt("type", "النوع") if not net else tt("service", "الخدمة"),
+        [html.escape(str(v))[:22] for v in ylabels], [html.escape(str(v))[:22] for v in zlabels]))
+    _fig3d(fig)
+    return fig
+
+
+def graph3d_figure(graph: dict, go):
+    """The evidence graph in 3D. Positions come from a force layout; nothing here
+    adds a link that is not in the graph data."""
+    nodes = graph["nodes"]
+    index = {n["id"]: i for i, n in enumerate(nodes)}
+    pos = _layout3d(len(nodes), [(index[l["source"]], index[l["target"]], l["count"]) for l in graph["links"]])
+    fig = go.Figure()
+    for hypothesis, color, dash, label in ((False, "#A4B1CD", "solid", tt("link seen in the data", "ارتباط ظاهر في البيانات")),
+                                           (True, "#FFB020", "dash", tt("hypothesis", "فرضية"))):
+        xs, ys, zs = [], [], []
+        for l in graph["links"]:
+            if bool(l["hypothesis"]) != hypothesis:
+                continue
+            a, b = index[l["source"]], index[l["target"]]
+            xs += [pos[a][0], pos[b][0], None]
+            ys += [pos[a][1], pos[b][1], None]
+            zs += [pos[a][2], pos[b][2], None]
+        if xs:
+            fig.add_trace(go.Scatter3d(x=xs, y=ys, z=zs, mode="lines", name=label, hoverinfo="skip",
+                                       line=dict(color=color, width=2, dash=dash), opacity=0.6))
+    names = {"ip": tt("Source address", "عنوان مصدر"), "external": tt("Outside address", "عنوان خارجي"),
+             "user": tt("Account", "حساب"), "host": tt("Host", "جهاز"), "finding": tt("Finding", "نتيجة")}
+    colors = {"ip": "#5b7cff", "external": "#A4B1CD", "user": "#A4B1CD", "host": "#6f7c98"}
+    for cat in names:
+        group = [(i, n) for i, n in enumerate(nodes) if n["category"] == cat]
+        if not group:
+            continue
+        fig.add_trace(go.Scatter3d(
+            x=[pos[i][0] for i, _ in group], y=[pos[i][1] for i, _ in group], z=[pos[i][2] for i, _ in group],
+            mode="markers+text", name=names[cat], hoverinfo="text",
+            text=[html.escape(n["label"])[:34] if (cat == "finding" or n.get("weight", 0) >= 14) else "" for _, n in group],
+            hovertext=[html.escape(n["label"])[:80] for _, n in group], textposition="top center",
+            textfont=dict(color="#A4B1CD", size=12),
+            marker=dict(size=[16 if cat == "finding" else max(7, min(22, 6 + 3 * math.log2(n.get("weight", 1) + 1))) for _, n in group],
+                        color=[SEV_COLOR[n["severity"]] if cat == "finding" else colors[cat] for _, n in group],
+                        opacity=0.95,
+                        # 3D markers take one outline width; a hypothesis is marked by an amber outline colour
+                        line=dict(width=2, color=["#FFB020" if n.get("hypothesis") else (SEV_COLOR[n["severity"]] if cat == "finding" else colors[cat])
+                                                  for _, n in group]))))
+    blank = dict(showgrid=False, zeroline=False, showticklabels=False, title=dict(text=""), showbackground=False)
+    fig.update_layout(scene=dict(xaxis=blank, yaxis=blank, zaxis=blank, aspectmode="manual",
+                                 aspectratio=dict(x=1.7, y=1.0, z=0.9), camera=dict(eye=dict(x=1.15, y=1.15, z=0.65))))
+    _fig3d(fig)
+    return fig
+
+
+def analysis_graph(report) -> dict:
+    return nashmi_net.graph(report) if report.os == "network" else nashmi_logs.graph(report)
+
+
+# --- network charts --------------------------------------------------------------
+def render_net_overview(report, libs: dict, kp: str = "net") -> None:
+    import pandas as pd
+    go = libs.get("go")
+    ex = report.extra
+    provenance_tag("source", tt("Packets over time", "الحزم عبر الزمن"),
+                   tt("counted from the capture", "محسوبة من الملف"))
+    duration = max(ex["duration"], 1.0)
+    step = 1 if duration <= 120 else 10 if duration <= 1800 else 60 if duration <= 21600 else 600
+    protos = ex["pkt_proto"]
+    top = [p for p, _ in Counter(protos).most_common(5)]
+    frame = pd.DataFrame({"b": [int(t // step) * step for t in ex["pkt_t"]],
+                          "proto": [p if p in top else "other" for p in protos]})
+    table = frame.groupby(["b", "proto"]).size().unstack(fill_value=0)
+    xs = [ex["t0"] + timedelta(seconds=int(b)) for b in table.index] if ex.get("t0") else list(table.index)
+    if go:
+        fig = go.Figure()
+        for i, proto in enumerate(table.columns):
+            fig.add_bar(x=xs, y=table[proto], name=html.escape(str(proto)), marker_color=PALETTE[i % len(PALETTE)])
+        fig.update_layout(barmode="stack")
+        _chart_layout(fig)
+        if not ex.get("t0"):
+            fig.update_xaxes(title_text=tt("seconds since the first packet", "ثواني منذ أول حزمة"))
+        st.plotly_chart(fig, width="stretch", key=f"{kp}_time_chart", config={"displayModeBar": False})
+    else:
+        st.bar_chart(table)
+    sent: Counter = Counter()
+    received: Counter = Counter()
+    services: Counter = Counter()
+    for e in report.events:
+        if e.kind in ("flow", "insecure_protocol"):
+            sent[e.ip] += e.size
+            received[e.dst] += e.size
+            services[f"{e.proto}/{e.port}" if e.port else e.proto] += e.count
+    left, right = st.columns(2)
+    for column, label, counter, color, chart_key in (
+            (left, tt("Top senders (bytes)", "أكثر المرسلين (بايت)"), sent, "#E5383B", f"{kp}_top_sent"),
+            (right, tt("Top receivers (bytes)", "أكثر المستقبلين (بايت)"), received, "#5b7cff", f"{kp}_top_recv")):
+        top_items = counter.most_common(8)
+        with column:
+            provenance_tag("source", label)
+            if not top_items:
+                st.caption(tt("None in this capture.", "لا يوجد في هذا الملف."))
+            elif go:
+                fig = go.Figure(go.Bar(x=[c for _, c in reversed(top_items)],
+                                       y=[html.escape(str(n))[:40] for n, _ in reversed(top_items)],
+                                       orientation="h", marker_color=color))
+                _chart_layout(fig, 60 + 28 * len(top_items))
+                st.plotly_chart(fig, width="stretch", key=chart_key, config={"displayModeBar": False})
+            else:
+                indicator_bars(dict(top_items))
+    provenance_tag("source", tt("Services seen (packets)", "الخدمات الظاهرة (حزم)"))
+    indicator_bars(dict(services.most_common(8)))
+
+
+# --- the dashboard -----------------------------------------------------------------
+def _dash_kpis(report) -> list[tuple[str, str, str | None]]:
+    s = nashmi_logs.summary(report)
+    high = s["finding_severity"].get("high", 0)
+    delta = f"{high} high" if high else None
+    if report.os == "network":
+        ex = report.extra
+        hosts = len({e.ip for e in report.events if e.ip} | {e.dst for e in report.events if e.dst})
+        return [(tt("Packets", "الحزم"), f"{ex['packets']:,}", None), (tt("Flows", "التدفقات"), f"{ex['flows']:,}", None),
+                (tt("Data", "البيانات"), _human_bytes(ex["bytes"]), None),
+                (tt("Duration", "المدة"), _human_secs(ex["duration"]), None),
+                (tt("Hosts", "الأجهزة"), f"{hosts:,}", None), (tt("Findings", "النتائج"), str(len(report.findings)), delta)]
+    span = _human_secs((s["last"] - s["first"]).total_seconds()) if s["first"] and s["last"] else "-"
+    return [(tt("Events read", "أحداث مقروءة"), f"{s['events']:,}", None),
+            (tt("Findings", "النتائج"), str(len(report.findings)), delta),
+            (tt("Source addresses", "عناوين المصدر"), str(s["ips"]), None),
+            (tt("Accounts", "الحسابات"), str(s["users"]), None),
+            (tt("Hosts", "الأجهزة"), str(s["hosts"]), None), (tt("Time span", "المدى الزمني"), span, None)]
+
+
+def _open_findings(scope: str) -> None:
+    st.session_state[f"dash_open_{scope}"] = False
+    st.session_state[f"log_view_{scope}"] = "findings"
+
+
+def render_dashboard(report, name: str, libs: dict, scope: str) -> None:
+    """The full dashboard: KPIs, charts, the findings that matter, ATT&CK
+    coverage and the 3D views. It only shows numbers computed from the file."""
+    go = libs.get("go")
+    system = {"linux": "Linux", "windows": "Windows", "network": tt("Network capture", "التقاط شبكي")}.get(report.os, report.os)
+    with st.container(key=f"dash_{scope}"):
+        st.markdown(
+            f'<div class="nm-dash-head"{dir_attr()}><b>{html.escape(name)}</b>'
+            f'<span class="nm-chip">{html.escape(system)}</span></div>', unsafe_allow_html=True)
+        kpis = _dash_kpis(report)
+        for row in (kpis[:3], kpis[3:]):
+            for column, (label, value, delta) in zip(st.columns(len(row)), row):
+                column.metric(label, value, delta=delta, delta_color="inverse")
+        left, right = st.columns(2)
+        sev_counts = Counter(f.severity for f in report.findings)
+        with left:
+            provenance_tag("rule", tt("Findings by severity", "النتائج بحسب الخطورة"),
+                           tt("fixed rules, not verdicts", "قواعد ثابتة وليست أحكامًا"))
+            if not report.findings:
+                st.caption(tt("No rule matched. That does not prove the data is clean.",
+                              "لم تنطبق أي قاعدة. هذا لا يثبت أن البيانات سليمة."))
+            elif go:
+                order = [s for s in ("high", "medium", "low") if sev_counts.get(s)]
+                _donut(go, order, [sev_counts[s] for s in order], [SEV_COLOR[s] for s in order], f"{scope}_dash_sev")
+            else:
+                indicator_bars(dict(sev_counts))
+        with right:
+            if report.os == "network":
+                provenance_tag("source", tt("Protocol mix", "توزيع البروتوكولات"))
+                mix = list(report.extra["protocols"].items())[:7]
+                if go and mix:
+                    _donut(go, [k for k, _ in mix], [v for _, v in mix], list(PALETTE[:len(mix)]), f"{scope}_dash_proto")
+                else:
+                    indicator_bars(dict(mix))
+            else:
+                provenance_tag("source", tt("Events by severity", "الأحداث بحسب الخطورة"))
+                ev = Counter(e.severity for e in report.events)
+                order = [s for s in nashmi_logs.SEVERITIES if ev.get(s)]
+                if go and order:
+                    _donut(go, order, [ev[s] for s in order], [SEV_COLOR[s] for s in order], f"{scope}_dash_evsev")
+                else:
+                    indicator_bars(dict(ev))
+        if report.os == "network":
+            render_net_overview(report, libs, f"{scope}_dash")
+        else:
+            render_log_overview(report, libs, f"{scope}_dash")
+
+        provenance_tag("rule", tt("Findings that need a look", "نتائج تستحق النظر"),
+                       tt("highest severity first", "الأخطر أولًا"))
+        if not report.findings:
+            st.caption(tt("Nothing to list.", "لا شيء لعرضه."))
+        for finding in report.findings[:4]:
+            with st.container(key=f"nm_find_{finding.severity}_{scope}d{finding.id}"):
+                st.markdown(f'<div class="nm-fh" dir="auto">{_sev_chip(finding.severity)}<b>{html.escape(finding.id)}</b>'
+                            f'<span class="nm-ft">{html.escape(finding.title)}</span></div>', unsafe_allow_html=True)
+                _body(finding.observed)
+                if finding.attack:
+                    st.markdown(f'<span class="nm-attack">{html.escape(finding.attack)}</span>', unsafe_allow_html=True)
+                if finding.hypothesis:
+                    _body(tt("Hypothesis: ", "فرضية: ") + finding.hypothesis, hypothesis=True)
+        if report.findings:
+            st.button(tt("Open all findings", "فتح كل النتائج"), key=f"dash_open_findings_{scope}",
+                      icon=":material/arrow_forward:", on_click=_open_findings, args=(scope,))
+        techniques = sorted({f.attack for f in report.findings if f.attack})
+        if techniques:
+            provenance_tag("rule", tt("MITRE ATT&CK techniques matched", "تقنيات MITRE ATT&CK المطابقة"),
+                           tt("mapped by fixed rules", "بقواعد ثابتة"))
+            indicator_chips(techniques)
+
+        provenance_tag("source", tt("3D view", "عرض ثلاثي الأبعاد"),
+                       tt("drag to rotate, scroll to zoom", "اسحب للتدوير، مرّر للتكبير"))
+        mode = st.segmented_control(
+            tt("3D view", "عرض 3D"), ["cube", "graph"], default="cube", key=f"dash3d_{scope}",
+            format_func={"cube": tt("Event cube", "مكعب الأحداث"), "graph": tt("Evidence graph", "رسم الأدلة")}.get,
+            label_visibility="collapsed") or "cube"
+        if not go:
+            st.info(tt("The chart library is not installed, so the 3D view is unavailable.",
+                       "مكتبة الرسم غير مثبتة، لذلك عرض 3D غير متاح."))
+        elif mode == "cube":
+            if report.events:
+                st.plotly_chart(log_cube_figure(report, go), width="stretch", key=f"{scope}_cube3d",
+                                config={"displayModeBar": False})
+        else:
+            graph = analysis_graph(report)
+            if graph["links"]:
+                st.plotly_chart(graph3d_figure(graph, go), width="stretch", key=f"{scope}_graph3d",
+                                config={"displayModeBar": False})
+            else:
+                st.caption(tt("Nothing to connect: no entry links two entities.", "لا شيء للربط."))
+
+
+def render_net_track() -> None:
+    """Upload a Wireshark capture (pcap, pcapng or CSV export); read it with fixed rules."""
+    if nashmi_net is None or nashmi_logs is None:
+        st.error("The network engine (nashmi_net.py) is missing.")
+        return
+    track = TRACKS_BY_NAME[MODE_NET]
+    st.markdown(
+        f'<div class="empty-title">{html.escape(track_title(track))}</div>'
+        f'<div class="empty-blurb">{html.escape(track_blurb(track))}</div>', unsafe_allow_html=True)
+    render_references(MODE_NET)
+    libs = log_libs()
+    upload = st.file_uploader(
+        tt("Capture file (.pcap, .pcapng or a Wireshark CSV export)",
+           "ملف التقاط (.pcap أو .pcapng أو تصدير CSV من Wireshark)"),
+        type=NET_UPLOAD_TYPES, key="net_file")
+    with st.expander(tt("...or paste a Wireshark CSV", "...أو الصق CSV من Wireshark"), icon=":material/content_paste:"):
+        pasted = st.text_area(tt("CSV text", "نص CSV"), height=120, key="net_paste",
+                              max_chars=2_000_000, label_visibility="collapsed")
+    with st.expander(tt("How to get a capture", "كيف تحصل على ملف التقاط"), icon=":material/terminal:"):
+        st.markdown(NET_EXPORT_HELP)
+    st.caption(tt("The file is read in this session only. Nothing is stored and nothing is sent to a model.",
+                  "يُقرأ الملف داخل هذه الجلسة فقط. لا يُخزَّن شيء ولا يُرسل إلى أي نموذج."))
+    data = upload.getvalue() if upload else (pasted.encode("utf-8") if pasted.strip() else b"")
+    if not data:
+        return
+    try:
+        with st.spinner(tt("Reading the capture...", "جارٍ قراءة الملف...")):
+            report = log_report(data, "auto", "net")
+    except nashmi_logs.LogFormatError as exc:
+        st.error(str(exc))
+        return
+    render_log_report(report, upload.name if upload else "pasted CSV", libs, "net")
+
+
+def _wireshark_csv(data: bytes) -> bool:
+    head = data[:600].decode("utf-8", "ignore").lower()
+    return "source" in head and "destination" in head and "protocol" in head
+
+
+def soc_local_reports(uploads) -> list[tuple[str, object]]:
+    """Run the fixed-rule engines on every uploaded file that is a log or a
+    capture. Files that are neither (screenshots, videos) are simply skipped."""
+    found = []
+    for up in uploads or []:
+        data = up.getvalue()
+        if len(data) > nashmi_logs.MAX_BYTES:
+            continue
+        engines = []
+        if nashmi_net is not None and (nashmi_net.looks_like_capture(data) or _wireshark_csv(data)):
+            engines.append("net")
+        is_capture = nashmi_net is not None and nashmi_net.looks_like_capture(data)
+        is_image = data[:4] in (bytes.fromhex("89504e47"), bytes.fromhex("ffd8ffe0"))
+        if not is_capture and not is_image:
+            engines.append("logs")
+        for engine in engines:
+            try:
+                found.append((up.name, log_report(data, "auto", engine)))
+                break
+            except nashmi_logs.LogFormatError:
+                continue
+    return found
+
+
+def render_log_track() -> None:
+    """Upload or paste a Linux or Windows log; read it with fixed rules."""
+    if nashmi_logs is None:
+        st.error("The log engine (nashmi_logs.py) is missing.")
+        return
+    track = TRACKS_BY_NAME[MODE_LOGS]
+    st.markdown(
+        f'<div class="empty-title">{html.escape(track_title(track))}</div>'
+        f'<div class="empty-blurb">{html.escape(track_blurb(track))}</div>',
+        unsafe_allow_html=True)
+    render_references(MODE_LOGS)
+    libs = log_libs()
+    choice = st.segmented_control(tt("System", "النظام"), ["Auto", "Linux", "Windows"],
+                                  default="Auto", key="log_os") or "Auto"
+    upload = st.file_uploader(
+        tt("Log file (syslog / auth.log, Windows CSV, XML or JSON)",
+           "ملف السجل (syslog / auth.log أو CSV أو XML أو JSON لويندوز)"),
+        type=LOG_UPLOAD_TYPES, key="log_file")
+    with st.expander(tt("...or paste text", "...أو الصق نصًا"), icon=":material/content_paste:"):
+        pasted = st.text_area(tt("Log text", "نص السجل"), height=140, key="log_paste",
+                              max_chars=2_000_000, label_visibility="collapsed")
+    with st.expander(tt("How to export a log", "كيف تصدّر سجلًا"), icon=":material/terminal:"):
+        st.markdown(LOG_EXPORT_HELP)
+    st.caption(tt("The file is read in this session only. Nothing is stored and nothing is sent to a model.",
+                  "يُقرأ الملف داخل هذه الجلسة فقط. لا يُخزَّن شيء ولا يُرسل إلى أي نموذج."))
+    data = upload.getvalue() if upload else (pasted.encode("utf-8") if pasted.strip() else b"")
+    if not data:
+        return
+    try:
+        with st.spinner(tt("Reading the log...", "جارٍ قراءة السجل...")):
+            report = log_report(data, choice.lower())
+    except nashmi_logs.LogFormatError as exc:
+        st.error(str(exc))
+        return
+    render_log_report(report, upload.name if upload else "pasted text", libs)
 
 
 # ---------------------------------------------------------------------------
@@ -8936,6 +10224,8 @@ TRACK_AR = {
     "Reverse Engineering": "\u0627\u0644\u0647\u0646\u062f\u0633\u0629 \u0627\u0644\u0639\u0643\u0633\u064a\u0629",
     "Tool Finder": "\u062f\u0644\u064a\u0644 \u0627\u0644\u0623\u062f\u0648\u0627\u062a",
     "SOC Analyzer": "\u0645\u062d\u0644\u0651\u0644 SOC",
+    "Log Analysis": "\u062a\u062d\u0644\u064a\u0644 \u0627\u0644\u0633\u062c\u0644\u0627\u062a",
+    "Wireshark Analysis": "\u062a\u062d\u0644\u064a\u0644 Wireshark",
     "Toolbox": "\u0635\u0646\u062f\u0648\u0642 \u0627\u0644\u0623\u062f\u0648\u0627\u062a",
     "Practice Exam": "\u0627\u0645\u062a\u062d\u0627\u0646 \u062a\u062f\u0631\u064a\u0628\u064a",
 }
@@ -10153,7 +11443,7 @@ def main() -> None:
     if mfa_gate(account_id(), current_user()):
         return
     st.markdown(
-        f"<style>{APP_POLISH_CSS}{GEMINI_SIDEBAR_CSS}"
+        f"<style>{APP_POLISH_CSS}{GEMINI_SIDEBAR_CSS}{INTERNAL_MOTION_CSS}"
         + (SIDEBAR_RTL_CSS if lang() == "ar" else "") + "</style>",
         unsafe_allow_html=True)
     nav_box = st.sidebar.container(key="side_nav")
@@ -10179,6 +11469,10 @@ def main() -> None:
     render_topline(settings)
     if mode == MODE_SOC:
         render_soc_track(settings)
+    elif mode == MODE_LOGS:
+        render_log_track()
+    elif mode == MODE_NET:
+        render_net_track()
     elif mode == MODE_TOOLS:
         render_toolbox()
     elif mode == MODE_EXAM:
