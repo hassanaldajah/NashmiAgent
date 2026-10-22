@@ -596,8 +596,15 @@ def detect(text: str) -> str:
     if head.startswith(("[", "{")):
         return "windows-json" if re.search(r'"(?:Id|EventID)"', head) else ""
     first = next((ln for ln in text.splitlines() if ln.strip() and not ln.startswith("#")), "")
-    if re.search(r"event\s*id|^\W*id\W", first, re.I) and first.count(",") + first.count(";") + first.count("\t") >= 2:
-        return "windows-csv"
+    if first.count(",") + first.count(";") + first.count("\t") >= 2:
+        delimiter = max(",;\t", key=first.count)
+        try:
+            header = {_alias(c) for c in next(csv.reader([first], delimiter=delimiter))}
+        except (csv.Error, StopIteration):
+            header = set()
+        # Event Viewer writes "Event ID", PowerShell's Export-Csv writes "Id" (often as the second column)
+        if header & {"id", "eventid"} and header & {"providername", "source", "timecreated", "dateandtime", "message"}:
+            return "windows-csv"
     sample = [ln for ln in text.splitlines()[:200] if ln.strip()]
     hits = sum(bool(SYSLOG_RE.match(ln) or ISO_RE.match(ln)) for ln in sample)
     if sample and hits / len(sample) >= 0.3:

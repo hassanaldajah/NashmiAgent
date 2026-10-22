@@ -5671,6 +5671,11 @@ INTERNAL_MOTION_CSS = """
     border: 1px solid var(--line); border-radius: 18px; padding: 1rem 1.1rem 1.2rem;
     background: linear-gradient(180deg, var(--panel), var(--panel-2)); box-shadow: 0 14px 40px rgba(0, 0, 0, 0.35);
 }
+/* the dashboards use sharp corners everywhere (panels, cards, chips, buttons) */
+.st-key-dash_logs, .st-key-dash_net, .st-key-dash_soc { border-radius: 0 !important; }
+:is(.st-key-dash_logs, .st-key-dash_net, .st-key-dash_soc) :is([data-testid="stMetric"], [class*="st-key-nm_find_"],
+    .nm-chip, .nm-attack, .nm-sev, .nm-bar i, .nm-bar i span, .nm-table-wrap, [data-testid="stBaseButton-secondary"]) { border-radius: 0 !important; }
+[class*="st-key-dash_btn_"] button { border-radius: 0 !important; }
 .nm-dash-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.8rem; margin: 0 0 0.8rem; color: var(--white); font-size: 1.05rem; }
 
 /* keyboard focus is always visible */
