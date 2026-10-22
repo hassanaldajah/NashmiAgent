@@ -4,8 +4,8 @@ Features
     * Providers: Gemini and Groq (free tiers), plus OpenAI (ChatGPT models)
       and Claude (Anthropic) with the user's own paid key.
     * Streaming replies for every provider.
-    * Ten specialised cybersecurity tracks, each with its own chats and a
-      search box.
+    * Specialised cybersecurity tracks (labs, CTF, reverse engineering, a tool
+      finder and more), each with its own chats and a search box.
     * File attachments and voice notes in the chat box (text, code, images,
       PDF, video, audio).
     * One-click copy under every answer.
@@ -406,6 +406,8 @@ MODE_CHAT = "Chat"
 MODE_SOC = "SOC Analyzer"
 MODE_TOOLS = "Toolbox"
 MODE_EXAM = "Practice Exam"
+MODE_FINDER = "Tool Finder"
+MODE_RE = "Reverse Engineering"
 
 TRACKS = (
     Track(
@@ -638,6 +640,63 @@ TRACKS = (
         ),
     ),
     Track(
+        name=MODE_RE,
+        blurb="Disassemblers, decompilers, debuggers and binary formats, "
+              "with a learning path and real references.",
+        placeholder="Ask about Ghidra, x64dbg, assembly, crackmes, APKs",
+        focus=(
+            "reverse engineering for learning, CTFs, malware analysis and "
+            "interoperability: x86-64 and ARM assembly, calling "
+            "conventions, PE/ELF/Mach-O formats, static analysis with "
+            "Ghidra, IDA Free, radare2 and Binary Ninja, debugging with "
+            "x64dbg, gdb (pwndbg/GEF) and WinDbg, reading decompiler "
+            "output, packers and obfuscation, .NET (dnSpy, ILSpy), Java "
+            "and Android (jadx, apktool, Frida) and crackmes. Teach the "
+            "method step by step and point to real learning resources "
+            "that fit the user's level. Do not help remove licensing or "
+            "copy protection from commercial software, and never provide "
+            "working malware."
+        ),
+        context=(
+            "Reverse Engineering Lab: disassembly, decompilers, debuggers, "
+            "binary formats, crackmes, Android and .NET"
+        ),
+        actions=(
+            (
+                "Crackme Workflow",
+                "Walk me through reversing a simple crackme step by step: "
+                "first triage (file, strings, checksec), then static "
+                "analysis in Ghidra, then debugging to confirm.",
+            ),
+            (
+                "Read x86-64 Assembly",
+                "Teach me to read x86-64 assembly: registers, the stack, "
+                "calling conventions and common compiler patterns (loops, "
+                "if/else, function prologues), with a short annotated "
+                "example.",
+            ),
+            (
+                "Ghidra Quick Start",
+                "Give me a Ghidra quick start: importing a binary, "
+                "auto-analysis, the Listing, Decompiler and Symbol Tree "
+                "windows, renaming and retyping, and the shortcuts I need "
+                "most.",
+            ),
+            (
+                "Reverse an Android APK",
+                "Show me how to reverse an Android APK: unpack it, read "
+                "the manifest, decompile it with jadx, and hook a method "
+                "with Frida while the app runs.",
+            ),
+            (
+                "Learning Path",
+                "I am a beginner. Give me a reverse engineering learning "
+                "path with real free resources (books, courses, practice "
+                "sites) and what to study at each stage.",
+            ),
+        ),
+    ),
+    Track(
         name="Forensics & IR",
         blurb="Digital forensics and incident response: artifacts, "
               "timelines and playbooks.",
@@ -730,6 +789,64 @@ TRACKS = (
                 "Container Hardening",
                 "Give a Docker and Kubernetes security hardening "
                 "checklist with the reason for each item.",
+            ),
+        ),
+    ),
+    Track(
+        name=MODE_FINDER,
+        blurb="Tell Nashmi what you want to do or build, and get the right "
+              "cybersecurity tools and trusted sources for it.",
+        placeholder="Say what you need: tools for images, passwords, "
+                    "networks...",
+        focus=(
+            "helping the user find the right cybersecurity tools and "
+            "sources. The user says what area they want tools for, or what "
+            "they want to do, build or learn (for example 'tools for "
+            "images'). Recommend real, well-known tools for that area, "
+            "grouped by task. For each tool say what it is for, the "
+            "platform and whether it is free, its official site or GitHub "
+            "repository, and when to pick it. Then list trusted sources to "
+            "learn more (official documentation, courses, practice labs, "
+            "curated awesome-lists). If the request is broad, answer "
+            "straight away with a grouped list that covers the main "
+            "sub-areas, then ask at most one short question to narrow it "
+            "down (level, operating system, defensive or CTF use). If the "
+            "user wants to build their own tool, suggest the language, "
+            "libraries, APIs and open source projects to study, and an "
+            "outline. Only name tools you are sure exist; never invent "
+            "tools, options or links, and link only official sites or "
+            "GitHub repositories you are sure of. Do not recommend tools "
+            "whose main purpose is stalking, stealing accounts, "
+            "ransomware or attacking systems the user does not own; offer "
+            "legitimate alternatives instead."
+        ),
+        context=(
+            "Tool Finder: real cybersecurity tools and trusted sources for "
+            "what the user wants to do or build"
+        ),
+        actions=(
+            (
+                "Tools for images",
+                "I want cybersecurity tools for images: metadata, image "
+                "forensics, steganography and reverse image search.",
+            ),
+            (
+                "Tools for passwords",
+                "I want tools for passwords and hashes: auditing password "
+                "strength, recovering passwords from my own lab hashes, "
+                "and managing passwords safely.",
+            ),
+            (
+                "Tools for networks",
+                "I want tools for networks: scanning my own network, "
+                "capturing and analysing traffic, and monitoring for "
+                "intrusions.",
+            ),
+            (
+                "Build my own tool",
+                "I want to build my own small security tool. Help me "
+                "choose the language, libraries and open source projects "
+                "to learn from.",
             ),
         ),
     ),
@@ -852,6 +969,50 @@ TRACK_REFS = {
         ("PayloadsAllTheThings",
          "https://github.com/swisskyrepo/PayloadsAllTheThings"),
     ),
+    MODE_RE: (
+        ("Ghidra", "https://ghidra-sre.org/"),
+        ("Ghidra cheat sheet", "https://ghidra-sre.org/CheatSheet.html"),
+        ("IDA Free", "https://hex-rays.com/ida-free"),
+        ("The radare2 book", "https://book.rada.re/"),
+        ("x64dbg", "https://x64dbg.com/"),
+        ("pwndbg", "https://github.com/pwndbg/pwndbg"),
+        ("Compiler Explorer", "https://godbolt.org/"),
+        ("Dogbolt (compare decompilers)", "https://dogbolt.org/"),
+        ("Reverse Engineering for Beginners", "https://beginners.re/"),
+        ("Malware Unicorn RE101",
+         "https://malwareunicorn.org/workshops/re101.html"),
+        ("Nightmare (binary exploitation and reversing course)",
+         "https://guyinatuxedo.github.io/"),
+        ("crackmes.one", "https://crackmes.one/"),
+        ("Intel 64 and IA-32 manuals",
+         "https://www.intel.com/content/www/us/en/developer/articles/"
+         "technical/intel-sdm.html"),
+        ("Microsoft PE format",
+         "https://learn.microsoft.com/en-us/windows/win32/debug/pe-format"),
+        ("ELF specification", "https://refspecs.linuxfoundation.org/elf/elf.pdf"),
+        ("jadx (Android decompiler)", "https://github.com/skylot/jadx"),
+        ("Frida", "https://frida.re/"),
+        ("ILSpy (.NET)", "https://github.com/icsharpcode/ILSpy"),
+        ("Reverse Engineering Stack Exchange",
+         "https://reverseengineering.stackexchange.com/"),
+    ),
+    MODE_FINDER: (
+        ("Kali Linux tools", "https://www.kali.org/tools/"),
+        ("OSINT Framework", "https://osintframework.com/"),
+        ("REMnux (malware analysis distro)", "https://remnux.org/"),
+        ("SANS SIFT Workstation",
+         "https://www.sans.org/tools/sift-workstation/"),
+        ("Security Onion", "https://securityonionsolutions.com/software/"),
+        ("HackTricks", "https://book.hacktricks.wiki/"),
+        ("Awesome Security", "https://github.com/sbilly/awesome-security"),
+        ("Awesome Forensics", "https://github.com/cugu/awesome-forensics"),
+        ("Awesome OSINT", "https://github.com/jivoi/awesome-osint"),
+        ("Awesome Malware Analysis",
+         "https://github.com/rshipp/awesome-malware-analysis"),
+        ("Awesome CTF", "https://github.com/apsdehal/awesome-ctf"),
+        ("Awesome Incident Response",
+         "https://github.com/meirwah/awesome-incident-response"),
+    ),
     MODE_SOC: (
         ("NIST SP 800-61 Rev. 3 (incident response)",
          "https://csrc.nist.gov/pubs/sp/800/61/r3/final"),
@@ -956,6 +1117,482 @@ produce a professional SOC report that includes:
 Additional Analyst Notes: {notes}"""
 
 
+# Tool Finder: a small checked catalogue per area, so even a small model recommends real tools
+# with real links. The words of the question (English or Arabic) pick the areas; only those go in.
+TOOL_CATALOG = (
+    ("images, photos and steganography",
+     r"\b(?:images?|photos?|pictures?|exif|stego\w*|png|jpe?g|screenshots?)\b"
+     r"|صور|ستيغ|ستيجان|بكسل",
+     (
+         ("ExifTool", "reads and edits image metadata such as GPS, camera "
+          "and software; free", "https://exiftool.org/"),
+         ("Aperi'Solve", "online stego analyser that runs zsteg, steghide, "
+          "binwalk and more on one image; free", "https://www.aperisolve.com/"),
+         ("zsteg", "finds LSB-hidden data in PNG and BMP files; free",
+          "https://github.com/zed-0xff/zsteg"),
+         ("steghide", "hides and extracts data in JPEG and BMP; free, Linux",
+          "https://steghide.sourceforge.net/"),
+         ("StegSolve", "browse bit planes and colour filters of an image; "
+          "free Java tool", ""),
+         ("Binwalk", "finds files hidden inside images and firmware; free",
+          "https://github.com/ReFirmLabs/binwalk"),
+         ("FotoForensics", "error level analysis (ELA) to spot edited "
+          "images; free online", "https://fotoforensics.com/"),
+         ("Forensically", "ELA, clone detection and noise analysis in the "
+          "browser; free", "https://29a.ch/photo-forensics/"),
+         ("Sherloq", "open source image forensics toolset; free, Python",
+          "https://github.com/GuidoBartoli/sherloq"),
+         ("TinEye", "reverse image search to find where a picture came from",
+          "https://tineye.com/"),
+         ("Google Lens", "reverse image search and place or object lookup",
+          "https://lens.google.com/"),
+     )),
+    ("passwords and hashes",
+     r"\b(?:passwords?|passphrases?|hash\w*|crack\w*|brute\w*|wordlists?"
+     r"|credentials?)\b|كلمة مرور|كلمات المرور|كلمات السر|باسورد|باسوورد"
+     r"|هاش|تهشير|كراك|تكسير",
+     (
+         ("Hashcat", "fast GPU password recovery for hundreds of hash "
+          "types; free", "https://hashcat.net/hashcat/"),
+         ("John the Ripper", "flexible cracker, strong on CPU and on file "
+          "formats such as zip, pdf and ssh keys; free",
+          "https://www.openwall.com/john/"),
+         ("hashID", "identifies the hash type before cracking; free",
+          "https://github.com/psypanda/hashID"),
+         ("haiti", "another hash type identifier with Hashcat and John "
+          "modes; free", "https://github.com/noraj/haiti"),
+         ("CrackStation", "online lookup of common hashes; free",
+          "https://crackstation.net/"),
+         ("SecLists", "big collection of wordlists for passwords, "
+          "usernames and fuzzing; free",
+          "https://github.com/danielmiessler/SecLists"),
+         ("Hydra", "online login brute force, only for services you own or "
+          "may test", "https://github.com/vanhauser-thc/thc-hydra"),
+         ("Have I Been Pwned", "checks whether an email or password "
+          "appeared in a breach; free", "https://haveibeenpwned.com/"),
+         ("KeePassXC", "offline password manager that generates strong "
+          "passwords; free", "https://keepassxc.org/"),
+         ("Bitwarden", "open source password manager with sync; free tier",
+          "https://bitwarden.com/"),
+         ("zxcvbn", "library that estimates password strength, for building "
+          "your own checker", "https://github.com/dropbox/zxcvbn"),
+     )),
+    ("networks and traffic",
+     r"\b(?:networks?|nmap|packets?|pcaps?|traffic|ports?|firewalls?|sniff\w*"
+     r"|ids|ips|proxy)\b|شبك|حزم|منافذ|جدار",
+     (
+         ("Nmap", "host discovery, port and service scanning, NSE scripts; "
+          "free", "https://nmap.org/"),
+         ("Wireshark", "packet capture and deep protocol analysis; free",
+          "https://www.wireshark.org/"),
+         ("tcpdump", "command line packet capture; free",
+          "https://www.tcpdump.org/"),
+         ("Zeek", "turns traffic into structured logs for hunting; free",
+          "https://zeek.org/"),
+         ("Suricata", "IDS/IPS and network monitoring with rules; free",
+          "https://suricata.io/"),
+         ("Snort", "the classic open source IDS/IPS; free",
+          "https://www.snort.org/"),
+         ("NetworkMiner", "pulls hosts, files and sessions out of PCAPs; "
+          "free edition", "https://www.netresec.com/?page=NetworkMiner"),
+         ("mitmproxy", "intercepting proxy for HTTP(S) traffic you control; "
+          "free", "https://mitmproxy.org/"),
+         ("Masscan", "very fast port scanner for ranges you may scan; free",
+          "https://github.com/robertdavidgraham/masscan"),
+         ("Shodan", "search engine for devices exposed on the internet; "
+          "free tier", "https://www.shodan.io/"),
+         ("OPNsense", "open source firewall for labs and small networks; "
+          "free", "https://opnsense.org/"),
+     )),
+    ("web applications",
+     r"\b(?:web|websites?|http|https|xss|sqli|owasp|burp|apis?)\b"
+     r"|sql injection|ويب|موقع|مواقع|حقن",
+     (
+         ("Burp Suite", "intercepting proxy and web testing toolkit; "
+          "Community edition is free", "https://portswigger.net/burp"),
+         ("OWASP ZAP", "free web scanner and proxy",
+          "https://www.zaproxy.org/"),
+         ("ffuf", "fast web fuzzer for directories and parameters; free",
+          "https://github.com/ffuf/ffuf"),
+         ("sqlmap", "automates SQL injection testing on targets you may "
+          "test; free", "https://sqlmap.org/"),
+         ("Nuclei", "template based vulnerability scanner; free",
+          "https://github.com/projectdiscovery/nuclei"),
+         ("Nikto", "classic web server scanner; free",
+          "https://github.com/sullo/nikto"),
+         ("WhatWeb", "identifies the technologies a site uses; free",
+          "https://github.com/urbanadventurer/WhatWeb"),
+         ("PortSwigger Web Security Academy", "free labs to learn web "
+          "attacks and defences", "https://portswigger.net/web-security"),
+     )),
+    ("malware and suspicious files",
+     r"\b(?:malware|viruses|virus|ransomware|trojans?|sandbox\w*|yara"
+     r"|packers?|samples?)\b|برمجيات خبيثة|فيروس|فدية|مشبوه|عينة",
+     (
+         ("VirusTotal", "scans a file, URL or hash with many engines; free "
+          "tier", "https://www.virustotal.com/"),
+         ("Hybrid Analysis", "online sandbox that runs a sample and reports "
+          "its behaviour; free", "https://www.hybrid-analysis.com/"),
+         ("ANY.RUN", "interactive online sandbox; free tier",
+          "https://any.run/"),
+         ("CAPE", "self hosted malware sandbox; free",
+          "https://github.com/kevoreilly/CAPEv2"),
+         ("YARA", "rules to classify and hunt malware; free",
+          "https://virustotal.github.io/yara/"),
+         ("FLARE-VM", "Windows analysis VM with the main tools installed; "
+          "free", "https://github.com/mandiant/flare-vm"),
+         ("REMnux", "Linux distro for malware analysis; free",
+          "https://remnux.org/"),
+         ("capa", "lists what a binary can do, mapped to ATT&CK; free",
+          "https://github.com/mandiant/capa"),
+         ("FLOSS", "extracts obfuscated strings from binaries; free",
+          "https://github.com/mandiant/flare-floss"),
+         ("Detect It Easy", "identifies packers and file types; free",
+          "https://github.com/horsicq/Detect-It-Easy"),
+         ("MalwareBazaar", "free repository of samples, handle with care "
+          "inside a lab", "https://bazaar.abuse.ch/"),
+     )),
+    ("digital forensics and logs",
+     r"\b(?:forensics?|dfir|autopsy|volatility|evtx|timelines?|memory dump"
+     r"|disk image|logs?)\b|تحقيق جنائي|جنائي|ذاكرة|سجلات",
+     (
+         ("Autopsy", "disk image analysis with a friendly interface; free",
+          "https://www.autopsy.com/"),
+         ("The Sleuth Kit", "command line disk forensics tools; free",
+          "https://www.sleuthkit.org/"),
+         ("Volatility 3", "memory forensics framework; free",
+          "https://github.com/volatilityfoundation/volatility3"),
+         ("Velociraptor", "endpoint collection and DFIR at scale; free",
+          "https://docs.velociraptor.app/"),
+         ("Eric Zimmerman's tools", "Windows artifact parsers for registry, "
+          "MFT and prefetch; free", "https://ericzimmerman.github.io/"),
+         ("Plaso", "builds a super timeline from many sources; free",
+          "https://github.com/log2timeline/plaso"),
+         ("Hayabusa", "fast hunting in Windows event logs with Sigma rules; "
+          "free", "https://github.com/Yamato-Security/hayabusa"),
+         ("Chainsaw", "searches EVTX logs with Sigma rules; free",
+          "https://github.com/WithSecureLabs/chainsaw"),
+         ("SIFT Workstation", "Linux distro with the main DFIR tools; free",
+          "https://www.sans.org/tools/sift-workstation/"),
+     )),
+    ("OSINT and recon",
+     r"\b(?:osint|recon|usernames?|whois|dorks?|geolocat\w*|subdomains?)\b"
+     r"|استخبارات مفتوحة|اسم مستخدم|مصادر مفتوحة",
+     (
+         ("OSINT Framework", "directory of OSINT tools by category; free",
+          "https://osintframework.com/"),
+         ("Maltego", "link analysis; Community edition is free",
+          "https://www.maltego.com/"),
+         ("SpiderFoot", "automated OSINT scans; free",
+          "https://github.com/smicallef/spiderfoot"),
+         ("theHarvester", "emails, subdomains and names from public "
+          "sources; free", "https://github.com/laramies/theHarvester"),
+         ("Sherlock", "finds a username across social networks; free",
+          "https://github.com/sherlock-project/sherlock"),
+         ("Shodan", "devices and services exposed on the internet; free "
+          "tier", "https://www.shodan.io/"),
+         ("Wayback Machine", "archived copies of websites; free",
+          "https://web.archive.org/"),
+         ("Google Hacking Database", "ready made search dorks; free",
+          "https://www.exploit-db.com/google-hacking-database"),
+         ("crt.sh", "certificate transparency search to find subdomains; "
+          "free", "https://crt.sh/"),
+         ("recon-ng", "modular recon framework; free",
+          "https://github.com/lanmaster53/recon-ng"),
+     )),
+    ("mobile apps (Android and iOS)",
+     r"\b(?:android|ios|apks?|ipa|mobile|frida)\b|اندرويد|أندرويد|جوال"
+     r"|موبايل|هاتف",
+     (
+         ("MobSF", "automated static and dynamic analysis of Android and "
+          "iOS apps; free",
+          "https://github.com/MobSF/Mobile-Security-Framework-MobSF"),
+         ("jadx", "decompiles APKs to readable Java; free",
+          "https://github.com/skylot/jadx"),
+         ("apktool", "unpacks and rebuilds APK resources; free",
+          "https://apktool.org/"),
+         ("Frida", "hooks functions of a running app; free",
+          "https://frida.re/"),
+         ("objection", "runtime mobile exploration built on Frida; free",
+          "https://github.com/sensepost/objection"),
+         ("OWASP MASTG", "the mobile security testing guide; free",
+          "https://mas.owasp.org/MASTG/"),
+         ("mitmproxy", "inspect an app's network traffic; free",
+          "https://mitmproxy.org/"),
+     )),
+    ("wireless (Wi-Fi, Bluetooth, radio)",
+     r"\b(?:wi-?fi|wireless|wpa2?|bluetooth|rfid|nfc|sdr)\b|واي فاي|لاسلكي"
+     r"|بلوتوث",
+     (
+         ("Aircrack-ng", "Wi-Fi auditing suite, for your own networks; free",
+          "https://www.aircrack-ng.org/"),
+         ("Kismet", "wireless network and device detector; free",
+          "https://www.kismetwireless.net/"),
+         ("Bettercap", "network and Bluetooth reconnaissance framework, "
+          "authorised use only; free", "https://www.bettercap.org/"),
+         ("hcxtools", "capture and convert WPA data for Hashcat; free",
+          "https://github.com/ZerBea/hcxtools"),
+         ("GNU Radio", "toolkit for software defined radio; free",
+          "https://www.gnuradio.org/"),
+     )),
+    ("cryptography and encoding",
+     r"\b(?:crypto\w*|cipher\w*|encrypt\w*|decrypt\w*|rsa|aes|encoding"
+     r"|base64)\b|تشفير|فك تشفير|ترميز",
+     (
+         ("CyberChef", "browser toolkit for encoding, hashing and ciphers; "
+          "free", "https://gchq.github.io/CyberChef/"),
+         ("dCode", "solvers for classic ciphers and encodings; free",
+          "https://www.dcode.fr/"),
+         ("RsaCtfTool", "attacks on weak RSA keys; free",
+          "https://github.com/RsaCtfTool/RsaCtfTool"),
+         ("SageMath", "maths system for crypto work; free",
+          "https://www.sagemath.org/"),
+         ("OpenSSL", "keys, certificates and hashing from the command "
+          "line; free", "https://www.openssl.org/"),
+         ("CryptoHack", "free interactive crypto challenges",
+          "https://cryptohack.org/"),
+     )),
+    ("reverse engineering",
+     r"\b(?:reverse engineer\w*|disassembl\w*|decompil\w*|debugger\w*"
+     r"|crackmes?|reversing)\b|هندسة عكسية|تفكيك",
+     (
+         ("Ghidra", "free disassembler and decompiler from the NSA",
+          "https://ghidra-sre.org/"),
+         ("IDA Free", "industry standard disassembler, free edition",
+          "https://hex-rays.com/ida-free"),
+         ("Binary Ninja", "modern reversing platform; paid, with a free "
+          "cloud version", "https://binary.ninja/"),
+         ("radare2 and Cutter", "free reversing framework and its GUI",
+          "https://book.rada.re/"),
+         ("x64dbg", "free Windows debugger", "https://x64dbg.com/"),
+         ("pwndbg", "gdb plugin for exploit and reversing work; free",
+          "https://github.com/pwndbg/pwndbg"),
+         ("angr", "binary analysis and symbolic execution in Python; free",
+          "https://angr.io/"),
+         ("Compiler Explorer", "see the assembly a compiler produces; free",
+          "https://godbolt.org/"),
+     )),
+    ("detection, SIEM and SOC",
+     r"\b(?:siem|soc|edr|xdr|wazuh|splunk|elastic|sigma|detection\w*"
+     r"|threat hunting|monitoring)\b|مراقبة|كشف|صيد التهديدات",
+     (
+         ("Wazuh", "open source XDR and SIEM with endpoint monitoring; free",
+          "https://wazuh.com/"),
+         ("Security Onion", "network and host detection platform with "
+          "Suricata, Zeek and Elastic; free",
+          "https://securityonionsolutions.com/software/"),
+         ("Elastic Security", "SIEM on the Elastic stack; free tier",
+          "https://www.elastic.co/security"),
+         ("Splunk", "commercial SIEM with a free trial",
+          "https://www.splunk.com/"),
+         ("Sigma", "vendor neutral detection rules; free",
+          "https://github.com/SigmaHQ/sigma"),
+         ("MISP", "threat intelligence sharing platform; free",
+          "https://www.misp-project.org/"),
+         ("Atomic Red Team", "small ATT&CK tests to check your detections; "
+          "free", "https://github.com/redcanaryco/atomic-red-team"),
+         ("MITRE ATT&CK Navigator", "map and plan coverage on ATT&CK; free",
+          "https://mitre-attack.github.io/attack-navigator/"),
+     )),
+    ("vulnerability scanning and code security",
+     r"\b(?:vulnerabilit\w*|scanners?|scanning|cves?|sast|dast|sbom"
+     r"|dependenc\w*)\b|ثغرات|فحص",
+     (
+         ("OpenVAS (Greenbone)", "free vulnerability scanner",
+          "https://www.greenbone.net/en/"),
+         ("Nessus Essentials", "free scanner for a small number of IPs",
+          "https://www.tenable.com/products/nessus"),
+         ("Nuclei", "template based scanner; free",
+          "https://github.com/projectdiscovery/nuclei"),
+         ("Trivy", "scans containers, filesystems and infrastructure code; "
+          "free", "https://trivy.dev/"),
+         ("Grype", "vulnerability scanner for images and folders; free",
+          "https://github.com/anchore/grype"),
+         ("Semgrep", "static code scanning with rules; free tier",
+          "https://semgrep.dev/"),
+         ("OWASP Dependency-Check", "finds known vulnerable libraries; free",
+          "https://owasp.org/www-project-dependency-check/"),
+         ("Bandit", "security linter for Python code; free",
+          "https://github.com/PyCQA/bandit"),
+     )),
+    ("cloud and containers",
+     r"\b(?:cloud|aws|azure|gcp|kubernetes|k8s|docker|containers?)\b|سحابة"
+     r"|حاويات",
+     (
+         ("Prowler", "AWS, Azure and GCP security assessment; free",
+          "https://github.com/prowler-cloud/prowler"),
+         ("ScoutSuite", "multi cloud security auditing; free",
+          "https://github.com/nccgroup/ScoutSuite"),
+         ("Trivy", "container and infrastructure code scanner; free",
+          "https://trivy.dev/"),
+         ("kube-bench", "checks Kubernetes against the CIS benchmark; free",
+          "https://github.com/aquasecurity/kube-bench"),
+         ("Checkov", "scans Terraform, CloudFormation and more; free",
+          "https://www.checkov.io/"),
+         ("CloudGoat", "vulnerable by design AWS lab to practise on; free",
+          "https://github.com/RhinoSecurityLabs/cloudgoat"),
+     )),
+    ("phishing and email",
+     r"\b(?:phishing|emails?|spam|headers?|urls?|links?)\b|تصيد|ايميل"
+     r"|إيميل|بريد|رابط",
+     (
+         ("urlscan.io", "scans and screenshots a suspicious URL safely; "
+          "free tier", "https://urlscan.io/"),
+         ("VirusTotal", "checks URLs, domains and attachments; free tier",
+          "https://www.virustotal.com/"),
+         ("Google Messageheader", "reads and explains email headers; free",
+          "https://toolbox.googleapps.com/apps/messageheader/"),
+         ("MXToolbox", "DNS, SPF, DKIM and DMARC checks; free tier",
+          "https://mxtoolbox.com/"),
+         ("Gophish", "phishing awareness simulation for your own "
+          "organisation; free", "https://getgophish.com/"),
+         ("CyberChef", "decode obfuscated payloads in links and mails; free",
+          "https://gchq.github.io/CyberChef/"),
+     )),
+    ("penetration testing, Active Directory and hardening",
+     r"\b(?:pentest\w*|penetration|red team|exploit\w*|active directory"
+     r"|privesc|privilege escalation|hardening|kerberos)\b|اختبار اختراق"
+     r"|اختراق|تحصين",
+     (
+         ("Kali Linux", "pentest distro with hundreds of tools; free",
+          "https://www.kali.org/"),
+         ("Metasploit Framework", "exploitation and post exploitation "
+          "framework; free", "https://www.metasploit.com/"),
+         ("Impacket", "Windows network protocols in Python; free",
+          "https://github.com/fortra/impacket"),
+         ("NetExec", "assesses Active Directory networks; free",
+          "https://github.com/Pennyw0rth/NetExec"),
+         ("BloodHound", "maps Active Directory attack paths; free",
+          "https://github.com/SpecterOps/BloodHound"),
+         ("PEASS-ng", "LinPEAS and WinPEAS local privilege escalation "
+          "checks; free", "https://github.com/peass-ng/PEASS-ng"),
+         ("GTFOBins", "Unix binaries that help escalate or bypass; free",
+          "https://gtfobins.github.io/"),
+         ("LOLBAS", "Windows living off the land binaries; free",
+          "https://lolbas-project.github.io/"),
+         ("Exploit-DB", "archive of public exploits and dorks; free",
+          "https://www.exploit-db.com/"),
+         ("Lynis", "Linux hardening and audit scanner; free",
+          "https://cisofy.com/lynis/"),
+     )),
+    ("IoT and firmware",
+     r"\b(?:iot|firmware|embedded|routers?|cameras?|plc|scada)\b|إنترنت الأشياء"
+     r"|راوتر|كاميرا",
+     (
+         ("Binwalk", "unpacks firmware images and finds embedded files; "
+          "free", "https://github.com/ReFirmLabs/binwalk"),
+         ("EMBA", "automated firmware security analysis; free",
+          "https://github.com/e-m-b-a/emba"),
+         ("Ghidra", "reverse the firmware's binaries; free",
+          "https://ghidra-sre.org/"),
+         ("OWASP IoTGoat", "deliberately vulnerable router firmware to "
+          "practise on; free", "https://github.com/OWASP/IoTGoat"),
+         ("flashrom", "reads and writes flash chips; free",
+          "https://www.flashrom.org/"),
+     )),
+    ("audio and video files",
+     r"\b(?:audio|sound|spectrogram|wav|mp3|video)\b|صوت|صوتيات|فيديو",
+     (
+         ("Audacity", "view a spectrogram to find hidden pictures or "
+          "tones; free", "https://www.audacityteam.org/"),
+         ("Sonic Visualiser", "deep spectrogram and audio analysis; free",
+          "https://www.sonicvisualiser.org/"),
+         ("steghide", "hides and extracts data in WAV and AU files; free",
+          "https://steghide.sourceforge.net/"),
+         ("ExifTool", "reads metadata of audio and video files; free",
+          "https://exiftool.org/"),
+         ("FFmpeg", "inspect, convert and cut audio and video from the "
+          "command line; free", "https://ffmpeg.org/"),
+     )),
+    ("building your own security tool",
+     r"\b(?:build|create|develop|script|library|libraries|python|golang)\b"
+     r"|أبني|اعمل|أطور|أصنع|برمجة|سكربت|مكتبة|أداة خاصة",
+     (
+         ("scapy", "Python library to craft, send and read packets; free",
+          "https://scapy.net/"),
+         ("pwntools", "Python library for CTF and exploit scripts; free",
+          "https://docs.pwntools.com/"),
+         ("pefile", "Python library to read Windows executables; free",
+          "https://github.com/erocarrera/pefile"),
+         ("yara-python", "use YARA rules from Python; free",
+          "https://github.com/VirusTotal/yara-python"),
+         ("VirusTotal API", "file, URL and domain reputation for your "
+          "tool; free tier", "https://docs.virustotal.com/"),
+         ("Shodan API", "exposed device data for your tool; free tier",
+          "https://developer.shodan.io/"),
+         ("AbuseIPDB API", "IP reputation lookups; free tier",
+          "https://docs.abuseipdb.com/"),
+         ("NVD API", "official CVE data for vulnerability tools; free",
+          "https://nvd.nist.gov/developers"),
+         ("subfinder", "a small, well written Go recon tool to study; free",
+          "https://github.com/projectdiscovery/subfinder"),
+     )),
+)
+
+
+FINDER_PROMPT_TEMPLATE = (
+    "The student is looking for cybersecurity tools and sources. They "
+    "wrote: '{user_text}'. Even when this is short or broad, do not just "
+    "ask what they need: answer straight away. Group the tools by task and "
+    "write each as: name, what it is for, free or paid, link. Then add a "
+    "short list of trusted sources to learn more, then at most one short "
+    "question to narrow it down. If they want to build a tool, suggest the "
+    "language, libraries, APIs and open source projects to study. {core} "
+    "If the message is only a greeting or has nothing to do with tools, "
+    "reply briefly and ask what kind of tools they want."
+)
+
+
+def detect_tool_areas(text: str, limit: int = 2) -> list:
+    """The catalogue areas the question is about, best match first."""
+    scored = []
+    for area, pattern, tools in TOOL_CATALOG:
+        hits = len(re.findall(pattern, text, flags=re.IGNORECASE))
+        if hits:
+            scored.append((hits, area, tools))
+    scored.sort(key=lambda item: -item[0])
+    return [(area, tools) for _, area, tools in scored[:limit]]
+
+
+def build_finder_prompt(user_text: str) -> str:
+    """Wrap a Tool Finder question, with the checked tools for its area."""
+    areas = detect_tool_areas(user_text)
+    if not areas:
+        return FINDER_PROMPT_TEMPLATE.format(
+            user_text=user_text,
+            core="No ready list matched: name only tools you are sure exist, "
+                 "and if you cannot tell which area they mean, ask one short "
+                 "question.")
+    lines = []
+    for area, tools in areas:
+        lines.append(f"{area}:")
+        lines += [f"- {name}: {what}. {url}".rstrip() for name, what, url in tools]
+    return (
+        "Checked cybersecurity tools for the student's request:\n"
+        + "\n".join(lines) + "\n\n"
+        f"The student wrote: '{user_text}'\n"
+        "Task: answer now, in the student's language, with no questions "
+        "first. List the tools above that fit the request, each on its own "
+        "line as: name - what it is for - free or paid - link (copy links "
+        "exactly, keep tool names in English). Add other real tools only if "
+        "you are sure. Finish with two or three places to learn more and one "
+        "short question to narrow things down."
+    )
+
+
+def finder_footer(user_text: str) -> str:
+    """The checked tools for the question's area, with their exact links, shown under a Tool Finder answer."""
+    areas = detect_tool_areas(user_text)
+    if not areas:
+        return ""
+    parts = [tt("Checked tools and links", "أدوات وروابط مؤكدة")]
+    for area, tools in areas:
+        parts.append(f"**{area}**")
+        parts += [f"- [{name}]({url}): {what}" if url else f"- {name}: {what}"
+                  for name, what, url in tools]
+    return "\n\n---\n" + "\n".join(parts)
+
+
 def build_system_prompt(mode: str) -> str:
     """Return the system prompt for the selected track."""
     if mode == MODE_CHAT:
@@ -972,6 +1609,8 @@ def wrap_prompt_as_security_expert(user_text: str, mode: str) -> str:
         return user_text  # normal chat: send the message as written
     if mode == MODE_CTF:
         return build_ctf_prompt(user_text)
+    if mode == MODE_FINDER:
+        return build_finder_prompt(user_text)
     track = TRACKS_BY_NAME.get(mode)
     return EXPERT_TEMPLATE.format(
         context=track.context if track and track.context else mode,
@@ -5762,6 +6401,11 @@ def handle_submission(
             show_internal_error("Request failed.", exc)
 
         if reply.strip():
+            if settings.mode == MODE_FINDER:
+                footer = finder_footer(prompt)
+                if footer:
+                    st.markdown(footer)
+                    reply += footer
             messages.append({"role": "assistant", "content": reply})
             render_answer_actions(reply, f"m{len(messages) - 1}")
         else:
@@ -7620,9 +8264,10 @@ STORY_CARDS = {
          "challenge and get a step-by-step plan with exact commands, tuned to "
          "the category."),
         ("LABS", "Specialist labs",
-         "Penetration testing, malware analysis, forensics and incident response, "
-         "network and cloud security, secure coding and SQL, and threat intel. "
-         "Each lab has its own focus and ready-made starters."),
+         "Penetration testing, malware analysis, reverse engineering, forensics and "
+         "incident response, network and cloud security, secure coding and SQL, and "
+         "threat intel. A tool finder points you to the right tools and sources for "
+         "what you want to do."),
         ("TOOLS", "Security Toolbox",
          "CVE lookups from the NVD, hashing and encoding, and an IOC extractor. "
          "No AI needed, and everything can be exported."),
@@ -7655,8 +8300,8 @@ STORY_CARDS = {
          "Web \u0648Crypto \u0648Pwn \u0648Reverse \u0648Forensics \u0648Stego \u0648OSINT. \u0635\u0650\u0641 \u0627\u0644\u062a\u062d\u062f\u064a "
          "\u0648\u0633\u064a\u0639\u0637\u064a\u0643 \u062e\u0637\u0629 \u062e\u0637\u0648\u0629 \u0628\u062e\u0637\u0648\u0629 \u0645\u0639 \u0627\u0644\u0623\u0648\u0627\u0645\u0631 \u0627\u0644\u062f\u0642\u064a\u0642\u0629 \u062d\u0633\u0628 \u0627\u0644\u0641\u0626\u0629."),
         ("\u0627\u0644\u0645\u062e\u062a\u0628\u0631\u0627\u062a", "\u0645\u062e\u062a\u0628\u0631\u0627\u062a \u0645\u062a\u062e\u0635\u0635\u0629",
-         "\u0627\u062e\u062a\u0628\u0627\u0631 \u0627\u0644\u0627\u062e\u062a\u0631\u0627\u0642\u060c \u062a\u062d\u0644\u064a\u0644 \u0627\u0644\u0628\u0631\u0645\u062c\u064a\u0627\u062a \u0627\u0644\u062e\u0628\u064a\u062b\u0629\u060c \u0627\u0644\u062a\u062d\u0642\u064a\u0642 \u0627\u0644\u062c\u0646\u0627\u0626\u064a \u0648\u0627\u0644\u0627\u0633\u062a\u062c\u0627\u0628\u0629 \u0644\u0644\u062d\u0648\u0627\u062f\u062b\u060c "
-         "\u0623\u0645\u0646 \u0627\u0644\u0634\u0628\u0643\u0627\u062a \u0648\u0627\u0644\u0633\u062d\u0627\u0628\u0629\u060c \u0627\u0644\u0628\u0631\u0645\u062c\u0629 \u0627\u0644\u0622\u0645\u0646\u0629 \u0648SQL\u060c \u0648\u0627\u0633\u062a\u062e\u0628\u0627\u0631\u0627\u062a \u0627\u0644\u062a\u0647\u062f\u064a\u062f\u0627\u062a. \u0644\u0643\u0644 \u0645\u062e\u062a\u0628\u0631 \u062a\u062e\u0635\u0635\u0647 \u0648\u0623\u0633\u0626\u0644\u0629 \u062c\u0627\u0647\u0632\u0629 \u062a\u0628\u062f\u0623 \u0645\u0646\u0647\u0627."),
+         "\u0627\u062e\u062a\u0628\u0627\u0631 \u0627\u0644\u0627\u062e\u062a\u0631\u0627\u0642\u060c \u062a\u062d\u0644\u064a\u0644 \u0627\u0644\u0628\u0631\u0645\u062c\u064a\u0627\u062a \u0627\u0644\u062e\u0628\u064a\u062b\u0629\u060c \u0627\u0644\u0647\u0646\u062f\u0633\u0629 \u0627\u0644\u0639\u0643\u0633\u064a\u0629\u060c \u0627\u0644\u062a\u062d\u0642\u064a\u0642 \u0627\u0644\u062c\u0646\u0627\u0626\u064a \u0648\u0627\u0644\u0627\u0633\u062a\u062c\u0627\u0628\u0629 \u0644\u0644\u062d\u0648\u0627\u062f\u062b\u060c "
+         "\u0623\u0645\u0646 \u0627\u0644\u0634\u0628\u0643\u0627\u062a \u0648\u0627\u0644\u0633\u062d\u0627\u0628\u0629\u060c \u0627\u0644\u0628\u0631\u0645\u062c\u0629 \u0627\u0644\u0622\u0645\u0646\u0629 \u0648SQL\u060c \u0648\u0627\u0633\u062a\u062e\u0628\u0627\u0631\u0627\u062a \u0627\u0644\u062a\u0647\u062f\u064a\u062f\u0627\u062a. \u0648\u062f\u0644\u064a\u0644 \u0627\u0644\u0623\u062f\u0648\u0627\u062a \u064a\u0631\u0634\u0651\u062d \u0644\u0643 \u0627\u0644\u0623\u062f\u0648\u0627\u062a \u0648\u0627\u0644\u0645\u0635\u0627\u062f\u0631 \u0627\u0644\u0645\u0646\u0627\u0633\u0628\u0629 \u0644\u0645\u0627 \u062a\u0631\u064a\u062f \u0641\u0639\u0644\u0647."),
         ("\u0627\u0644\u0623\u062f\u0648\u0627\u062a", "\u0635\u0646\u062f\u0648\u0642 \u0623\u062f\u0648\u0627\u062a \u0627\u0644\u0623\u0645\u0646",
          "\u0628\u062d\u062b CVE \u0645\u0646 NVD\u060c \u0648\u062a\u062c\u0632\u0626\u0629 (hash) \u0648\u062a\u0631\u0645\u064a\u0632\u060c \u0648\u0645\u0633\u062a\u062e\u0631\u062c IOC. "
          "\u0628\u062f\u0648\u0646 \u0630\u0643\u0627\u0621 \u0627\u0635\u0637\u0646\u0627\u0639\u064a\u060c \u0648\u064a\u0645\u0643\u0646 \u062a\u0635\u062f\u064a\u0631 \u0643\u0644 \u0634\u064a\u0621."),
@@ -8288,6 +8933,8 @@ TRACK_AR = {
     "Forensics & IR": "\u0627\u0644\u062a\u062d\u0642\u064a\u0642 \u0627\u0644\u062c\u0646\u0627\u0626\u064a \u0648\u0627\u0644\u0627\u0633\u062a\u062c\u0627\u0628\u0629",
     "Network Security": "\u0623\u0645\u0646 \u0627\u0644\u0634\u0628\u0643\u0627\u062a",
     "Cloud Security": "\u0623\u0645\u0646 \u0627\u0644\u0633\u062d\u0627\u0628\u0629",
+    "Reverse Engineering": "\u0627\u0644\u0647\u0646\u062f\u0633\u0629 \u0627\u0644\u0639\u0643\u0633\u064a\u0629",
+    "Tool Finder": "\u062f\u0644\u064a\u0644 \u0627\u0644\u0623\u062f\u0648\u0627\u062a",
     "SOC Analyzer": "\u0645\u062d\u0644\u0651\u0644 SOC",
     "Toolbox": "\u0635\u0646\u062f\u0648\u0642 \u0627\u0644\u0623\u062f\u0648\u0627\u062a",
     "Practice Exam": "\u0627\u0645\u062a\u062d\u0627\u0646 \u062a\u062f\u0631\u064a\u0628\u064a",
@@ -8339,6 +8986,19 @@ def on_lang_pick() -> None:
 # the text of Streamlit widgets when the language is Arabic, so no call site changes.
 AR_MAP = {
     # tracks: blurbs, placeholders and quick-start buttons
+    "Disassemblers, decompilers, debuggers and binary formats, with a learning path and real references.": "\u0623\u062f\u0648\u0627\u062a \u0627\u0644\u062a\u0641\u0643\u064a\u0643 (Disassemblers) \u0648\u0641\u0643 \u0627\u0644\u062a\u0631\u062c\u0645\u0629 (Decompilers) \u0648\u0627\u0644\u0645\u0646\u0642\u0651\u062d\u0627\u062a (Debuggers) \u0648\u0635\u064a\u063a \u0627\u0644\u0645\u0644\u0641\u0627\u062a \u0627\u0644\u062a\u0646\u0641\u064a\u0630\u064a\u0629\u060c \u0645\u0639 \u0645\u0633\u0627\u0631 \u062a\u0639\u0644\u0651\u0645 \u0648\u0645\u0631\u0627\u062c\u0639 \u062d\u0642\u064a\u0642\u064a\u0629.",
+    "Ask about Ghidra, x64dbg, assembly, crackmes, APKs": "\u0627\u0633\u0623\u0644 \u0639\u0646 Ghidra \u0648x64dbg \u0648\u0644\u063a\u0629 \u0627\u0644\u062a\u062c\u0645\u064a\u0639 \u0648Crackmes \u0648\u062a\u0637\u0628\u064a\u0642\u0627\u062a APK",
+    "Crackme Workflow": "\u0645\u0631\u0627\u062d\u0644 \u062d\u0644 Crackme",
+    "Read x86-64 Assembly": "\u0627\u0642\u0631\u0623 \u0644\u063a\u0629 \u062a\u062c\u0645\u064a\u0639 x86-64",
+    "Ghidra Quick Start": "\u0628\u062f\u0627\u064a\u0629 \u0633\u0631\u064a\u0639\u0629 \u0645\u0639 Ghidra",
+    "Reverse an Android APK": "\u0647\u0646\u062f\u0633\u0629 \u0639\u0643\u0633\u064a\u0629 \u0644\u062a\u0637\u0628\u064a\u0642 Android",
+    "Learning Path": "\u0645\u0633\u0627\u0631 \u0627\u0644\u062a\u0639\u0644\u0651\u0645",
+    "Tell Nashmi what you want to do or build, and get the right cybersecurity tools and trusted sources for it.": "\u0627\u0643\u062a\u0628 \u0644\u0646\u0634\u0645\u064a \u0645\u0627 \u062a\u0631\u064a\u062f \u0623\u0646 \u062a\u0641\u0639\u0644\u0647 \u0623\u0648 \u062a\u0628\u0646\u064a\u0647\u060c \u0641\u064a\u0631\u0634\u0651\u062d \u0644\u0643 \u0623\u062f\u0648\u0627\u062a \u0627\u0644\u0623\u0645\u0646 \u0627\u0644\u0633\u064a\u0628\u0631\u0627\u0646\u064a \u0627\u0644\u0645\u0646\u0627\u0633\u0628\u0629 \u0648\u0645\u0635\u0627\u062f\u0631 \u0645\u0648\u062b\u0648\u0642\u0629 \u0644\u0647\u0627.",
+    "Say what you need: tools for images, passwords, networks...": "\u0627\u0643\u062a\u0628 \u0645\u0627 \u062a\u062d\u062a\u0627\u062c\u0647: \u0623\u062f\u0648\u0627\u062a \u0644\u0644\u0635\u0648\u0631 \u0623\u0648 \u0643\u0644\u0645\u0627\u062a \u0627\u0644\u0645\u0631\u0648\u0631 \u0623\u0648 \u0627\u0644\u0634\u0628\u0643\u0627\u062a...",
+    "Tools for images": "\u0623\u062f\u0648\u0627\u062a \u0644\u0644\u0635\u0648\u0631",
+    "Tools for passwords": "\u0623\u062f\u0648\u0627\u062a \u0644\u0643\u0644\u0645\u0627\u062a \u0627\u0644\u0645\u0631\u0648\u0631",
+    "Tools for networks": "\u0623\u062f\u0648\u0627\u062a \u0644\u0644\u0634\u0628\u0643\u0627\u062a",
+    "Build my own tool": "\u0623\u0628\u0646\u064a \u0623\u062f\u0627\u062a\u064a \u0628\u0646\u0641\u0633\u064a",
     "Threat intel, OSINT, log analysis with Pandas and anomaly detection.": "استخبارات التهديدات، وOSINT، وتحليل السجلات بـ Pandas وكشف الشذوذ.",
     "Ask about threat intel, OSINT, Sigma/YARA, log analysis": "اسأل عن استخبارات التهديدات وOSINT وSigma/YARA وتحليل السجلات",
     "Pandas Security Data Lab": "مختبر بيانات الأمن بـ Pandas",
