@@ -41,7 +41,7 @@ import uuid
 import zipfile
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Iterator
 
@@ -75,6 +75,10 @@ try:
     import nashmi_net
 except ImportError:  # the Wireshark Analysis track needs this module
     nashmi_net = None
+try:
+    import nashmi_mascot
+except ImportError:  # the pixel fox on the composer is optional
+    nashmi_mascot = None
 
 load_dotenv()
 
@@ -1144,15 +1148,30 @@ RESPONSE_STYLE = (
 )
 
 SOC_PROMPT_TEMPLATE = """\
-Analyze all attached security files, logs, screenshots, or videos and \
-produce a professional SOC report that includes:
+Write a professional SOC report about the files the user attached, and \
+only about them.
+
+Files received:
+{inventory}
+
+Results of Nashmi's fixed-rule log and capture engines (facts from the files):
+{local}
+
+The report includes:
 1. Executive summary and severity level.
 2. Event/media analysis and timeline.
 3. Indicators of Compromise (IoCs): IPs: {ips}, Hashes: {hashes}
 4. Related MITRE ATT&CK tactics.
 5. Containment and defensive remediation steps.
 
-Additional Analyst Notes: {notes}"""
+Additional Analyst Notes: {notes}
+
+Rules:
+- Base every point on the attached content, the engine results and the \
+notes, and name the file it comes from. Do not invent events, hosts or IPs.
+- When a section has no evidence in the files, say so in one short line.
+- No greetings, no offers of help, no closing lines, and never repeat a \
+sentence."""
 
 
 # Tool Finder: a small checked catalogue per area, so even a small model recommends real tools
@@ -1701,6 +1720,7 @@ class PreparedFiles:
     raw_text: str = ""
     media: list[MediaPart] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
+    described: list[str] = field(default_factory=list)  # sent as text, not as the file
 
 
 def is_env_file(name: str) -> bool:
@@ -1723,6 +1743,82 @@ def redact_secrets(text: str) -> str:
         if len(line) <= MAX_REDACT_LINE else "[line too long, removed]"
         for line in text.split("\n")
     )
+
+
+MAX_STRINGS_SCAN = 4 * 1024 * 1024
+PRINTABLE_RE = re.compile(rb"[\x20-\x7e]{6,}")
+
+
+def pdf_text(data: bytes) -> str:
+    """Text layer of a PDF ("" for scans or when pypdf is missing)."""
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(data))
+        return "\n".join((page.extract_text() or "") for page in reader.pages[:60]).strip()
+    except Exception:  # noqa: BLE001 - broken or encrypted PDF
+        return ""
+
+
+def docx_text(data: bytes) -> str:
+    """Paragraph text of a Word .docx file."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            xml = zf.read("word/document.xml").decode("utf-8", errors="ignore")
+    except (KeyError, zipfile.BadZipFile, OSError):
+        return ""
+    xml = re.sub(r"</w:p>", "\n", xml)
+    return html.unescape(re.sub(r"<[^>]+>", "", xml)).strip()
+
+
+def describe_file(name: str, mime: str, data: bytes) -> tuple[str, bool]:
+    """A text stand-in for a file the model cannot receive: its facts plus
+    whatever text can be read out of it (PDF/Word text, or the printable
+    strings of a binary). Returns the block and whether content was read."""
+    facts = [mime, f"{len(data):,} bytes", "SHA-256 " + hashlib.sha256(data).hexdigest()]
+    lowered = name.lower()
+    if mime == "application/pdf" or lowered.endswith(".pdf"):
+        body = pdf_text(data)
+    elif lowered.endswith(".docx"):
+        body = docx_text(data)
+    elif mime.startswith(("image/", "video/", "audio/")):
+        body = ""
+        if mime.startswith("image/"):
+            try:
+                from PIL import Image
+                with Image.open(io.BytesIO(data)) as img:
+                    facts.append(f"{img.width}x{img.height} px")
+            except Exception:  # noqa: BLE001
+                pass
+    else:
+        seen: dict[str, None] = {}
+        for match in PRINTABLE_RE.finditer(data[:MAX_STRINGS_SCAN]):
+            seen.setdefault(match.group().decode("ascii"), None)
+            if len(seen) >= 600:
+                break
+        body = "\n".join(seen)
+        if body:
+            facts.append("printable strings below")
+    head = f"\n--- Attached File: {name} ({'; '.join(facts)}) ---\n"
+    if not body:
+        return head + "[The content of this file could not be read as text.]\n", False
+    clipped = body[:MAX_TEXT_CHARS] + ("\n[... truncated ...]" if len(body) > MAX_TEXT_CHARS else "")
+    return head + f"```\n{clipped}\n```\n", True
+
+
+VISION_HINTS = ("llama-4", "vision", "scout", "maverick")
+
+
+def vision_route(provider: Provider, model: str, api_key: str, uploads):
+    """Groq's chat models read text only. When pictures are attached and the
+    key can use one of Groq's vision models, send the request through it."""
+    if provider.id != "groq" or not api_key or not any(
+        (getattr(u, "type", "") or "").startswith("image/") for u in uploads or []
+    ):
+        return provider, model
+    for name in live_models(provider.id, api_key):
+        if any(hint in name for hint in VISION_HINTS):
+            return replace(provider, media="image"), name
+    return provider, model
 
 
 def prepare_attachments(uploaded_files, provider: Provider) -> PreparedFiles:
@@ -1763,9 +1859,13 @@ def prepare_attachments(uploaded_files, provider: Provider) -> PreparedFiles:
                 f"\n--- Attached File: {name} ---\n```\n{clipped}\n```\n"
             )
         elif not provider.accepts(mime):
-            prepared.skipped.append(
-                f"{name} (not supported by {provider.short})"
-            )
+            # the model cannot take this file itself, so send what can be read
+            # from it as text instead of dropping it
+            block, readable = describe_file(name, mime, data)
+            text_blocks.append(block)
+            raw_blocks.append(block)
+            if not readable:
+                prepared.described.append(name)
         elif media_bytes + len(data) > MAX_MEDIA_BYTES:
             limit_mb = MAX_MEDIA_BYTES // (1024 * 1024)
             prepared.skipped.append(f"{name} (over the {limit_mb} MB limit)")
@@ -2098,6 +2198,8 @@ def generate_stream(
 REPEAT_MIN_CHARS = 25       # shorter lines (braces, "---", list bullets) may repeat
 REPEAT_LIMIT = 2            # repeated prose lines dropped before the reply is cut
 SAME_LINE_LIMIT = 4         # the same short line (one word...) many times in a row
+SENTENCE_MIN_CHARS = 8       # "Nashmi is here to help." twice in one line is a loop
+SENTENCE_END_RE = re.compile(r"(?<=[.!?؟])\s+")
 WORD_RUN_RE = re.compile(r"(?<!\S)(\S+)(?:\s+\1(?!\S)){2,}")  # "word word word ..."
 MAX_REPLY_CHARS = 60_000    # a reply never grows past this
 
@@ -2146,6 +2248,9 @@ def without_loops(stream: Iterator[str]) -> Iterator[str]:
         if not stripped:
             return line
         line = WORD_RUN_RE.sub(r"\1", line)
+        line = drop_repeated_sentences(line)
+        if line is None:
+            return None
         norm = re.sub(r"\s+", " ", line.strip()).lower()
         if norm == last:                       # same line right under itself
             run += 1
@@ -2160,12 +2265,41 @@ def without_loops(stream: Iterator[str]) -> Iterator[str]:
             seen.add(norm)
         return line
 
+    sentences: set[str] = set()
+
+    def drop_repeated_sentences(line: str) -> str | None:
+        """Keep each long sentence once per reply; a line that is mostly the
+        same sentence again and again ends the reply."""
+        nonlocal dropped
+        parts = SENTENCE_END_RE.split(line)
+        if len(parts) < 2:
+            return line
+        kept, repeats, here = [], 0, set()
+        for part in parts:
+            norm = re.sub(r"\s+", " ", part.strip()).lower()
+            # a long sentence once per reply; a short one once per line
+            if (len(norm) >= REPEAT_MIN_CHARS and norm in sentences) or (
+                    len(norm) >= SENTENCE_MIN_CHARS and norm in here):
+                repeats += 1
+                continue
+            sentences.add(norm)
+            here.add(norm)
+            kept.append(part)
+        if repeats >= SAME_LINE_LIMIT:
+            dropped = REPEAT_LIMIT
+        if not "".join(kept).strip():
+            return None
+        return " ".join(p.strip() for p in kept if p.strip()) + ("\n" if line.endswith("\n") else "")
+
     stopped = ""
     for chunk in stream:
         buf += chunk
         while "\n" in buf:
             line, buf = buf.split("\n", 1)
             kept = judge(line + "\n")
+            if kept is not None and dropped >= REPEAT_LIMIT and line.strip() != kept.strip():
+                yield kept             # a looping line, shown once without its copies
+                kept = None
             if dropped >= REPEAT_LIMIT:
                 stopped = tt("The reply started repeating itself, so Nashmi stopped it.",
                              "بدأ الرد يكرر نفسه، فأوقفه نشمي.")
@@ -2181,8 +2315,11 @@ def without_loops(stream: Iterator[str]) -> Iterator[str]:
             break
     if not stopped and buf:
         kept = judge(buf)
-        if kept is not None and dropped < REPEAT_LIMIT:
+        if kept is not None and (dropped < REPEAT_LIMIT or buf.strip() != kept.strip()):
             yield kept
+        if dropped >= REPEAT_LIMIT:
+            stopped = tt("The reply started repeating itself, so Nashmi stopped it.",
+                         "بدأ الرد يكرر نفسه، فأوقفه نشمي.")
     if stopped:
         if in_code:
             yield "```\n"          # close an open code block before the note
@@ -6340,7 +6477,17 @@ def render_settings(box, mode: str):
         st.session_state.setdefault(
             "provider_choice", PROVIDERS_BY_ID[DEFAULT_PROVIDER_ID].label)
         current = PROVIDERS[st.session_state["provider_choice"]]
-        if guest_viewer():  # guests only look around: no model or key panel
+        if guest_viewer():  # guests only look around: no model or key panel,
+            # just where to get a key for each model before signing in
+            with st.expander(tt("Get an API key", "احصل على مفتاح API"),
+                             icon=":material/key:"):
+                st.caption(tt("Nashmi runs on your own key. Get one here, sign "
+                              "in, then paste it under AI model.",
+                              "نشمي يعمل بمفتاحك الخاص. احصل عليه من هنا، ثم "
+                              "سجّل الدخول والصقه في قسم نموذج الذكاء الاصطناعي."))
+                for provider in PROVIDER_LIST:
+                    st.link_button(key_label(provider), provider.key_url,
+                                   icon=":material/key:", width="stretch")
             return (Settings(current, "", current.models[0], mode),
                     st.empty())
         has_key = bool(
@@ -6628,6 +6775,11 @@ def read_chat_input(placeholder: str):
 def warn_skipped(prepared: PreparedFiles) -> None:
     if prepared.skipped:
         st.warning("Not sent: " + "; ".join(prepared.skipped))
+    if prepared.described:
+        st.info(tt("This model cannot open these files, so only their details "
+                   "(type, size, SHA-256) were sent: ",
+                   "هذا النموذج لا يفتح هذه الملفات، فأُرسلت تفاصيلها فقط "
+                   "(النوع والحجم وSHA-256): ") + ", ".join(prepared.described))
 
 
 def with_wait_notice(stream: Iterator[str]) -> Iterator[str]:
@@ -6662,7 +6814,8 @@ def handle_submission(
         render_key_help(settings.provider)
         return
 
-    prepared = prepare_attachments(files, settings.provider)
+    provider, model = vision_route(settings.provider, settings.model, settings.api_key, files)
+    prepared = prepare_attachments(files, provider)
     warn_skipped(prepared)
     messages = chat["messages"]
     names = [f.name for f in files] + list(extra_names)
@@ -6686,7 +6839,7 @@ def handle_submission(
                 content += "\n\n" + facts
             outgoing = messages[:-1] + [{"role": "user", "content": content}]
             reply = stream_to_text(with_wait_notice(generate_stream(
-                settings.provider, settings.api_key, settings.model,
+                provider, settings.api_key, model,
                 full_system_prompt(settings.mode, chat.get("project", "")),
                 outgoing, prepared,
             )))
@@ -6844,6 +6997,9 @@ def render_soc_track(settings: Settings) -> None:
     if vt_results:
         notes = f"{notes}\n\n{vt_summary_text(vt_results)}".strip()
 
+    provider, model = vision_route(provider, settings.model, settings.api_key, uploads)
+    if model != settings.model:
+        st.caption(tt(f"Pictures are read with {model}.", f"تُقرأ الصور بالنموذج {model}."))
     prepared = prepare_attachments(uploads, provider)
     warn_skipped(prepared)
     found = extract_indicators(prepared.raw_text)
@@ -6862,19 +7018,20 @@ def render_soc_track(settings: Settings) -> None:
 
     prompt = SOC_PROMPT_TEMPLATE.format(
         ips=list(found.external_ips), hashes=list(found.hashes),
-        notes=notes,
+        notes=notes or "none", inventory=soc_inventory(uploads),
+        local=soc_local_summary(local),
     )
     report = ""
     try:
         with st.spinner("Nashmi is scanning indicators and media and "
                         "writing the report..."):
             report = stream_to_text(generate_stream(
-                provider, settings.api_key, settings.model,
+                provider, settings.api_key, model,
                 full_system_prompt(settings.mode),
                 [{"role": "user", "content": prompt}], prepared,
             ))
     except ProviderError as exc:
-        note_quota_error(provider, settings.model, str(exc))
+        note_quota_error(provider, model, str(exc))
         show_provider_error(exc)
     except Exception as exc:  # noqa: BLE001 - keep the app alive
         LOGGER.exception("Unexpected error while writing the SOC report")
@@ -7936,6 +8093,26 @@ def render_net_track() -> None:
 def _wireshark_csv(data: bytes) -> bool:
     head = data[:600].decode("utf-8", "ignore").lower()
     return "source" in head and "destination" in head and "protocol" in head
+
+
+def soc_inventory(uploads) -> str:
+    """One line per uploaded file, so the report covers exactly what was sent."""
+    return "\n".join(
+        f"- {up.name} ({up.type or 'unknown type'}, {len(up.getvalue()):,} bytes)"
+        for up in uploads or []
+    ) or "- none"
+
+
+def soc_local_summary(local: list[tuple[str, object]]) -> str:
+    """The fixed-rule engine results in a few lines for the model."""
+    lines = []
+    for name, report in local:
+        found = "; ".join(
+            f"[{f.severity}] {f.title}" + (f" ({f.attack})" if f.attack else "")
+            for f in report.findings[:15]
+        ) or "no rule matched"
+        lines.append(f"- {name}: {report.os}, {len(report.events):,} events. {found}")
+    return "\n".join(lines) or "- none of the files is a log or capture the engines read"
 
 
 def soc_local_reports(uploads) -> list[tuple[str, object]]:
@@ -11487,7 +11664,8 @@ def main() -> None:
     usage_slot.markdown(  # refresh the usage line after the reply
         limit_widget_html(settings), unsafe_allow_html=True
     )
-    embed_html(COMPOSER_FOCUS_TEMPLATE, 1)
+    mascot = nashmi_mascot.loader_html() if nashmi_mascot else ""
+    embed_html(COMPOSER_FOCUS_TEMPLATE.replace("</body>", mascot + "</body>"), 1)
 
 
 
