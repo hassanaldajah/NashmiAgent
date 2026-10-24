@@ -4970,7 +4970,9 @@ def render_hero() -> None:
                .replace("__HERO_TITLE__", tt("NASHMI AGENT", "نشمي"))
                .replace("__HERO_SUB__", tt(
                    "Your friendly SOC and security coding buddy. The fox is watching your pointer.",
-                   "رفيقك في الـ SOC وبرمجة الأمن. الثعلب بيتابع مؤشرك.")),
+                   # RLI ... PDI: the banner is laid out left to right, so the
+                   # Arabic line is isolated as right to left or "SOC" scrambles it
+                   "⁧رفيقك في الـ SOC وبرمجة الأمن. الثعلب بيتابع مؤشرك.⁩")),
                HERO_HEIGHT)
 
 
@@ -6666,7 +6668,8 @@ def render_chat_sidebar(box, mode: str, chats: list[dict]) -> int:
                 chat = chats[i]
                 cid = chat["id"]
                 pinned = cid in pins
-                label = md_escape(chat["title"] or NEW_CHAT_TITLE)
+                title = chat["title"] or NEW_CHAT_TITLE
+                label = md_escape(tt(title, "محادثة جديدة") if title == NEW_CHAT_TITLE else title)
                 if query.strip() and hits[i]:
                     label += f"  ({hits[i]})"
                 row_key = f"chatrow_{'on' if i == index else 'off'}_{cid[:12]}"
@@ -7687,13 +7690,13 @@ def render_log_report(report, name: str, libs: dict, scope: str = "logs") -> Non
         ex = report.extra
         cards[0].metric(tt("Packets", "الحزم"), f"{ex['packets']:,}")
         cards[1].metric(tt("Findings", "النتائج"), len(report.findings),
-                        delta=f"{high} high" if high else None, delta_color="inverse")
+                        delta=tt(f"{high} high", f"{high} عالية") if high else None, delta_color="inverse")
         cards[2].metric(tt("Flows", "التدفقات"), f"{ex['flows']:,}")
         cards[3].metric(tt("Data", "البيانات"), _human_bytes(ex["bytes"]))
     else:
         cards[0].metric(tt("Events read", "أحداث مقروءة"), f"{summary['events']:,}")
         cards[1].metric(tt("Findings", "النتائج"), len(report.findings),
-                        delta=f"{high} high" if high else None, delta_color="inverse")
+                        delta=tt(f"{high} high", f"{high} عالية") if high else None, delta_color="inverse")
         cards[2].metric(tt("Source addresses", "عناوين المصدر"), summary["ips"])
         cards[3].metric(tt("Accounts", "الحسابات"), summary["users"])
     if summary["first"]:
@@ -8004,7 +8007,7 @@ def render_net_overview(report, libs: dict, kp: str = "net") -> None:
 def _dash_kpis(report) -> list[tuple[str, str, str | None]]:
     s = nashmi_logs.summary(report)
     high = s["finding_severity"].get("high", 0)
-    delta = f"{high} high" if high else None
+    delta = tt(f"{high} high", f"{high} عالية") if high else None
     if report.os == "network":
         ex = report.extra
         hosts = len({e.ip for e in report.events if e.ip} | {e.dst for e in report.events if e.dst})
@@ -8596,13 +8599,16 @@ def render_exam_setup(settings: Settings) -> None:
     )
     allowed = allowed_exam_types(settings, types, bool(chosen_images))
     estimate = 1 + min(len(types) or 5, 6) + (1 if verify else 0) + 1
-    st.caption(
+    st.caption(tt(
         f"An exam uses about {estimate} requests of your "
         f"{settings.provider.short} key (planning, one per section, the "
         "double-check and grading)."
         + ("" if settings.provider.free
-           else " They are billed to your account.")
-    )
+           else " They are billed to your account."),
+        f"يستهلك الامتحان نحو {estimate} طلبات من مفتاح {settings.provider.short} "
+        "(التخطيط، وطلب لكل قسم، والمراجعة، والتصحيح)."
+        + ("" if settings.provider.free else " تُحسب على حسابك."),
+    ))
 
     left, right = st.columns([3, 2])
     ready = bool(settings.api_key and (subject.strip() or material))
@@ -10718,6 +10724,53 @@ AR_MAP = {
     "The exam engine (nashmi_exam.py) is missing.": "محرك الامتحانات (nashmi_exam.py) غير موجود.",
 }
 
+
+# Arabic for texts that were still shown in English (found by walking every
+# track in Arabic). Tool names, commands and ATT&CK technique names stay English.
+AR_MAP.update({
+    "Search chats": "ابحث في المحادثات",
+    "Auto": "تلقائي",
+    "Easy": "سهل", "Medium": "متوسط", "Hard": "صعب", "Mixed": "متنوّع",
+    "University midterm": "امتحان منتصف فصل جامعي",
+    "University final": "امتحان نهائي جامعي",
+    "Professional certification": "امتحان شهادة مهنية",
+    "Quick quiz": "اختبار قصير",
+    "English": "الإنجليزية", "Arabic": "العربية", "Arabic + English": "العربية + الإنجليزية",
+    "Open a Linux or Windows log and get findings, a timeline, correlations and an "
+    "evidence graph. Fixed rules run inside your session: no API key and no account needed.":
+        "افتح سجلًا من Linux أو Windows واحصل على النتائج والخط الزمني والارتباطات ومخطط "
+        "الأدلة. القواعد الثابتة تعمل داخل جلستك: بلا مفتاح API وبلا حساب.",
+    "Open a Wireshark capture (pcap, pcapng or a CSV export) and get findings, a timeline, "
+    "conversations and an evidence graph. Fixed rules run inside your session: no API key "
+    "and no account needed.":
+        "افتح ملف التقاط من Wireshark (pcap أو pcapng أو تصدير CSV) واحصل على النتائج والخط "
+        "الزمني والمحادثات ومخطط الأدلة. القواعد الثابتة تعمل داخل جلستك: بلا مفتاح API وبلا حساب.",
+    LOG_EXPORT_HELP: """\
+**Linux**
+- Debian / Ubuntu: `sudo cp /var/log/auth.log .`
+- RHEL / Fedora: `sudo cp /var/log/secure .`
+- systemd: `journalctl -u ssh -o short-iso --no-pager > ssh.log`
+
+**Windows** (شغّل PowerShell كمسؤول Administrator لسجل Security)
+- XML: `wevtutil qe Security /f:xml > security.xml`
+- CSV: `Get-WinEvent -LogName Security -MaxEvents 50000 | Export-Csv security.csv -NoTypeInformation`
+- Event Viewer: اختر Save All Events As... ثم CSV.
+
+ملف `.evtx` الثنائي لا يُقرأ مباشرة؛ صدّره بأحد الأوامر أعلاه.
+""",
+    NET_EXPORT_HELP: """\
+**التقاط ملف**
+- Wireshark: من File > Save As، وأبقِ صيغة `.pcapng`.
+- سطر الأوامر: `sudo tcpdump -i eth0 -w capture.pcap` (أوقفه بـ Ctrl+C).
+
+**أو صدّر جدولًا من Wireshark**
+- File > Export Packet Dissections > As CSV. يحفظ هذا الأعمدة No. وTime وSource
+  وDestination وProtocol وLength وInfo.
+
+كلمات المرور المكشوفة بنص واضح لا تُحفظ ولا تُعرض أبدًا: يُحتفظ باسم المستخدم فقط.
+""",
+})
+
 _AR_WRAPPED = ("button", "text_input", "text_area", "selectbox", "radio", "checkbox", "toggle",
                "expander", "download_button", "link_button", "file_uploader", "audio_input",
                "popover", "metric", "form_submit_button", "multiselect", "number_input",
@@ -10731,37 +10784,55 @@ def _ar(value):
     return value
 
 
-def _wrap_ar(fn):
+_AR_CHOICES = ("selectbox", "radio", "multiselect", "segmented_control", "pills")
+
+
+def _ar_option(value) -> str:
+    """How an option is shown in Arabic; the value the code gets is unchanged."""
+    return AR_MAP.get(value, value) if isinstance(value, str) else str(value)
+
+
+def _arabic() -> bool:
+    try:
+        return lang() == "ar"
+    except Exception:  # noqa: BLE001 - outside a script run
+        return False
+
+
+def _wrap_ar(fn, name: str, method: bool):
+    """Translate the label (and help, placeholder, options) of one widget.
+
+    ``method`` is True for the DeltaGenerator class functions used by columns,
+    containers and the sidebar (``col.selectbox(...)``): there the first
+    argument is the container itself and the label is the second one."""
     import functools
+    first = 1 if method else 0
 
     @functools.wraps(fn)
     def inner(*args, **kwargs):
-        try:
-            arabic = lang() == "ar"
-        except Exception:  # noqa: BLE001 - outside a script run
-            arabic = False
-        if arabic:
-            if args:
-                args = (_ar(args[0]),) + tuple(args[1:])
+        if _arabic():
+            if len(args) > first:
+                args = args[:first] + (_ar(args[first]),) + tuple(args[first + 1:])
             for key in ("label", "placeholder", "help", "body"):
                 if key in kwargs:
                     kwargs[key] = _ar(kwargs[key])
+            if name in _AR_CHOICES and "format_func" not in kwargs:
+                kwargs["format_func"] = _ar_option
+            if name in ("selectbox", "multiselect") and "placeholder" not in kwargs:
+                kwargs["placeholder"] = "اختر" if name == "selectbox" else "اختر خيارات"
         return fn(*args, **kwargs)
     return inner
 
 
-def _wrap_tabs(fn):
+def _wrap_tabs(fn, method: bool):
     import functools
 
     @functools.wraps(fn)
-    def inner(tabs, *args, **kwargs):
-        try:
-            arabic = lang() == "ar"
-        except Exception:  # noqa: BLE001
-            arabic = False
-        if arabic:
-            tabs = [_ar(t) for t in tabs]
-        return fn(tabs, *args, **kwargs)
+    def inner(*args, **kwargs):
+        first = 1 if method else 0
+        if _arabic() and len(args) > first:
+            args = args[:first] + ([_ar(t) for t in args[first]],) + tuple(args[first + 1:])
+        return fn(*args, **kwargs)
     return inner
 
 
@@ -10770,13 +10841,13 @@ def install_ar_wrappers() -> None:
     if getattr(st, "_nashmi_ar_installed", False):
         return
     from streamlit.delta_generator import DeltaGenerator
-    for name in _AR_WRAPPED:
+    for name in _AR_WRAPPED + _AR_CHOICES[3:]:
         if hasattr(st, name):
-            setattr(st, name, _wrap_ar(getattr(st, name)))
+            setattr(st, name, _wrap_ar(getattr(st, name), name, method=False))
         if hasattr(DeltaGenerator, name):
-            setattr(DeltaGenerator, name, _wrap_ar(getattr(DeltaGenerator, name)))
-    st.tabs = _wrap_tabs(st.tabs)
-    DeltaGenerator.tabs = _wrap_tabs(DeltaGenerator.tabs)
+            setattr(DeltaGenerator, name, _wrap_ar(getattr(DeltaGenerator, name), name, method=True))
+    st.tabs = _wrap_tabs(st.tabs, method=False)
+    DeltaGenerator.tabs = _wrap_tabs(DeltaGenerator.tabs, method=True)
     st._nashmi_ar_installed = True
 
 
