@@ -1809,16 +1809,40 @@ VISION_HINTS = ("llama-4", "vision", "scout", "maverick")
 
 
 def vision_route(provider: Provider, model: str, api_key: str, uploads):
-    """Groq's chat models read text only. When pictures are attached and the
-    key can use one of Groq's vision models, send the request through it."""
-    if provider.id != "groq" or not api_key or not any(
-        (getattr(u, "type", "") or "").startswith("image/") for u in uploads or []
-    ):
-        return provider, model
-    for name in live_models(provider.id, api_key):
-        if any(hint in name for hint in VISION_HINTS):
-            return replace(provider, media="image"), name
-    return provider, model
+    """Pick who reads attached pictures when the chosen model cannot.
+
+    Returns ``(provider, model, api_key)``: a Groq vision model when the key
+    has one, else another provider the user has a key for (typed, saved or,
+    on a private server, in .env; never the owner's keys on the public site),
+    else the original choice, which then gets the pictures' details only."""
+    images = [(getattr(u, "type", "") or "") for u in uploads or []]
+    images = [m for m in images if m.startswith("image/")]
+    if not api_key or not images or all(provider.accepts(m) for m in images):
+        return provider, model, api_key
+    if provider.id == "groq":
+        for name in live_models(provider.id, api_key):
+            if any(hint in name for hint in VISION_HINTS):
+                return replace(provider, media="image"), name, api_key
+    for other in PROVIDER_LIST:
+        other_key = key_for(other) if other.id != provider.id else ""
+        if other_key and all(other.accepts(m) for m in images):
+            # reading a screenshot needs no big model; Gemini's light one
+            # answers in seconds when the main one is busy
+            light = GEMINI_LIGHT if other.id == "gemini" else other.models[0]
+            return other, light, other_key
+    return provider, model, api_key
+
+
+def vision_fallback(settings, files, exc: Exception):
+    """The model picked to read the pictures failed (busy, out of quota...):
+    answer with the user's own model from the pictures' details instead."""
+    LOGGER.warning("Picture model failed, using the chosen model: %s", exc)
+    st.caption(tt(f"The picture reader is not available right now, so "
+                  f"{settings.provider.short} answers from the pictures' details.",
+                  f"قارئ الصور غير متاح الآن، فيجيب {settings.provider.short} "
+                  "من تفاصيل الصور."))
+    return (settings.provider, settings.api_key, settings.model,
+            prepare_attachments(files, settings.provider))
 
 
 def prepare_attachments(uploaded_files, provider: Provider) -> PreparedFiles:
@@ -2184,17 +2208,32 @@ def generate_stream(
     streamer = STREAMERS[provider.kind]
     counted = False
 
+    # a busy Gemini model (503 "high demand") is retried once on the light
+    # model, which is usually free, instead of leaving the user with an error
+    models = [model] + ([GEMINI_LIGHT] if provider.id == "gemini" and model != GEMINI_LIGHT else [])
+
     def raw():
         nonlocal counted
-        for chunk in streamer(provider, api_key, model, system_prompt, msgs, files):
-            if not counted:
-                counted = True
-                record_usage(provider, model)
-            yield chunk
+        for attempt, name in enumerate(models):
+            started = False
+            try:
+                for chunk in streamer(provider, api_key, name, system_prompt, msgs, files):
+                    started = True
+                    if not counted:
+                        counted = True
+                        record_usage(provider, name)
+                    yield chunk
+                return
+            except ProviderError as exc:
+                if started or attempt == len(models) - 1 or not BUSY_RE.search(str(exc)):
+                    raise
+                LOGGER.warning("%s is busy, retrying on %s: %s", name, models[attempt + 1], exc)
 
     yield from (without_loops(raw()) if guard else raw())
 
 
+GEMINI_LIGHT = "gemini-flash-lite-latest"   # Google's alias for the current light model
+BUSY_RE = re.compile(r"\b(?:503|529)\b|high demand|overloaded|UNAVAILABLE", re.I)
 REPEAT_MIN_CHARS = 25       # shorter lines (braces, "---", list bullets) may repeat
 REPEAT_LIMIT = 2            # repeated prose lines dropped before the reply is cut
 SAME_LINE_LIMIT = 4         # the same short line (one word...) many times in a row
@@ -6531,9 +6570,12 @@ def render_settings(box, mode: str):
             if provider.id == "openrouter":
                 options = openrouter_free_models() or list(OPENROUTER_FALLBACK)
             elif provider.id in ("gemini", "groq", "openai", "anthropic"):
-                options = live_models(provider.id, api_key) or list(
-                    provider.models
-                )
+                live = live_models(provider.id, api_key)
+                # the recommended models first (the live list is alphabetical,
+                # which put Groq's small Arabic-only ALLaM model on top)
+                options = ([m for m in provider.models if m in live]
+                           + [m for m in live if m not in provider.models]
+                           ) if live else list(provider.models)
             else:
                 options = list(provider.models)
             chosen = st.selectbox(tt("Model", "الموديل"), options, key=f"model_{provider.id}")
@@ -6814,7 +6856,9 @@ def handle_submission(
         render_key_help(settings.provider)
         return
 
-    provider, model = vision_route(settings.provider, settings.model, settings.api_key, files)
+    provider, model, api_key = vision_route(settings.provider, settings.model, settings.api_key, files)
+    if model != settings.model:
+        st.caption(tt(f"Pictures are read with {provider.short} ({model}).", f"تُقرأ الصور بالنموذج {model}."))
     prepared = prepare_attachments(files, provider)
     warn_skipped(prepared)
     messages = chat["messages"]
@@ -6838,11 +6882,18 @@ def handle_submission(
             if facts:
                 content += "\n\n" + facts
             outgoing = messages[:-1] + [{"role": "user", "content": content}]
-            reply = stream_to_text(with_wait_notice(generate_stream(
-                provider, settings.api_key, model,
-                full_system_prompt(settings.mode, chat.get("project", "")),
-                outgoing, prepared,
-            )))
+            system = full_system_prompt(settings.mode, chat.get("project", ""))
+            try:
+                reply = stream_to_text(with_wait_notice(generate_stream(
+                    provider, api_key, model, system, outgoing, prepared,
+                )))
+            except ProviderError as exc:
+                if (provider.id, model) == (settings.provider.id, settings.model):
+                    raise
+                provider, api_key, model, prepared = vision_fallback(settings, files, exc)
+                reply = stream_to_text(with_wait_notice(generate_stream(
+                    provider, api_key, model, system, outgoing, prepared,
+                )))
         except ProviderError as exc:
             failed = True
             note_quota_error(settings.provider, settings.model, str(exc))
@@ -6997,9 +7048,9 @@ def render_soc_track(settings: Settings) -> None:
     if vt_results:
         notes = f"{notes}\n\n{vt_summary_text(vt_results)}".strip()
 
-    provider, model = vision_route(provider, settings.model, settings.api_key, uploads)
+    provider, model, api_key = vision_route(provider, settings.model, settings.api_key, uploads)
     if model != settings.model:
-        st.caption(tt(f"Pictures are read with {model}.", f"تُقرأ الصور بالنموذج {model}."))
+        st.caption(tt(f"Pictures are read with {provider.short} ({model}).", f"تُقرأ الصور بالنموذج {model}."))
     prepared = prepare_attachments(uploads, provider)
     warn_skipped(prepared)
     found = extract_indicators(prepared.raw_text)
@@ -7025,11 +7076,20 @@ def render_soc_track(settings: Settings) -> None:
     try:
         with st.spinner("Nashmi is scanning indicators and media and "
                         "writing the report..."):
-            report = stream_to_text(generate_stream(
-                provider, settings.api_key, model,
-                full_system_prompt(settings.mode),
-                [{"role": "user", "content": prompt}], prepared,
-            ))
+            request = [{"role": "user", "content": prompt}]
+            try:
+                report = stream_to_text(generate_stream(
+                    provider, api_key, model, full_system_prompt(settings.mode),
+                    request, prepared,
+                ))
+            except ProviderError as exc:
+                if (provider.id, model) == (settings.provider.id, settings.model):
+                    raise
+                provider, api_key, model, prepared = vision_fallback(settings, uploads, exc)
+                report = stream_to_text(generate_stream(
+                    provider, api_key, model, full_system_prompt(settings.mode),
+                    request, prepared,
+                ))
     except ProviderError as exc:
         note_quota_error(provider, model, str(exc))
         show_provider_error(exc)
