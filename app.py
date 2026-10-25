@@ -1919,6 +1919,18 @@ HTTP_HINTS = {
 }
 
 
+def retry_delay(retry_after: str | None, attempt: int, cap: float = 8.0) -> float:
+    """Seconds to wait before retrying: the provider's Retry-After when it sends a
+    number (Groq does on 429), otherwise exponential backoff. Never longer than ``cap``."""
+    try:
+        wanted = float(retry_after) if retry_after else None
+    except ValueError:
+        wanted = None
+    if wanted is None or wanted < 0:
+        wanted = RETRY_BACKOFF * 2 ** attempt
+    return min(wanted, cap)
+
+
 def describe_http_error(name: str, status: int | None, body: str) -> str:
     """Build a short, readable error message from an HTTP failure."""
     detail = ""
@@ -2022,8 +2034,9 @@ def _open_stream(provider: Provider, url: str, headers: dict, payload: dict):
                 LOGGER.debug("No rate-limit headers available")
             return resp
         if resp.status_code in RETRY_STATUS and attempt < MAX_RETRIES:
+            wait = retry_delay(resp.headers.get("retry-after"), attempt)
             resp.close()
-            time.sleep(RETRY_BACKOFF * 2 ** attempt)
+            time.sleep(wait)
             continue
         body = resp.text
         resp.close()
@@ -5706,6 +5719,45 @@ GEMINI_SIDEBAR_CSS = """
 [data-testid="stPopoverBody"] button { color: #e3e6ea !important; }
 @media (max-width: 640px) {
     [data-testid="stSidebar"] button, [data-testid="stSidebar"] [data-testid="stPopoverButton"] { min-height: 46px !important; }
+}
+
+/* The name block. Streamlit gives every markdown container a -16px bottom margin to
+   cancel the last paragraph's margin; the card is a div with no paragraph, so that
+   margin pulled the Account row 16px up over the name. Cancel it for this one block. */
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"]:has(> .user-card) { margin-bottom: 0; }
+[data-testid="stSidebar"] [data-testid="stElementContainer"]:has(.user-card) { margin-bottom: 12px; }
+[data-testid="stSidebar"] .user-card > div { min-width: 0; flex: 1 1 auto; overflow: hidden; }
+[data-testid="stSidebar"] .user-card > div :is(b, em, span) {
+    display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; overflow-wrap: normal;
+}
+
+/* Phones and small tablets: the sidebar opens over the page at full width (so no sliver
+   of chat is squeezed beside it), scrolls on its own, and every control is a 44px+ target. */
+@media (max-width: 768px) {
+    [data-testid="stSidebar"][data-collapsed="false"] {           /* Streamlit 1.66 marks the open state here */
+        width: 100vw !important; max-width: 100vw !important;    /* THEME_CSS sets 88vw with !important */
+    }
+    [data-testid="stSidebar"] [data-testid="stSidebarContent"] {
+        overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+    [data-testid="stMain"] button, [data-testid="stMainBlockContainer"] button,
+    [data-testid="stSidebar"] [data-baseweb="input"], [data-testid="stSidebar"] [data-baseweb="select"] > div,
+    [data-testid="stMainBlockContainer"] [data-baseweb="input"], [data-testid="stMainBlockContainer"] [data-baseweb="select"] > div {
+        min-height: 44px;
+    }
+    [data-testid="stMainBlockContainer"] button p { font-size: 16px; }
+    [data-testid="stBottom"] { padding-bottom: env(safe-area-inset-bottom, 0px); }
+    /* the composer fox lives on a fixed layer above the page; while the full-width
+       sidebar covers the composer it would float over the sidebar's buttons */
+    body:has([data-testid="stSidebar"][data-collapsed="false"]) #nashmi-fox-layer { visibility: hidden; }
+}
+/* At exactly 768px Streamlit uses its phone layout (the page sits absolutely under an
+   overlay sidebar) but keeps the desktop's positioned wrapper, which is 0px wide next to
+   the open sidebar, so the chat was squeezed into a sliver. Let the page measure itself
+   against the whole app again, as it does below 768px. */
+@media (min-width: 767.5px) and (max-width: 768px) {
+    [data-testid="stAppViewContainer"] > div:has(> main) { position: static; }
 }
 """
 
