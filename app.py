@@ -7349,12 +7349,22 @@ def log_report(data: bytes, hint: str, engine: str = "logs"):
         cache = st.session_state["log_cache"] = {}
     if key in cache:
         return cache[key]
-    if engine == "net":
-        report = nashmi_net.analyze(data)
-    else:
-        if nashmi_net is not None and nashmi_net.looks_like_capture(data):
-            raise nashmi_logs.LogFormatError("This is a network capture. Open it in the Wireshark Analysis track.")
-        report = nashmi_logs.analyze(data, hint)
+    try:
+        if engine == "net":
+            report = nashmi_net.analyze(data)
+        else:
+            if nashmi_net is not None and nashmi_net.looks_like_capture(data):
+                raise nashmi_logs.LogFormatError("This is a network capture. Open it in the Wireshark Analysis track.")
+            report = nashmi_logs.analyze(data, hint)
+    except nashmi_logs.LogFormatError:
+        raise
+    except Exception:
+        # Uploads are untrusted. If a file ever trips a parser bug, the visitor gets the
+        # same clean refusal as any unreadable file, and the detail goes to the server log.
+        LOGGER.exception("the %s engine failed on an upload", engine)
+        raise nashmi_logs.LogFormatError(tt(
+            "This file could not be read. It may be damaged or in a format the engine does not expect.",
+            "تعذّرت قراءة هذا الملف. قد يكون تالفًا أو بصيغة لا يتوقعها المحرك.")) from None
     while len(cache) >= 4:
         cache.pop(next(iter(cache)))
     cache[key] = report

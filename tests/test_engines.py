@@ -1,4 +1,7 @@
 """The rule engines: Linux/Windows logs and network captures."""
+import random
+import struct
+import time
 from datetime import datetime
 
 import pytest
@@ -81,6 +84,71 @@ def test_capture_never_keeps_passwords():
     text = " ".join([f.observed for f in r.findings] + [e.message + e.raw + e.user for e in r.events])
     assert "SuperSecret123" not in text and "hunter2" not in text
     assert "alice" in text and "bob" in text
+
+
+CSV_HEAD = '"No.","Time","Source","Destination","Protocol","Length","Info"\n'
+
+
+@pytest.mark.parametrize("time, length", [("0.1", "abc"), ("0.1", "1e999"), ("0.1", "nan"), ("0.1", ""),
+                                          ("1e999", "60"), ("nan", "60"), ("-5", "60"), ("9" * 40, "60")])
+def test_wireshark_csv_with_hostile_numbers(time, length):
+    """Text, infinity or absurd values in the numeric columns are read as 0, never a crash."""
+    row = f'"1","{time}","10.1.1.5","10.1.1.9","TCP","{length}","40000 → 80 [SYN] Seq=0"\n'
+    r = N.analyze(CSV_HEAD + row)
+    assert len(r.events) >= 1
+    L.summary(r), N.graph(r), L.report_markdown(r, "x")
+
+
+@pytest.mark.parametrize("ts", [0xFFFFFFFF_FFFFFFFF, 1 << 62, 0])
+def test_capture_with_impossible_timestamps(ts):
+    """A pcapng timestamp past the year 9999 is shown as the epoch instead of failing."""
+    frame = X.scenario()[0][1]
+    ng = X.write_pcapng([(0.0, frame)])
+    body_at = ng.rindex(frame) - 20                       # the enhanced-packet block header
+    ng = ng[:body_at + 4] + struct.pack("<II", ts >> 32, ts & 0xFFFFFFFF) + ng[body_at + 12:]
+    r = N.analyze(ng)
+    assert len(r.events) >= 1 and L.report_markdown(r, "x")
+
+
+def test_unclosed_xml_events_are_read_in_linear_time():
+    """50,000 opening tags with no closing tag used to take minutes (quadratic rescans)."""
+    hostile = "<Events>" + "<Event>" * 50_000
+    started = time.perf_counter()
+    with pytest.raises(L.LogFormatError):
+        L.analyze(hostile)
+    assert time.perf_counter() - started < 5
+    # and the real thing still parses, including an unclosed tail after valid events
+    assert any(f.rule == "log_cleared" for f in L.analyze(F.win_xml() + "<Event>" * 1000).findings)
+
+
+def test_engines_survive_mutated_files():
+    """A small fixed-seed fuzz run: damaged files are refused or read, never an unhandled error."""
+    rng = random.Random(2026)
+    small = X.scenario()[:40]
+    seeds = [(N.analyze, X.write_pcap(small)), (N.analyze, X.write_pcapng(small)), (N.analyze, X.CSV.encode()),
+             (L.analyze, F.linux_auth().encode()), (L.analyze, F.win_csv().encode()),
+             (L.analyze, F.win_xml().encode()), (L.analyze, F.win_json().encode())]
+    for _ in range(400):
+        engine, data = rng.choice(seeds)
+        b = bytearray(data)
+        for _ in range(rng.randint(1, 3)):
+            i = rng.randrange(len(b))
+            kind = rng.randint(0, 3)
+            if kind == 0:
+                del b[i:]
+            elif kind == 1:
+                b[i:i + 4] = rng.choice((0, 0x7FFFFFFF, 0xFFFFFFFF)).to_bytes(4, "little")
+            elif kind == 2:
+                b[i:i] = rng.choice((b"\x00", b'"', b"<", b"1e999", b"9" * 300, b"\xff\xfe"))
+            else:
+                b[i] = rng.randrange(256)
+            if not b:
+                break
+        try:
+            report = engine(bytes(b))
+        except L.LogFormatError:
+            continue
+        L.summary(report), L.report_markdown(report, "x")
 
 
 def test_wireshark_csv_and_corrupt_files():

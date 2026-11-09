@@ -505,10 +505,31 @@ def _guard_xml(text: str) -> None:
         raise LogFormatError("XML with a DOCTYPE or entities is refused for safety.")
 
 
+_EVENT_OPEN = re.compile(r"<Event\b")
+_EVENT_CLOSE = "</Event>"
+
+
+def _event_blocks(text: str) -> list[str]:
+    """Every <Event>...</Event> span, in one pass over the text.
+
+    A lazy regex (<Event\\b.*?</Event>) rescans to the end of the file from each
+    opening tag that has no closing tag, so a small file of unclosed tags took
+    minutes. Here the search position only moves forward.
+    """
+    blocks, pos = [], 0
+    while (start := _EVENT_OPEN.search(text, pos)) is not None:
+        end = text.find(_EVENT_CLOSE, start.end())
+        if end < 0:
+            break
+        pos = end + len(_EVENT_CLOSE)
+        blocks.append(text[start.start():pos])
+    return blocks
+
+
 def parse_windows_xml(text: str) -> tuple[list[Event], int, int]:
     import xml.etree.ElementTree as ET
     _guard_xml(text)
-    blocks = re.findall(r"<Event\b.*?</Event>", text, re.S)
+    blocks = _event_blocks(text)
     events: list[Event] = []
     skipped = 0
     for i, block in enumerate(blocks, 1):

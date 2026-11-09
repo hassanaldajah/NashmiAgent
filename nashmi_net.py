@@ -110,8 +110,24 @@ def is_private(ip: str) -> bool:
     return a.is_private or a.is_loopback or a.is_link_local or a.is_multicast
 
 
+_MAX_TS = 253_402_300_799.0     # 9999-12-31 23:59:59 UTC, the last instant datetime can hold
+
+
 def _utc(ts: float) -> datetime:
+    # A corrupt or hostile capture can carry any number here (negative, year 500000, NaN).
+    # Those would raise inside datetime, so they are shown as the epoch instead.
+    if not 0.0 <= ts <= _MAX_TS:
+        ts = 0.0
     return datetime.fromtimestamp(ts, timezone.utc).replace(tzinfo=None)
+
+
+def _number(value) -> float:
+    """A CSV cell as a finite number; anything else (text, inf, nan) counts as 0."""
+    try:
+        n = float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    return n if math.isfinite(n) else 0.0
 
 
 def _fmt(ts: datetime | None) -> str:
@@ -380,11 +396,13 @@ def _csv_packets(text: str):
         ts: float | None
         try:
             ts = float(raw_t)
+            if not math.isfinite(ts):
+                ts = None
         except ValueError:
             dt = L._parse_win_time(raw_t) or L._parse_iso(raw_t)
             ts = dt.replace(tzinfo=timezone.utc).timestamp() if dt else None
             relative = relative and ts is None
-        pk = Pkt(i + 1, ts or 0.0, int(float(row.get(col.get("len", ""), 0) or 0)))
+        pk = Pkt(i + 1, ts or 0.0, int(_number(row.get(col.get("len", "")))))
         pk.src, pk.dst = (row[col["src"]] or "").strip(), (row[col["dst"]] or "").strip()
         proto = (row[col["proto"]] or "OTHER").strip().upper()
         pk.proto = proto

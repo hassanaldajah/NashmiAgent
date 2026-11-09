@@ -16,3 +16,4 @@ gatherUsageStats = false
 
 [client]
 toolbarMode = "viewer"   # visitors do not get the developer menu
+showErrorDetails = "none"   # an unexpected error never shows code or server paths to visitors; details stay in the server log
